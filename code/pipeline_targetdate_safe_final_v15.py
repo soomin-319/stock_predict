@@ -14,17 +14,44 @@ v15 구조 보강 요약
 from __future__ import annotations
 
 import os
+import sys
+import subprocess
 import time
 import random
 import json
 import logging
 import zipfile
+import importlib.util
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
+
+
+def _in_colab() -> bool:
+    return 'google.colab' in sys.modules or 'COLAB_RELEASE_TAG' in os.environ
+
+
+def bootstrap_dependencies() -> None:
+    """Colab에서 필요한 패키지가 없을 때 자동 설치."""
+    pkg_map = {
+        'FinanceDataReader': 'finance-datareader',
+        'tensorflow': 'tensorflow==2.15.0',
+        'sklearn': 'scikit-learn',
+        'matplotlib': 'matplotlib',
+        'pyarrow': 'pyarrow',
+        'joblib': 'joblib',
+    }
+    missing = [pip_name for mod_name, pip_name in pkg_map.items() if importlib.util.find_spec(mod_name) is None]
+    if missing and _in_colab():
+        print(f"[INFO] Installing missing packages for Colab: {missing}")
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-q'] + missing)
+
+
+bootstrap_dependencies()
+
 import FinanceDataReader as fdr
 import matplotlib.pyplot as plt
 
@@ -160,23 +187,42 @@ def _cache_path(symbol: str) -> str:
     return os.path.join(CACHE_DIR, f"{safe}.parquet")
 
 
+def _cache_path_csv(symbol: str) -> str:
+    safe = symbol.replace('/', '_').replace('\\', '_').replace(':', '_')
+    return os.path.join(CACHE_DIR, f"{safe}.csv")
+
+
 def load_cached_series(symbol: str, index: pd.DatetimeIndex) -> Optional[pd.Series]:
-    path = _cache_path(symbol)
-    if not os.path.exists(path):
-        return None
-    try:
-        df = pd.read_parquet(path)
-        s = df['close'] if 'close' in df.columns else df.iloc[:, 0]
-        return s.reindex(index).ffill(limit=3)
-    except Exception:
-        return None
+    path_parquet = _cache_path(symbol)
+    path_csv = _cache_path_csv(symbol)
+
+    if os.path.exists(path_parquet):
+        try:
+            df = pd.read_parquet(path_parquet)
+            s = df['close'] if 'close' in df.columns else df.iloc[:, 0]
+            return s.reindex(index).ffill(limit=3)
+        except Exception:
+            pass
+
+    if os.path.exists(path_csv):
+        try:
+            df = pd.read_csv(path_csv, index_col=0, parse_dates=True)
+            s = df['close'] if 'close' in df.columns else df.iloc[:, 0]
+            return s.reindex(index).ffill(limit=3)
+        except Exception:
+            return None
+
+    return None
 
 
 def save_series_cache(symbol: str, series: pd.Series):
     try:
         series.to_frame(name='close').to_parquet(_cache_path(symbol))
     except Exception:
-        pass
+        try:
+            series.to_frame(name='close').to_csv(_cache_path_csv(symbol))
+        except Exception:
+            pass
 
 
 def load_symbol_meta(path: str) -> Dict[str, str]:
