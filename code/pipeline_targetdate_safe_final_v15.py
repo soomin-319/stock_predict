@@ -14,44 +14,17 @@ v15 구조 보강 요약
 from __future__ import annotations
 
 import os
-import sys
-import subprocess
 import time
 import random
 import json
 import logging
 import zipfile
-import importlib.util
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
-
-
-def _in_colab() -> bool:
-    return 'google.colab' in sys.modules or 'COLAB_RELEASE_TAG' in os.environ
-
-
-def bootstrap_dependencies() -> None:
-    """Colab에서 필요한 패키지가 없을 때 자동 설치."""
-    pkg_map = {
-        'FinanceDataReader': 'finance-datareader',
-        'tensorflow': 'tensorflow==2.15.0',
-        'sklearn': 'scikit-learn',
-        'matplotlib': 'matplotlib',
-        'pyarrow': 'pyarrow',
-        'joblib': 'joblib',
-    }
-    missing = [pip_name for mod_name, pip_name in pkg_map.items() if importlib.util.find_spec(mod_name) is None]
-    if missing and _in_colab():
-        print(f"[INFO] Installing missing packages for Colab: {missing}")
-        subprocess.check_call([sys.executable, '-m', 'pip', 'install', '-q'] + missing)
-
-
-bootstrap_dependencies()
-
 import FinanceDataReader as fdr
 import matplotlib.pyplot as plt
 
@@ -68,6 +41,29 @@ import joblib
 
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger("pipeline_targetdate_safe_final_v15")
+
+
+def configure_gpu_for_local() -> None:
+    """로컬 환경에서 TensorFlow가 GPU를 안정적으로 사용하도록 설정."""
+    try:
+        gpus = tf.config.list_physical_devices('GPU')
+        if not gpus:
+            logger.warning("No GPU detected. Running on CPU.")
+            return
+
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+
+        try:
+            tf.keras.mixed_precision.set_global_policy('mixed_float16')
+            logger.warning("GPU enabled (%d found), mixed_float16 policy applied.", len(gpus))
+        except Exception as e:
+            logger.warning("GPU enabled (%d found), mixed precision not applied: %s", len(gpus), e)
+    except Exception as e:
+        logger.warning("GPU configuration failed, fallback to default device config: %s", e)
+
+
+configure_gpu_for_local()
 
 WINDOW_SIZE = 30
 TEST_RATIO = 0.2
@@ -187,42 +183,23 @@ def _cache_path(symbol: str) -> str:
     return os.path.join(CACHE_DIR, f"{safe}.parquet")
 
 
-def _cache_path_csv(symbol: str) -> str:
-    safe = symbol.replace('/', '_').replace('\\', '_').replace(':', '_')
-    return os.path.join(CACHE_DIR, f"{safe}.csv")
-
-
 def load_cached_series(symbol: str, index: pd.DatetimeIndex) -> Optional[pd.Series]:
-    path_parquet = _cache_path(symbol)
-    path_csv = _cache_path_csv(symbol)
-
-    if os.path.exists(path_parquet):
-        try:
-            df = pd.read_parquet(path_parquet)
-            s = df['close'] if 'close' in df.columns else df.iloc[:, 0]
-            return s.reindex(index).ffill(limit=3)
-        except Exception:
-            pass
-
-    if os.path.exists(path_csv):
-        try:
-            df = pd.read_csv(path_csv, index_col=0, parse_dates=True)
-            s = df['close'] if 'close' in df.columns else df.iloc[:, 0]
-            return s.reindex(index).ffill(limit=3)
-        except Exception:
-            return None
-
-    return None
+    path = _cache_path(symbol)
+    if not os.path.exists(path):
+        return None
+    try:
+        df = pd.read_parquet(path)
+        s = df['close'] if 'close' in df.columns else df.iloc[:, 0]
+        return s.reindex(index).ffill(limit=3)
+    except Exception:
+        return None
 
 
 def save_series_cache(symbol: str, series: pd.Series):
     try:
         series.to_frame(name='close').to_parquet(_cache_path(symbol))
     except Exception:
-        try:
-            series.to_frame(name='close').to_csv(_cache_path_csv(symbol))
-        except Exception:
-            pass
+        pass
 
 
 def load_symbol_meta(path: str) -> Dict[str, str]:
