@@ -42,6 +42,29 @@ import joblib
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger("pipeline_targetdate_safe_final_v15")
 
+
+def configure_gpu_for_local() -> None:
+    """로컬 환경에서 TensorFlow가 GPU를 안정적으로 사용하도록 설정."""
+    try:
+        gpus = tf.config.list_physical_devices('GPU')
+        if not gpus:
+            logger.warning("No GPU detected. Running on CPU.")
+            return
+
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+
+        try:
+            tf.keras.mixed_precision.set_global_policy('mixed_float16')
+            logger.warning("GPU enabled (%d found), mixed_float16 policy applied.", len(gpus))
+        except Exception as e:
+            logger.warning("GPU enabled (%d found), mixed precision not applied: %s", len(gpus), e)
+    except Exception as e:
+        logger.warning("GPU configuration failed, fallback to default device config: %s", e)
+
+
+configure_gpu_for_local()
+
 WINDOW_SIZE = 30
 TEST_RATIO = 0.2
 EPOCHS = 50
