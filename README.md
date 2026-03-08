@@ -20,6 +20,7 @@ stock-predict --input data/sample_ohlcv.csv --output predictions.csv
 ```
 
 ## 설치 없이 실행(저장소 루트에서만)
+## 실행
 ```bash
 python -m src.pipeline --input data/sample_ohlcv.csv --output predictions.csv
 ```
