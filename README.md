@@ -24,6 +24,13 @@ stock-predict --input data/sample_ohlcv.csv --output predictions.csv
 python -m src.pipeline --input data/sample_ohlcv.csv --output predictions.csv
 ```
 
+## IDE/직접 파일 실행 (Windows 포함)
+```bash
+python src/pipeline.py --input data/sample_ohlcv.csv --output predictions.csv
+```
+
+위 실행도 지원하도록 `src/pipeline.py`에 경로 부트스트랩을 넣었습니다.
+
 입력 CSV 필수 컬럼:
 - `Date`, `Open`, `High`, `Low`, `Close`, `Volume`
 - 선택: `Symbol`
