@@ -51,3 +51,10 @@ python src/pipeline.py --input data/sample_ohlcv.csv --output predictions.csv
 
 > `ModuleNotFoundError: No module named 'src'`가 발생하면 저장소 루트가 아닌 경로에서 실행한 경우가 많습니다.
 > 이때는 `python -m pip install -e .` 후 `stock-predict ...`로 실행하세요.
+
+
+## 출력 경로 주의사항 (Windows)
+- Linux 스타일 경로(`/tmp/...`)를 Windows에서 넘기면 기본적으로 `\tmp`로 해석되어 실패할 수 있습니다.
+- 현재 파이프라인은 Windows에서 `/tmp/...` 입력 시 자동으로 시스템 임시 폴더로 매핑합니다.
+  - 예: `/tmp/predictions.csv` → `%TEMP%\predictions.csv`
+- 일반적으로는 `predictions.csv` 또는 `output/predictions.csv` 같은 상대 경로를 권장합니다.

@@ -1,3 +1,6 @@
+import tempfile
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -5,6 +8,7 @@ from src.config.settings import AppConfig
 from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
 from src.models.lgbm_heads import MultiHeadStockModel
+from src.pipeline import resolve_output_path
 
 
 def make_sample_df(days: int = 320):
@@ -46,3 +50,14 @@ def test_multihead_prediction_shapes():
     assert len(pred.predicted_return) == len(latest)
     assert len(pred.up_probability) == len(latest)
     assert (pred.quantile_high >= pred.quantile_low).all()
+
+
+def test_resolve_output_path_creates_parent(tmp_path):
+    out = resolve_output_path(str(tmp_path / "nested" / "predictions.csv"), is_windows=False)
+    assert out.parent.exists()
+
+
+def test_resolve_output_path_windows_tmp_mapping():
+    out = resolve_output_path("/tmp/predictions.csv", is_windows=True)
+    assert str(out).startswith(tempfile.gettempdir())
+    assert out.name == "predictions.csv"

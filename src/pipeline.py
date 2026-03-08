@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -14,9 +16,6 @@ if __package__ is None or __package__ == "":
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
 
-
-import pandas as pd
-
 from src.config.settings import AppConfig
 from src.data.loaders import load_ohlcv_csv
 from src.features.price_features import build_features
@@ -24,6 +23,23 @@ from src.features.regime_features import annotate_market_regime
 from src.inference.predict import build_prediction_frame
 from src.models.lgbm_heads import MultiHeadStockModel
 from src.validation.walk_forward import walk_forward_validate
+
+
+def resolve_output_path(output_csv: str, is_windows: bool | None = None) -> Path:
+    """Normalize output path and create parent directory if needed.
+
+    On Windows, '/tmp/...' style paths are mapped to the OS temp directory
+    to avoid '\\tmp' non-existent-root issues.
+    """
+    win = (os.name == "nt") if is_windows is None else is_windows
+
+    if win and output_csv.startswith("/tmp/"):
+        output_path = Path(tempfile.gettempdir()) / output_csv[len("/tmp/") :]
+    else:
+        output_path = Path(output_csv)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    return output_path
 
 
 def run_pipeline(input_csv: str, output_csv: str):
@@ -51,8 +67,10 @@ def run_pipeline(input_csv: str, output_csv: str):
     latest = feat.sort_values("Date").groupby("Symbol", as_index=False).tail(1)
     pred = model.predict(latest)
     pred_df = build_prediction_frame(latest, pred, cfg.signal)
-    pred_df.to_csv(output_csv, index=False)
-    print(f"Saved inference output to {output_csv}")
+
+    output_path = resolve_output_path(output_csv)
+    pred_df.to_csv(output_path, index=False)
+    print(f"Saved inference output to {output_path}")
 
 
 def main():
