@@ -14,6 +14,9 @@ if __package__ is None or __package__ == "":
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
 
+
+import pandas as pd
+
 from src.config.settings import AppConfig
 from src.data.loaders import load_ohlcv_csv
 from src.features.price_features import build_features
