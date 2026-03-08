@@ -13,10 +13,24 @@
 - Walk-forward 검증
 - 최종 출력: `predicted_return`, `predicted_close`, `up_probability`, `uncertainty_band`, `signal_score`
 
+## 설치 후 실행(권장)
+```bash
+python -m pip install -e .
+stock-predict --input data/sample_ohlcv.csv --output predictions.csv
+```
+
+## 설치 없이 실행(저장소 루트에서만)
 ## 실행
 ```bash
 python -m src.pipeline --input data/sample_ohlcv.csv --output predictions.csv
 ```
+
+## IDE/직접 파일 실행 (Windows 포함)
+```bash
+python src/pipeline.py --input data/sample_ohlcv.csv --output predictions.csv
+```
+
+위 실행도 지원하도록 `src/pipeline.py`에 경로 부트스트랩을 넣었습니다.
 
 입력 CSV 필수 컬럼:
 - `Date`, `Open`, `High`, `Low`, `Close`, `Volume`
@@ -33,3 +47,7 @@ python -m src.pipeline --input data/sample_ohlcv.csv --output predictions.csv
 ## 참고
 현재 모델 구현은 환경 의존성을 줄이기 위해 sklearn GBDT 기반으로 작성했습니다.
 추후 LightGBM/XGBoost/GRU로 동일 인터페이스를 유지하면서 확장할 수 있습니다.
+
+
+> `ModuleNotFoundError: No module named 'src'`가 발생하면 저장소 루트가 아닌 경로에서 실행한 경우가 많습니다.
+> 이때는 `python -m pip install -e .` 후 `stock-predict ...`로 실행하세요.

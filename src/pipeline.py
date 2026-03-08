@@ -1,6 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+import pandas as pd
+
+# Support both:
+# 1) python -m src.pipeline
+# 2) python src/pipeline.py (IDE/direct execution)
+if __package__ is None or __package__ == "":
+    project_root = Path(__file__).resolve().parents[1]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+
 
 import pandas as pd
 
