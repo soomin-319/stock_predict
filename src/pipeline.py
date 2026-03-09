@@ -229,56 +229,6 @@ def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: lis
         out["market_regime"] = out["market_regime"].fillna("unknown")
     return out
 
-
-def _compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
-    if scored_oof.empty:
-        return {}
-
-    req = {"target_log_return", "rel_strength", "norm_return", "predicted_log_return", "uncertainty_score", "uncertainty_width"}
-    if not req.issubset(set(scored_oof.columns)):
-        return {}
-
-    df = scored_oof[list(req)].copy().dropna()
-    if df.empty:
-        return {}
-
-    actual_up = (df["target_log_return"] > 0).astype(int)
-
-    rel_dir_acc = float(((df["rel_strength"] > 0).astype(int) == actual_up).mean())
-    norm_dir_acc = float(((df["norm_return"] > 0).astype(int) == actual_up).mean())
-    pred_dir_acc = float(((df["predicted_log_return"] > 0).astype(int) == actual_up).mean())
-
-    abs_error = (df["predicted_log_return"] - df["target_log_return"]).abs()
-
-    return {
-        "direction_accuracy": {
-            "predicted_log_return": pred_dir_acc,
-            "rel_strength": rel_dir_acc,
-            "norm_return": norm_dir_acc,
-        },
-        "uncertainty_diagnostics": {
-            "corr_uncertainty_vs_abs_error": float(df["uncertainty_width"].corr(abs_error)),
-            "corr_uncertainty_score_vs_abs_error": float(df["uncertainty_score"].corr(abs_error)),
-            "uncertainty_score_zero_ratio": float((df["uncertainty_score"] == 0).mean()),
-            "uncertainty_score_mean": float(df["uncertainty_score"].mean()),
-        },
-    }
-
-
-def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: list[str] | None) -> pd.DataFrame:
-    if not universe_symbols:
-        return pred_df
-
-    universe = pd.DataFrame({"Symbol": sorted(set(str(s) for s in universe_symbols))})
-    out = universe.merge(pred_df, on="Symbol", how="left")
-    if "signal_label" in out.columns:
-        out["signal_label"] = out["signal_label"].astype(object).fillna("no_data")
-    if "Date" in out.columns:
-        out["Date"] = out["Date"].fillna(pd.Timestamp.today().normalize())
-    if "market_regime" in out.columns:
-        out["market_regime"] = out["market_regime"].fillna("unknown")
-    return out
-
 def run_pipeline(
     input_csv: str,
     output_csv: str,

@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import warnings
 
 import pandas as pd
 
 
 def _import_pykrx_stock():
     try:
-        from pykrx import stock
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"pkg_resources is deprecated as an API.*",
+                category=UserWarning,
+            )
+            from pykrx import stock
 
         return stock
     except Exception as exc:  # pragma: no cover
