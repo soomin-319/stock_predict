@@ -131,11 +131,8 @@ def build_symbol_summary_table(pred_df: pd.DataFrame, oof_df: pd.DataFrame) -> p
         tmp = oof_df[["Symbol", "target_log_return", "predicted_log_return"]].copy()
         tmp["actual_up"] = (tmp["target_log_return"] > 0).astype(int)
         tmp["pred_up"] = (tmp["predicted_log_return"] > 0).astype(int)
-        accuracy = (
-            tmp.groupby("Symbol")
-            .apply(lambda x: (x["actual_up"] == x["pred_up"]).mean())
-            .reset_index(name="direction_accuracy")
-        )
+        tmp["direction_hit"] = (tmp["actual_up"] == tmp["pred_up"]).astype(float)
+        accuracy = tmp.groupby("Symbol", as_index=False)["direction_hit"].mean().rename(columns={"direction_hit": "direction_accuracy"})
 
     table = pred_df.copy()
     table["종목코드"] = table["Symbol"].astype(str).str.replace(r"\..*$", "", regex=True)
