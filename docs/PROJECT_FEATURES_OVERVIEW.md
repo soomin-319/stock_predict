@@ -77,7 +77,7 @@
 - 회귀 헤드: 다음날 로그수익률
 - 분류 헤드: 상승 확률
 - 분위수 회귀 헤드: 불확실성 밴드
-- 현재 구현은 sklearn GBDT 기반
+- LightGBM 사용 가능 환경에서는 LightGBM 우선 사용, 미설치 시 sklearn GBDT fallback
 
 ### 5.2 검증 (`src/validation/walk_forward.py`)
 - 시간순 Walk-forward fold 생성
@@ -99,7 +99,8 @@
 
 ### 6.2 신호 튜닝 (`src/validation/signal_tuning.py`)
 - Grid-search로 top-decile 평균 수익률 최대화
-- 튜닝된 가중치로 재스코어링
+- OOF를 시간순으로 분할(기본 70:30)해 앞 구간에서 가중치 튜닝
+- 튜닝된 가중치로 재스코어링 후 뒤 구간(holdout)에서 백테스트
 
 ### 6.3 백테스트 (`src/validation/backtest.py`)
 - Long-only Top-K

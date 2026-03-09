@@ -9,7 +9,7 @@ from src.config.settings import AppConfig
 from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
 from src.models.lgbm_heads import MultiHeadStockModel
-from src.pipeline import resolve_output_path, run_pipeline
+from src.pipeline import _split_oof_for_tuning_and_eval, resolve_output_path, run_pipeline
 
 
 def make_sample_df(days: int = 320):
@@ -65,6 +65,7 @@ def test_multihead_prediction_shapes():
     latest = feat.sort_values("Date").groupby("Symbol", as_index=False).tail(3).fillna(0)
     pred = model.predict(latest)
 
+    assert model.backend in {"lightgbm", "sklearn"}
     assert len(pred.predicted_return) == len(latest)
     assert len(pred.up_probability) == len(latest)
     assert (pred.quantile_high >= pred.quantile_low).all()
@@ -113,3 +114,16 @@ def test_external_features_fail_gracefully_without_noise(monkeypatch):
     assert len(out) == len(raw)
     assert set(raw.columns).issubset(set(out.columns))
     assert not any(c.startswith(("gspc_", "ixic_", "sox_", "vix_")) for c in out.columns)
+
+
+def test_split_oof_for_tuning_and_eval():
+    df = make_sample_df(days=40)
+    df = df[["Date", "Symbol"]].copy()
+    df["signal_score"] = 0.1
+    df["target_log_return"] = 0.0
+
+    tune_df, eval_df = _split_oof_for_tuning_and_eval(df, tune_ratio=0.7)
+
+    assert not tune_df.empty
+    assert not eval_df.empty
+    assert tune_df["Date"].max() < eval_df["Date"].min()

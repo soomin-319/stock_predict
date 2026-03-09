@@ -85,6 +85,22 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame, top_n: int = 10):
     print(top.to_string(index=False))
 
 
+def _split_oof_for_tuning_and_eval(scored_oof: pd.DataFrame, tune_ratio: float = 0.7) -> tuple[pd.DataFrame, pd.DataFrame]:
+    dates = sorted(pd.to_datetime(scored_oof["Date"]).dropna().unique())
+    if len(dates) < 10:
+        return scored_oof.copy(), scored_oof.copy()
+
+    split_idx = max(1, min(len(dates) - 1, int(len(dates) * tune_ratio)))
+    tune_dates = set(dates[:split_idx])
+    eval_dates = set(dates[split_idx:])
+
+    tune_df = scored_oof[scored_oof["Date"].isin(tune_dates)].copy()
+    eval_df = scored_oof[scored_oof["Date"].isin(eval_dates)].copy()
+    if tune_df.empty or eval_df.empty:
+        return scored_oof.copy(), scored_oof.copy()
+    return tune_df, eval_df
+
+
 def _prediction_from_oof_df(oof: pd.DataFrame) -> MultiHeadPrediction:
     return MultiHeadPrediction(
         predicted_return=oof["predicted_return"].values,
@@ -154,8 +170,10 @@ def run_pipeline(
     scored_oof = build_prediction_frame(oof, oof_pred, cfg.signal)
     scored_oof["target_log_return"] = oof["target_log_return"].values
 
-    _print_progress(9, total_steps, "Tuning signal weights")
-    tuned = tune_signal_weights(scored_oof)
+    tune_df, eval_df = _split_oof_for_tuning_and_eval(scored_oof, tune_ratio=0.7)
+
+    _print_progress(9, total_steps, "Tuning signal weights (train split)")
+    tuned = tune_signal_weights(tune_df)
     cfg.signal.return_weight = tuned["return_weight"]
     cfg.signal.up_prob_weight = tuned["up_prob_weight"]
     cfg.signal.rel_strength_weight = tuned["rel_strength_weight"]
@@ -164,8 +182,9 @@ def run_pipeline(
     scored_oof = build_prediction_frame(oof, oof_pred, cfg.signal)
     scored_oof["target_log_return"] = oof["target_log_return"].values
 
-    _print_progress(10, total_steps, "Running backtest and creating figures")
-    backtest = run_long_only_topk_backtest(scored_oof, cfg.backtest)
+    _print_progress(10, total_steps, "Running backtest on holdout split and creating figures")
+    backtest_input = eval_df if not eval_df.empty else scored_oof
+    backtest = run_long_only_topk_backtest(backtest_input, cfg.backtest)
     backtest_series = pd.DataFrame(backtest.get("series", []))
     fig_paths = save_backtest_figures(backtest_series, figure_dir)
     signal_hist = save_signal_histogram(scored_oof, figure_dir)
@@ -193,6 +212,8 @@ def run_pipeline(
         "walk_forward": wf_summary,
         "baselines": baseline_summary,
         "tuned_signal": tuned,
+        "tuning_samples": int(len(tune_df)),
+        "backtest_samples": int(len(backtest_input)),
         "backtest": {k: v for k, v in backtest.items() if k != "series"},
         "artifacts": {
             "predictions_csv": str(output_path),

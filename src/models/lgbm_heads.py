@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
+
+try:
+    import lightgbm as lgb
+
+    LIGHTGBM_AVAILABLE = True
+except Exception:  # pragma: no cover - fallback path
+    lgb = None
+    LIGHTGBM_AVAILABLE = False
 
 
 @dataclass
@@ -28,9 +36,27 @@ class MultiHeadStockModel:
         self._feature_columns: List[str] = []
         self.reg_model = None
         self.cls_model = None
-        self.quantile_models: Dict[float, GradientBoostingRegressor] = {}
+        self.quantile_models: Dict[float, Any] = {}
+        self.backend: str = "lightgbm" if LIGHTGBM_AVAILABLE else "sklearn"
 
     def _build_regressor(self, loss: str = "squared_error", alpha: float | None = None):
+        if LIGHTGBM_AVAILABLE:
+            params = dict(
+                random_state=self.random_state,
+                n_estimators=400,
+                learning_rate=0.03,
+                num_leaves=31,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                verbose=-1,
+            )
+            if loss == "quantile":
+                params["objective"] = "quantile"
+                params["alpha"] = alpha
+            else:
+                params["objective"] = "regression"
+            return lgb.LGBMRegressor(**params)
+
         kwargs = dict(random_state=self.random_state, n_estimators=250, learning_rate=0.03, max_depth=3)
         if loss == "quantile":
             kwargs["loss"] = "quantile"
@@ -38,6 +64,26 @@ class MultiHeadStockModel:
         else:
             kwargs["loss"] = loss
         return GradientBoostingRegressor(**kwargs)
+
+    def _build_classifier(self):
+        if LIGHTGBM_AVAILABLE:
+            return lgb.LGBMClassifier(
+                objective="binary",
+                random_state=self.random_state,
+                n_estimators=400,
+                learning_rate=0.03,
+                num_leaves=31,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                verbose=-1,
+            )
+
+        return GradientBoostingClassifier(
+            random_state=self.random_state,
+            n_estimators=250,
+            learning_rate=0.03,
+            max_depth=3,
+        )
 
     def fit(self, df: pd.DataFrame, feature_columns: List[str], quantiles: List[float]):
         train = df.dropna(subset=feature_columns + ["target_log_return", "target_up"])
@@ -49,12 +95,7 @@ class MultiHeadStockModel:
         self.reg_model = self._build_regressor()
         self.reg_model.fit(x, y_reg)
 
-        self.cls_model = GradientBoostingClassifier(
-            random_state=self.random_state,
-            n_estimators=250,
-            learning_rate=0.03,
-            max_depth=3,
-        )
+        self.cls_model = self._build_classifier()
         self.cls_model.fit(x, y_cls)
 
         self.quantile_models = {}
@@ -67,8 +108,7 @@ class MultiHeadStockModel:
         if not self._feature_columns:
             raise RuntimeError("Model is not fitted.")
 
-        x = df[self._feature_columns].copy()
-        x = x.fillna(0)
+        x = df[self._feature_columns].copy().fillna(0)
 
         predicted_return = self.reg_model.predict(x)
         up_probability = self.cls_model.predict_proba(x)[:, 1]

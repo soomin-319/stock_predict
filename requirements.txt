@@ -4,3 +4,4 @@ scikit-learn
 pytest
 yfinance
 matplotlib
+lightgbm

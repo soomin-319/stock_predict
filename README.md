@@ -59,3 +59,9 @@ python src/pipeline.py   --input data/real_ohlcv.csv   --output /tmp/predictions
 
 ## 상세 기능 문서
 - 프로젝트 전체 기능 요약: `docs/PROJECT_FEATURES_OVERVIEW.md`
+
+
+## Week1 구현 반영 사항
+- 모델 백엔드 고도화: `MultiHeadStockModel`이 LightGBM 사용 가능 시 LightGBM을 우선 사용하고, 미설치 환경에서는 sklearn GBDT로 자동 fallback합니다.
+- 신호 튜닝/백테스트 분리: OOF 데이터를 시간순으로 분할해(기본 70:30) 앞 구간에서 가중치 튜닝, 뒤 구간(holdout)에서 백테스트를 수행하도록 개선했습니다.
+- 리포트 확장: `tuning_samples`, `backtest_samples`를 JSON에 기록해 튜닝/평가 샘플 규모를 확인할 수 있습니다.
