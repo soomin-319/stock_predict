@@ -132,20 +132,26 @@ def _pad_display(text: str, width: int, align: str = "left") -> str:
     return s + " " * pad
 
 
+def _recommendation_from_signal(signal_label: str, predicted_return: float | int | None) -> str:
+    if pd.isna(predicted_return):
+        return "관망"
+
+    label = str(signal_label)
+    ret = float(predicted_return)
+
+    if "positive" in label and ret > 0:
+        return "매수"
+    if "negative" in label and ret < 0:
+        return "매도"
+    return "관망"
+
+
 def _print_prediction_console_summary(pred_df: pd.DataFrame, top_n: int = 10):
     if pred_df.empty:
         print("\n=== Top predictions ===")
         print("(no rows)")
         return
 
-    label_to_action = {
-        "strong_positive": "매수",
-        "weak_positive": "매수",
-        "neutral": "관망",
-        "weak_negative": "매도",
-        "strong_negative": "매도",
-        "no_data": "관망",
-    }
     label_to_ko = {
         "strong_positive": "강한매수",
         "weak_positive": "약한매수",
@@ -159,23 +165,27 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame, top_n: int = 10):
     if "symbol_name" not in top.columns:
         top["symbol_name"] = top["Symbol"]
 
-    top["recommendation"] = top["signal_label"].astype(str).map(label_to_action).fillna("관망")
+    top["recommendation"] = top.apply(
+        lambda r: _recommendation_from_signal(r.get("signal_label"), r.get("predicted_return")), axis=1
+    )
     top["signal_label_ko"] = top["signal_label"].astype(str).map(label_to_ko).fillna("중립")
-    top["predicted_price_change"] = (top["predicted_close"] - top["Close"]).round(0).astype("Int64")
+    top["predicted_close_int"] = top["predicted_close"].abs().round(0).astype("Int64")
 
     rows = []
     for _, r in top.iterrows():
+        ret_text = "-" if pd.isna(r["predicted_return"]) else f"{float(r['predicted_return']):,.3f}"
+        pred_close_text = "-" if pd.isna(r["predicted_close_int"]) else f"{int(r['predicted_close_int']):,}"
         rows.append(
             {
                 "종목명": str(r["symbol_name"]),
                 "권고": str(r["recommendation"]),
-                "예상 수익률(%)": f"{float(r['predicted_return']):,.3f}",
-                "예상 수익률 가격": f"{int(r['predicted_price_change']):,}",
+                "예상 수익률(%)": ret_text,
+                "내일 예측 종가": pred_close_text,
                 "시그널 라벨": str(r["signal_label_ko"]),
             }
         )
 
-    headers = ["종목명", "권고", "예상 수익률(%)", "예상 수익률 가격", "시그널 라벨"]
+    headers = ["종목명", "권고", "예상 수익률(%)", "내일 예측 종가", "시그널 라벨"]
     col_widths = {
         h: max(_display_width(h), *( _display_width(row[h]) for row in rows ))
         for h in headers
@@ -191,7 +201,7 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame, top_n: int = 10):
                     _pad_display(row["종목명"], col_widths["종목명"], "left"),
                     _pad_display(row["권고"], col_widths["권고"], "left"),
                     _pad_display(row["예상 수익률(%)"], col_widths["예상 수익률(%)"], "right"),
-                    _pad_display(row["예상 수익률 가격"], col_widths["예상 수익률 가격"], "right"),
+                    _pad_display(row["내일 예측 종가"], col_widths["내일 예측 종가"], "right"),
                     _pad_display(row["시그널 라벨"], col_widths["시그널 라벨"], "left"),
                 ]
             )
@@ -286,6 +296,72 @@ def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: lis
         out["market_regime"] = out["market_regime"].fillna("unknown")
     return out
 
+def _ensure_universe_size(symbols: list[str], expected_size: int) -> list[str]:
+    uniq = list(dict.fromkeys(str(s) for s in symbols))
+    if len(uniq) >= expected_size:
+        return uniq[:expected_size]
+    pads = [f"NO_DATA_{i:03d}" for i in range(1, expected_size - len(uniq) + 1)]
+    return uniq + pads
+
+def _round_floats(obj, digits: int = 3):
+    if isinstance(obj, float):
+        return round(obj, digits)
+    if isinstance(obj, dict):
+        return {k: _round_floats(v, digits) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_round_floats(v, digits) for v in obj]
+    return obj
+
+
+def _compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
+    if scored_oof.empty:
+        return {}
+
+    req = {"target_log_return", "rel_strength", "norm_return", "predicted_log_return", "uncertainty_score", "uncertainty_width"}
+    if not req.issubset(set(scored_oof.columns)):
+        return {}
+
+    df = scored_oof[list(req)].copy().dropna()
+    if df.empty:
+        return {}
+
+    actual_up = (df["target_log_return"] > 0).astype(int)
+
+    rel_dir_acc = float(((df["rel_strength"] > 0).astype(int) == actual_up).mean())
+    norm_dir_acc = float(((df["norm_return"] > 0).astype(int) == actual_up).mean())
+    pred_dir_acc = float(((df["predicted_log_return"] > 0).astype(int) == actual_up).mean())
+
+    abs_error = (df["predicted_log_return"] - df["target_log_return"]).abs()
+
+    return {
+        "direction_accuracy": {
+            "predicted_log_return": pred_dir_acc,
+            "rel_strength": rel_dir_acc,
+            "norm_return": norm_dir_acc,
+        },
+        "uncertainty_diagnostics": {
+            "corr_uncertainty_vs_abs_error": float(df["uncertainty_width"].corr(abs_error)),
+            "corr_uncertainty_score_vs_abs_error": float(df["uncertainty_score"].corr(abs_error)),
+            "uncertainty_score_zero_ratio": float((df["uncertainty_score"] == 0).mean()),
+            "uncertainty_score_mean": float(df["uncertainty_score"].mean()),
+        },
+    }
+
+
+def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: list[str] | None) -> pd.DataFrame:
+    if not universe_symbols:
+        return pred_df
+
+    universe = pd.DataFrame({"Symbol": sorted(set(str(s) for s in universe_symbols))})
+    out = universe.merge(pred_df, on="Symbol", how="left")
+    if "signal_label" in out.columns:
+        out["signal_label"] = out["signal_label"].astype(object).fillna("no_data")
+    if "Date" in out.columns:
+        out["Date"] = out["Date"].fillna(pd.Timestamp.today().normalize())
+    if "market_regime" in out.columns:
+        out["market_regime"] = out["market_regime"].fillna("unknown")
+    return out
+
 def run_pipeline(
     input_csv: str,
     output_csv: str,
@@ -314,10 +390,16 @@ def run_pipeline(
             requested_universe_symbols = get_kospi200_kosdaq150_symbols()
             data = filter_by_universe(cleaned, requested_universe_symbols)
             if data.empty:
-                requested_universe_symbols = sorted(cleaned["Symbol"].astype(str).unique().tolist())
+                requested_universe_symbols = _ensure_universe_size(
+                    sorted(cleaned["Symbol"].astype(str).unique().tolist()),
+                    cfg.universe.expected_size,
+                )
                 data = cleaned.copy()
         except Exception:
-            requested_universe_symbols = sorted(cleaned["Symbol"].astype(str).unique().tolist())
+            requested_universe_symbols = _ensure_universe_size(
+                sorted(cleaned["Symbol"].astype(str).unique().tolist()),
+                cfg.universe.expected_size,
+            )
             data = cleaned.copy()
 
     _print_progress(4, total_steps, "Building price features")
