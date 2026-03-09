@@ -94,6 +94,11 @@ def _prediction_from_oof_df(oof: pd.DataFrame) -> MultiHeadPrediction:
         quantile_high=oof["quantile_high"].values,
     )
 
+def _print_progress(step: int, total: int, message: str):
+    print(f"[{step}/{total}] {message}")
+
+
+
 
 def run_pipeline(
     input_csv: str,
@@ -103,24 +108,32 @@ def run_pipeline(
     figure_dir: str = "reports/figures",
     use_external: bool = True,
 ):
+    total_steps = 12
+    _print_progress(1, total_steps, "Loading app configuration")
     cfg = AppConfig()
+
+    _print_progress(2, total_steps, f"Loading input data: {input_csv}")
 
     raw = load_ohlcv_csv(input_csv)
     cleaned = clean_ohlcv(raw)
 
+    _print_progress(3, total_steps, "Applying data cleaning and universe filter")
     if universe_csv:
         universe = load_universe_symbols(universe_csv, cfg.universe)
         data = filter_by_universe(cleaned, universe)
     else:
         data = cleaned.copy()
 
+    _print_progress(4, total_steps, "Building price features")
     feat = build_features(data, cfg.feature)
+    _print_progress(5, total_steps, "Adding external market features")
     if cfg.external.enabled and use_external:
         feat = add_external_market_features(feat, cfg.external.market_symbols)
     feat = annotate_market_regime(feat)
     feat = feat.dropna(subset=["target_log_return"]).copy()
     feature_columns = _feature_columns(feat)
 
+    _print_progress(6, total_steps, "Running walk-forward validation")
     folds = walk_forward_validate(feat, feature_columns, cfg.training)
     effective_cfg = cfg.training
     if not folds:
@@ -128,8 +141,11 @@ def run_pipeline(
         folds = walk_forward_validate(feat, feature_columns, effective_cfg)
 
     wf_summary = pd.DataFrame([f.metrics for f in folds]).mean().to_dict() if folds else {}
+
+    _print_progress(7, total_steps, "Evaluating baselines")
     baseline_summary = evaluate_baselines(feat)
 
+    _print_progress(8, total_steps, "Generating OOF predictions")
     oof = walk_forward_oof_predictions(feat, feature_columns, effective_cfg)
     if oof.empty:
         raise RuntimeError("OOF predictions are empty. Increase data length or adjust training window.")
@@ -138,6 +154,7 @@ def run_pipeline(
     scored_oof = build_prediction_frame(oof, oof_pred, cfg.signal)
     scored_oof["target_log_return"] = oof["target_log_return"].values
 
+    _print_progress(9, total_steps, "Tuning signal weights")
     tuned = tune_signal_weights(scored_oof)
     cfg.signal.return_weight = tuned["return_weight"]
     cfg.signal.up_prob_weight = tuned["up_prob_weight"]
@@ -147,11 +164,13 @@ def run_pipeline(
     scored_oof = build_prediction_frame(oof, oof_pred, cfg.signal)
     scored_oof["target_log_return"] = oof["target_log_return"].values
 
+    _print_progress(10, total_steps, "Running backtest and creating figures")
     backtest = run_long_only_topk_backtest(scored_oof, cfg.backtest)
     backtest_series = pd.DataFrame(backtest.get("series", []))
     fig_paths = save_backtest_figures(backtest_series, figure_dir)
     signal_hist = save_signal_histogram(scored_oof, figure_dir)
 
+    _print_progress(11, total_steps, "Training final model and creating latest predictions")
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
     model = MultiHeadStockModel(random_state=cfg.training.random_state)
     model.fit(train_df, feature_columns, cfg.training.quantiles)
@@ -160,6 +179,7 @@ def run_pipeline(
     latest_pred = model.predict(latest)
     pred_df = build_prediction_frame(latest, latest_pred, cfg.signal)
 
+    _print_progress(12, total_steps, "Saving artifacts")
     output_path = resolve_output_path(output_csv)
     pred_df.to_csv(output_path, index=False)
 
@@ -188,7 +208,6 @@ def run_pipeline(
         report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False))
         print(f"Saved report to {report_path}")
 
-    print("Pipeline summary:", json.dumps(report, ensure_ascii=False))
     _print_prediction_console_summary(pred_df, top_n=min(10, len(pred_df)))
     print(f"Saved inference output to {output_path}")
 
