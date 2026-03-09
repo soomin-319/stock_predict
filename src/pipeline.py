@@ -32,14 +32,44 @@ from src.validation.signal_tuning import tune_signal_weights
 from src.validation.walk_forward import walk_forward_oof_predictions, walk_forward_validate
 
 
+def _project_result_dir() -> Path:
+    root = Path(__file__).resolve().parents[1]
+    out = root / "result"
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
 def resolve_output_path(output_csv: str, is_windows: bool | None = None) -> Path:
-    win = (os.name == "nt") if is_windows is None else is_windows
-    if win and output_csv.startswith("/tmp/"):
-        output_path = Path(tempfile.gettempdir()) / output_csv[len("/tmp/") :]
-    else:
-        output_path = Path(output_csv)
+    """Force all file outputs under project-local ./result directory."""
+    _ = (os.name == "nt") if is_windows is None else is_windows
+    requested = Path(output_csv)
+    result_dir = _project_result_dir()
+
+    # keep explicit paths already inside result dir; otherwise redirect by filename
+    try:
+        if requested.is_absolute() and requested.resolve().is_relative_to(result_dir.resolve()):
+            output_path = requested
+        else:
+            output_path = result_dir / requested.name
+    except Exception:
+        output_path = result_dir / requested.name
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     return output_path
+
+
+def resolve_output_dir(output_dir: str) -> Path:
+    requested = Path(output_dir)
+    result_dir = _project_result_dir()
+    try:
+        if requested.is_absolute() and requested.resolve().is_relative_to(result_dir.resolve()):
+            out_dir = requested
+        else:
+            out_dir = result_dir / requested.name
+    except Exception:
+        out_dir = result_dir / requested.name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir
 
 
 def _feature_columns(df: pd.DataFrame) -> list[str]:
@@ -188,8 +218,9 @@ def run_pipeline(
     backtest_input = eval_df if not eval_df.empty else scored_oof
     backtest = run_long_only_topk_backtest(backtest_input, cfg.backtest)
     backtest_series = pd.DataFrame(backtest.get("series", []))
-    fig_paths = save_backtest_figures(backtest_series, figure_dir)
-    signal_hist = save_signal_histogram(scored_oof, figure_dir)
+    figure_dir_path = resolve_output_dir(figure_dir)
+    fig_paths = save_backtest_figures(backtest_series, str(figure_dir_path))
+    signal_hist = save_signal_histogram(scored_oof, str(figure_dir_path))
 
     _print_progress(11, total_steps, "Training final model and creating latest predictions")
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
@@ -204,7 +235,7 @@ def run_pipeline(
     output_path = resolve_output_path(output_csv)
     pred_df.to_csv(output_path, index=False)
 
-    oof_path = resolve_output_path("reports/oof_predictions.csv")
+    oof_path = resolve_output_path("oof_predictions.csv")
     scored_oof.to_csv(oof_path, index=False)
 
     report = {
@@ -221,7 +252,7 @@ def run_pipeline(
         "artifacts": {
             "predictions_csv": str(output_path),
             "oof_predictions_csv": str(oof_path),
-            "figure_dir": figure_dir,
+            "figure_dir": str(figure_dir_path),
             **fig_paths,
             "signal_hist": signal_hist,
         },

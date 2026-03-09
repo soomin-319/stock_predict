@@ -1,5 +1,4 @@
 import json
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -78,7 +77,7 @@ def test_resolve_output_path_creates_parent(tmp_path):
 
 def test_resolve_output_path_windows_tmp_mapping():
     out = resolve_output_path("/tmp/predictions.csv", is_windows=True)
-    assert str(out).startswith(tempfile.gettempdir())
+    assert out.parent.name == "result"
     assert out.name == "predictions.csv"
 
 
@@ -89,9 +88,13 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     fig = tmp_path / "figures"
     run_pipeline(str(inp), str(out), universe_csv=None, report_json=str(rep), figure_dir=str(fig), use_external=False)
 
-    assert out.exists()
-    assert rep.exists()
-    payload = json.loads(rep.read_text())
+    result_dir = Path("result")
+    assert result_dir.exists()
+    pred_path = result_dir / out.name
+    report_path = result_dir / rep.name
+    assert pred_path.exists()
+    assert report_path.exists()
+    payload = json.loads(report_path.read_text())
     assert "walk_forward" in payload
     assert "baselines" in payload
     assert "tuned_signal" in payload
