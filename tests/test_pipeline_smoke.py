@@ -97,3 +97,19 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "backtest" in payload
     assert "artifacts" in payload
     assert Path(payload["artifacts"]["oof_predictions_csv"]).exists()
+
+
+def test_external_features_fail_gracefully_without_noise(monkeypatch):
+    from src.features.external_features import add_external_market_features
+
+    def _fail(*args, **kwargs):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr("yfinance.download", _fail)
+
+    raw = make_sample_df(days=30)
+    out = add_external_market_features(raw, ["^GSPC", "^IXIC", "^SOX", "^VIX"])
+
+    assert len(out) == len(raw)
+    assert set(raw.columns).issubset(set(out.columns))
+    assert not any(c.startswith(("gspc_", "ixic_", "sox_", "vix_")) for c in out.columns)
