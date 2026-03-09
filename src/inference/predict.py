@@ -26,15 +26,15 @@ def build_prediction_frame(
     out["uncertainty_width"] = pred.quantile_high - pred.quantile_low
     out["uncertainty_band"] = pred.quantile_low.astype(str) + " ~ " + pred.quantile_high.astype(str)
 
-    rel_strength = normalize_series(out["predicted_return"])
-    uncertainty_score = normalize_series(out["uncertainty_width"]).clip(lower=0)
-    norm_return = normalize_series(out["predicted_return"])
+    out["rel_strength"] = normalize_series(out["predicted_return"])
+    out["uncertainty_score"] = normalize_series(out["uncertainty_width"]).clip(lower=0)
+    out["norm_return"] = normalize_series(out["predicted_return"])
 
     out["signal_score"] = (
-        signal_cfg.return_weight * norm_return
+        signal_cfg.return_weight * out["norm_return"]
         + signal_cfg.up_prob_weight * out["up_probability"]
-        + signal_cfg.rel_strength_weight * rel_strength
-        - signal_cfg.uncertainty_penalty * uncertainty_score
+        + signal_cfg.rel_strength_weight * out["rel_strength"]
+        - signal_cfg.uncertainty_penalty * out["uncertainty_score"]
     )
     out["signal_label"] = pd.cut(
         out["signal_score"],

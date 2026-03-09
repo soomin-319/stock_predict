@@ -3,6 +3,14 @@ from typing import List
 
 
 @dataclass
+class UniverseConfig:
+    name: str = "KOSPI200_KOSDAQ150"
+    expected_size: int = 350
+    default_kospi_count: int = 200
+    default_kosdaq_count: int = 150
+
+
+@dataclass
 class FeatureConfig:
     lookback_windows: List[int] = field(default_factory=lambda: [1, 2, 3, 5, 10, 20, 60])
     moving_average_windows: List[int] = field(default_factory=lambda: [5, 10, 20, 60, 120])
@@ -28,7 +36,16 @@ class SignalConfig:
 
 
 @dataclass
+class BacktestConfig:
+    top_k: int = 20
+    fee_bps: float = 10.0
+    slippage_bps: float = 5.0
+
+
+@dataclass
 class AppConfig:
+    universe: UniverseConfig = field(default_factory=UniverseConfig)
     feature: FeatureConfig = field(default_factory=FeatureConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     signal: SignalConfig = field(default_factory=SignalConfig)
+    backtest: BacktestConfig = field(default_factory=BacktestConfig)

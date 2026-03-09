@@ -1,3 +1,4 @@
+import json
 import tempfile
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from src.config.settings import AppConfig
 from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
 from src.models.lgbm_heads import MultiHeadStockModel
-from src.pipeline import resolve_output_path
+from src.pipeline import resolve_output_path, run_pipeline
 
 
 def make_sample_df(days: int = 320):
@@ -61,3 +62,18 @@ def test_resolve_output_path_windows_tmp_mapping():
     out = resolve_output_path("/tmp/predictions.csv", is_windows=True)
     assert str(out).startswith(tempfile.gettempdir())
     assert out.name == "predictions.csv"
+
+
+def test_run_pipeline_generates_report(tmp_path):
+    inp = Path("data/sample_ohlcv.csv")
+    out = tmp_path / "predictions.csv"
+    rep = tmp_path / "report.json"
+    run_pipeline(str(inp), str(out), universe_csv=None, report_json=str(rep))
+
+    assert out.exists()
+    assert rep.exists()
+    payload = json.loads(rep.read_text())
+    assert "walk_forward" in payload
+    assert "baselines" in payload
+    assert "tuned_signal" in payload
+    assert "backtest" in payload
