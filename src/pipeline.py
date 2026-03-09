@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import tempfile
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
@@ -116,6 +117,21 @@ def _adaptive_training_cfg(cfg, feat: pd.DataFrame):
     return tuned
 
 
+def _display_width(text: str) -> int:
+    width = 0
+    for ch in str(text):
+        width += 2 if unicodedata.east_asian_width(ch) in {"W", "F"} else 1
+    return width
+
+
+def _pad_display(text: str, width: int, align: str = "left") -> str:
+    s = str(text)
+    pad = max(0, width - _display_width(s))
+    if align == "right":
+        return " " * pad + s
+    return s + " " * pad
+
+
 def _print_prediction_console_summary(pred_df: pd.DataFrame, top_n: int = 10):
     if pred_df.empty:
         print("\n=== Top predictions ===")
@@ -145,36 +161,41 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame, top_n: int = 10):
 
     top["recommendation"] = top["signal_label"].astype(str).map(label_to_action).fillna("관망")
     top["signal_label_ko"] = top["signal_label"].astype(str).map(label_to_ko).fillna("중립")
-    top["predicted_price_change"] = top["predicted_close"] - top["Close"]
+    top["predicted_price_change"] = (top["predicted_close"] - top["Close"]).round(0).astype("Int64")
 
-    display_df = pd.DataFrame(
-        {
-            "종목명": top["symbol_name"].astype(str),
-            "권고": top["recommendation"].astype(str),
-            "예상 수익률(%)": top["predicted_return"].astype(float),
-            "예상 수익률 가격": top["predicted_price_change"].astype(float),
-            "시그널 라벨": top["signal_label_ko"].astype(str),
-        }
-    )
+    rows = []
+    for _, r in top.iterrows():
+        rows.append(
+            {
+                "종목명": str(r["symbol_name"]),
+                "권고": str(r["recommendation"]),
+                "예상 수익률(%)": f"{float(r['predicted_return']):,.3f}",
+                "예상 수익률 가격": f"{int(r['predicted_price_change']):,}",
+                "시그널 라벨": str(r["signal_label_ko"]),
+            }
+        )
+
+    headers = ["종목명", "권고", "예상 수익률(%)", "예상 수익률 가격", "시그널 라벨"]
+    col_widths = {
+        h: max(_display_width(h), *( _display_width(row[h]) for row in rows ))
+        for h in headers
+    }
 
     print("\n=== Top predictions ===")
-    print(
-        display_df.to_string(
-            index=False,
-            justify="left",
-            formatters={
-                "예상 수익률(%)": lambda x: f"{x:,.3f}",
-                "예상 수익률 가격": lambda x: f"{x:,.3f}",
-            },
-            col_space={
-                "종목명": 14,
-                "권고": 6,
-                "예상 수익률(%)": 14,
-                "예상 수익률 가격": 16,
-                "시그널 라벨": 10,
-            },
+    header_line = "  ".join(_pad_display(h, col_widths[h], "left") for h in headers)
+    print(header_line)
+    for row in rows:
+        print(
+            "  ".join(
+                [
+                    _pad_display(row["종목명"], col_widths["종목명"], "left"),
+                    _pad_display(row["권고"], col_widths["권고"], "left"),
+                    _pad_display(row["예상 수익률(%)"], col_widths["예상 수익률(%)"], "right"),
+                    _pad_display(row["예상 수익률 가격"], col_widths["예상 수익률 가격"], "right"),
+                    _pad_display(row["시그널 라벨"], col_widths["시그널 라벨"], "left"),
+                ]
+            )
         )
-    )
 
 
 def _split_oof_for_tuning_and_eval(scored_oof: pd.DataFrame, tune_ratio: float = 0.7) -> tuple[pd.DataFrame, pd.DataFrame]:
