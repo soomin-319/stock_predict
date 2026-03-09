@@ -1,0 +1,154 @@
+import json
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from src.config.settings import AppConfig
+from src.features.price_features import build_features
+from src.features.regime_features import annotate_market_regime
+from src.models.lgbm_heads import MultiHeadStockModel
+from src.pipeline import _split_oof_for_tuning_and_eval, resolve_output_path, run_pipeline
+
+
+def make_sample_df(days: int = 320):
+    rng = np.random.default_rng(42)
+    dates = pd.date_range("2023-01-01", periods=days, freq="B")
+    rows = []
+    for symbol in ["AAA", "BBB"]:
+        price = 100.0
+        for d in dates:
+            ret = rng.normal(0.0005, 0.02)
+            open_p = price
+            close_p = price * (1 + ret)
+            high = max(open_p, close_p) * (1 + abs(rng.normal(0, 0.005)))
+            low = min(open_p, close_p) * (1 - abs(rng.normal(0, 0.005)))
+            vol = int(rng.integers(100000, 500000))
+            rows.append([d, symbol, open_p, high, low, close_p, vol])
+            price = close_p
+    return pd.DataFrame(rows, columns=["Date", "Symbol", "Open", "High", "Low", "Close", "Volume"])
+
+
+def test_multihead_prediction_shapes():
+    cfg = AppConfig()
+    raw = make_sample_df()
+    feat = annotate_market_regime(build_features(raw, cfg.feature))
+    feature_columns = [
+        c
+        for c in feat.columns
+        if c.startswith(("ret_", "ma_", "close_to_ma_", "vol_"))
+        or c
+        in {
+            "daily_return",
+            "gap_return",
+            "intraday_return",
+            "range_pct",
+            "vol_ratio_20",
+            "rsi_14",
+            "macd",
+            "macd_signal",
+            "macd_hist",
+            "atr_14",
+            "stoch_k",
+            "stoch_d",
+            "cci_20",
+            "obv",
+            "obv_change_5d",
+        }
+    ]
+
+    train = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
+    model = MultiHeadStockModel(random_state=cfg.training.random_state)
+    model.fit(train, feature_columns, cfg.training.quantiles)
+
+    latest = feat.sort_values("Date").groupby("Symbol", as_index=False).tail(3).fillna(0)
+    pred = model.predict(latest)
+
+    assert model.backend in {"lightgbm", "sklearn"}
+    assert len(pred.predicted_return) == len(latest)
+    assert len(pred.up_probability) == len(latest)
+    assert (pred.quantile_high >= pred.quantile_low).all()
+
+
+def test_resolve_output_path_creates_parent(tmp_path):
+    out = resolve_output_path(str(tmp_path / "nested" / "predictions.csv"), is_windows=False)
+    assert out.parent.exists()
+
+
+def test_resolve_output_path_windows_tmp_mapping():
+    out = resolve_output_path("/tmp/predictions.csv", is_windows=True)
+    assert out.parent.name == "result"
+    assert out.name == "predictions.csv"
+
+
+def test_run_pipeline_generates_report_and_figures(tmp_path):
+    inp = Path("data/sample_ohlcv.csv")
+    out = tmp_path / "predictions.csv"
+    rep = tmp_path / "report.json"
+    fig = tmp_path / "figures"
+    run_pipeline(str(inp), str(out), universe_csv=None, report_json=str(rep), figure_dir=str(fig), use_external=False)
+
+    result_dir = Path("result")
+    assert result_dir.exists()
+    pred_path = result_dir / out.name
+    report_path = result_dir / rep.name
+    assert pred_path.exists()
+    assert report_path.exists()
+    payload = json.loads(report_path.read_text())
+    assert "walk_forward" in payload
+    assert "baselines" in payload
+    assert "tuned_signal" in payload
+    assert "backtest" in payload
+    assert "artifacts" in payload
+    assert "external_feature_coverage" in payload
+    assert "tuning_samples" in payload
+    assert "backtest_samples" in payload
+    assert "avg_turnover" in payload["backtest"]
+    assert "avg_selected_count" in payload["backtest"]
+    assert Path(payload["artifacts"]["oof_predictions_csv"]).exists()
+
+
+def test_external_features_fail_gracefully_without_noise(monkeypatch):
+    from src.features.external_features import add_external_market_features
+
+    def _fail(*args, **kwargs):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr("yfinance.download", _fail)
+
+    raw = make_sample_df(days=30)
+    out = add_external_market_features(raw, ["^GSPC", "^IXIC", "^SOX", "^VIX"])
+
+    assert len(out) == len(raw)
+    assert set(raw.columns).issubset(set(out.columns))
+    assert not any(c.startswith(("gspc_", "ixic_", "sox_", "vix_")) for c in out.columns)
+
+
+def test_split_oof_for_tuning_and_eval():
+    df = make_sample_df(days=40)
+    df = df[["Date", "Symbol"]].copy()
+    df["signal_score"] = 0.1
+    df["target_log_return"] = 0.0
+
+    tune_df, eval_df = _split_oof_for_tuning_and_eval(df, tune_ratio=0.7)
+
+    assert not tune_df.empty
+    assert not eval_df.empty
+    assert tune_df["Date"].max() < eval_df["Date"].min()
+
+
+def test_external_feature_coverage_fields(monkeypatch):
+    from src.features.external_features import add_external_market_features_with_coverage
+
+    def _fail(*args, **kwargs):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr("yfinance.download", _fail)
+
+    raw = make_sample_df(days=20)
+    out, coverage = add_external_market_features_with_coverage(raw, ["^GSPC", "^IXIC"]) 
+
+    assert len(out) == len(raw)
+    assert coverage["requested"] == 2
+    assert coverage["successful"] == 0
+    assert coverage["failed"] == 2
