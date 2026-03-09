@@ -15,6 +15,18 @@ python src/pipeline.py --fetch-real
 - 기본 실데이터 티커: `005930.KS`, `000660.KS`, `035420.KS`, `051910.KS`, `207940.KS`
 - 기본 저장 경로: `data/real_ohlcv.csv`
 - 기본 예측 출력 경로: `C:\Users\카운\Desktop\predictions_direct.csv`
+설계 문서의 핵심 권장사항(다음날 로그수익률 + 방향분류 + 불확실성 구간 + 신호 점수)을 반영한 **초기 베이스라인 코드**입니다.
+
+## 포함 기능
+- 다음날 로그수익률 타깃 생성
+- 상승/하락 분류 타깃 생성
+- 기술적 파생 특징 생성(수익률, 이동평균, 변동성, RSI, 거래량 비율)
+- 멀티헤드 모델
+  - 회귀(head 1)
+  - 분류(head 2)
+  - 분위수 회귀 기반 불확실성(head 3)
+- Walk-forward 검증
+- 최종 출력: `predicted_return`, `predicted_close`, `up_probability`, `uncertainty_band`, `signal_score`
 
 ## 설치 후 실행(권장)
 ```bash
@@ -34,6 +46,9 @@ python src/pipeline.py \
   --input data/real_ohlcv.csv \
   --universe-csv data/your_universe.csv \
   --output C:\Users\카운\Desktop\predictions_direct.csv \
+  --input data/your_ohlcv.csv \
+  --universe-csv data/your_universe.csv \
+  --output output/predictions.csv \
   --report-json reports/pipeline_report.json
 ```
 
