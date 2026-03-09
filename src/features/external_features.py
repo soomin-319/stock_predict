@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import logging
 import warnings
 
 import pandas as pd
@@ -11,6 +12,11 @@ import yfinance as yf
 def _safe_download(symbol: str, start: str, end: str | None) -> pd.Series:
     """Download close series without leaking provider noise to console."""
     try:
+        yf_logger = logging.getLogger("yfinance")
+        prev_level = yf_logger.level
+        prev_disabled = yf_logger.disabled
+        yf_logger.disabled = True
+        yf_logger.setLevel(logging.CRITICAL)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -22,6 +28,8 @@ def _safe_download(symbol: str, start: str, end: str | None) -> pd.Series:
                     progress=False,
                     threads=False,
                 )
+        yf_logger.disabled = prev_disabled
+        yf_logger.setLevel(prev_level)
         if df is None or df.empty:
             return pd.Series(dtype=float)
         if isinstance(df.columns, pd.MultiIndex):
@@ -33,6 +41,12 @@ def _safe_download(symbol: str, start: str, end: str | None) -> pd.Series:
         return s
     except Exception:
         return pd.Series(dtype=float)
+    finally:
+        try:
+            yf_logger.disabled = prev_disabled
+            yf_logger.setLevel(prev_level)
+        except Exception:
+            pass
 
 
 def _symbol_candidates(symbol: str) -> tuple[str, list[str]]:
