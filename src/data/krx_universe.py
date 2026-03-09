@@ -4,24 +4,24 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
-try:
-    from pykrx import stock
 
-    PYKRX_AVAILABLE = True
-except Exception:  # pragma: no cover
-    stock = None
-    PYKRX_AVAILABLE = False
+def _import_pykrx_stock():
+    try:
+        from pykrx import stock
+
+        return stock
+    except Exception as exc:  # pragma: no cover
+        raise RuntimeError("pykrx is required to auto-build KOSPI200+KOSDAQ150 universe") from exc
 
 
-def _latest_business_day() -> str:
+def _latest_business_day(stock) -> str:
     d = datetime.now().date()
     for _ in range(14):
         s = d.strftime("%Y%m%d")
         try:
-            if PYKRX_AVAILABLE:
-                # empty on holidays/weekends
-                if not stock.get_market_ohlcv_by_ticker(s).empty:
-                    return s
+            # empty on holidays/weekends
+            if not stock.get_market_ohlcv_by_ticker(s).empty:
+                return s
         except Exception:
             pass
         d -= timedelta(days=1)
@@ -30,10 +30,9 @@ def _latest_business_day() -> str:
 
 def get_kospi200_kosdaq150_symbols(as_of: str | None = None) -> list[str]:
     """Return 350 yfinance-compatible tickers (.KS/.KQ) by market cap ranking."""
-    if not PYKRX_AVAILABLE:
-        raise RuntimeError("pykrx is required to auto-build KOSPI200+KOSDAQ150 universe")
+    stock = _import_pykrx_stock()
 
-    date = as_of or _latest_business_day()
+    date = as_of or _latest_business_day(stock)
     kospi = stock.get_market_cap_by_ticker(date, market="KOSPI")
     kosdaq = stock.get_market_cap_by_ticker(date, market="KOSDAQ")
 
@@ -44,7 +43,6 @@ def get_kospi200_kosdaq150_symbols(as_of: str | None = None) -> list[str]:
     kosdaq_top = kosdaq.sort_values("시가총액", ascending=False).head(150).index.tolist()
 
     symbols = [f"{t}.KS" for t in kospi_top] + [f"{t}.KQ" for t in kosdaq_top]
-    # deduplicate while preserving order
     dedup = list(dict.fromkeys(symbols))
     if len(dedup) < 350:
         raise RuntimeError(f"Universe build incomplete: expected 350, got {len(dedup)}")
