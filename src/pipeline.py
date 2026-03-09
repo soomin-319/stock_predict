@@ -165,12 +165,14 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame, top_n: int = 10):
 
     rows = []
     for _, r in top.iterrows():
+        ret_text = "-" if pd.isna(r["predicted_return"]) else f"{float(r['predicted_return']):,.3f}"
+        price_chg_text = "-" if pd.isna(r["predicted_price_change"]) else f"{int(r['predicted_price_change']):,}"
         rows.append(
             {
                 "종목명": str(r["symbol_name"]),
                 "권고": str(r["recommendation"]),
-                "예상 수익률(%)": f"{float(r['predicted_return']):,.3f}",
-                "예상 수익률 가격": f"{int(r['predicted_price_change']):,}",
+                "예상 수익률(%)": ret_text,
+                "예상 수익률 가격": price_chg_text,
                 "시그널 라벨": str(r["signal_label_ko"]),
             }
         )
@@ -286,6 +288,72 @@ def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: lis
         out["market_regime"] = out["market_regime"].fillna("unknown")
     return out
 
+def _ensure_universe_size(symbols: list[str], expected_size: int) -> list[str]:
+    uniq = list(dict.fromkeys(str(s) for s in symbols))
+    if len(uniq) >= expected_size:
+        return uniq[:expected_size]
+    pads = [f"NO_DATA_{i:03d}" for i in range(1, expected_size - len(uniq) + 1)]
+    return uniq + pads
+
+def _round_floats(obj, digits: int = 3):
+    if isinstance(obj, float):
+        return round(obj, digits)
+    if isinstance(obj, dict):
+        return {k: _round_floats(v, digits) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_round_floats(v, digits) for v in obj]
+    return obj
+
+
+def _compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
+    if scored_oof.empty:
+        return {}
+
+    req = {"target_log_return", "rel_strength", "norm_return", "predicted_log_return", "uncertainty_score", "uncertainty_width"}
+    if not req.issubset(set(scored_oof.columns)):
+        return {}
+
+    df = scored_oof[list(req)].copy().dropna()
+    if df.empty:
+        return {}
+
+    actual_up = (df["target_log_return"] > 0).astype(int)
+
+    rel_dir_acc = float(((df["rel_strength"] > 0).astype(int) == actual_up).mean())
+    norm_dir_acc = float(((df["norm_return"] > 0).astype(int) == actual_up).mean())
+    pred_dir_acc = float(((df["predicted_log_return"] > 0).astype(int) == actual_up).mean())
+
+    abs_error = (df["predicted_log_return"] - df["target_log_return"]).abs()
+
+    return {
+        "direction_accuracy": {
+            "predicted_log_return": pred_dir_acc,
+            "rel_strength": rel_dir_acc,
+            "norm_return": norm_dir_acc,
+        },
+        "uncertainty_diagnostics": {
+            "corr_uncertainty_vs_abs_error": float(df["uncertainty_width"].corr(abs_error)),
+            "corr_uncertainty_score_vs_abs_error": float(df["uncertainty_score"].corr(abs_error)),
+            "uncertainty_score_zero_ratio": float((df["uncertainty_score"] == 0).mean()),
+            "uncertainty_score_mean": float(df["uncertainty_score"].mean()),
+        },
+    }
+
+
+def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: list[str] | None) -> pd.DataFrame:
+    if not universe_symbols:
+        return pred_df
+
+    universe = pd.DataFrame({"Symbol": sorted(set(str(s) for s in universe_symbols))})
+    out = universe.merge(pred_df, on="Symbol", how="left")
+    if "signal_label" in out.columns:
+        out["signal_label"] = out["signal_label"].astype(object).fillna("no_data")
+    if "Date" in out.columns:
+        out["Date"] = out["Date"].fillna(pd.Timestamp.today().normalize())
+    if "market_regime" in out.columns:
+        out["market_regime"] = out["market_regime"].fillna("unknown")
+    return out
+
 def run_pipeline(
     input_csv: str,
     output_csv: str,
@@ -314,10 +382,16 @@ def run_pipeline(
             requested_universe_symbols = get_kospi200_kosdaq150_symbols()
             data = filter_by_universe(cleaned, requested_universe_symbols)
             if data.empty:
-                requested_universe_symbols = sorted(cleaned["Symbol"].astype(str).unique().tolist())
+                requested_universe_symbols = _ensure_universe_size(
+                    sorted(cleaned["Symbol"].astype(str).unique().tolist()),
+                    cfg.universe.expected_size,
+                )
                 data = cleaned.copy()
         except Exception:
-            requested_universe_symbols = sorted(cleaned["Symbol"].astype(str).unique().tolist())
+            requested_universe_symbols = _ensure_universe_size(
+                sorted(cleaned["Symbol"].astype(str).unique().tolist()),
+                cfg.universe.expected_size,
+            )
             data = cleaned.copy()
 
     _print_progress(4, total_steps, "Building price features")

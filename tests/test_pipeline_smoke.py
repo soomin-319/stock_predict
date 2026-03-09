@@ -8,7 +8,7 @@ from src.config.settings import AppConfig
 from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
 from src.models.lgbm_heads import MultiHeadStockModel
-from src.pipeline import _split_oof_for_tuning_and_eval, resolve_output_path, run_pipeline
+from src.pipeline import _ensure_universe_size, _split_oof_for_tuning_and_eval, resolve_output_path, run_pipeline
 
 
 def make_sample_df(days: int = 320):
@@ -182,3 +182,10 @@ def test_uncertainty_score_uses_percentile_scale():
 
     assert (out["uncertainty_score"] > 0).all()
     assert (out["uncertainty_score"] <= 1).all()
+
+
+def test_ensure_universe_size_pads_to_expected():
+    out = _ensure_universe_size(["A", "B"], expected_size=5)
+    assert len(out) == 5
+    assert out[:2] == ["A", "B"]
+    assert out[2:] == ["NO_DATA_001", "NO_DATA_002", "NO_DATA_003"]
