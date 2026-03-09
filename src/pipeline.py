@@ -19,6 +19,7 @@ if __package__ is None or __package__ == "":
 
 from src.config.settings import AppConfig
 from src.data.cleaners import clean_ohlcv
+from src.data.fetch_real_data import save_real_ohlcv_csv
 from src.data.loaders import load_ohlcv_csv
 from src.data.universe import filter_by_universe, load_universe_symbols
 from src.features.price_features import build_features
@@ -48,6 +49,13 @@ def _feature_columns(df: pd.DataFrame) -> list[str]:
         if c.startswith(("ret_", "ma_", "close_to_ma_", "vol_"))
         or c in {"daily_return", "gap_return", "intraday_return", "range_pct", "vol_ratio_20", "rsi_14"}
     ]
+
+
+def _print_prediction_console_summary(pred_df: pd.DataFrame, top_n: int = 10):
+    cols = ["Symbol", "predicted_return", "up_probability", "uncertainty_band", "signal_score", "signal_label"]
+    top = pred_df.sort_values("signal_score", ascending=False).head(top_n)[cols].copy()
+    print("\n=== Top predictions ===")
+    print(top.to_string(index=False))
 
 
 def run_pipeline(input_csv: str, output_csv: str, universe_csv: str | None = None, report_json: str | None = None):
@@ -124,17 +132,32 @@ def run_pipeline(input_csv: str, output_csv: str, universe_csv: str | None = Non
         print(f"Saved report to {report_path}")
 
     print("Pipeline summary:", json.dumps(report, ensure_ascii=False))
+    _print_prediction_console_summary(pred_df, top_n=min(10, len(pred_df)))
     print(f"Saved inference output to {output_path}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Stock next-day prediction pipeline")
-    parser.add_argument("--input", required=True, help="OHLCV CSV path")
-    parser.add_argument("--output", default="predictions.csv", help="Output CSV path")
+    parser.add_argument("--input", required=False, default="data/real_ohlcv.csv", help="OHLCV CSV path")
+    parser.add_argument("--output", default=r"C:\Users\카운\Desktop\predictions_direct.csv", help="Output CSV path")
     parser.add_argument("--universe-csv", default=None, help="Optional universe CSV with Symbol column")
     parser.add_argument("--report-json", default="reports/pipeline_report.json", help="Pipeline summary JSON")
+    parser.add_argument("--fetch-real", action="store_true", help="Fetch real OHLCV from yfinance before running")
+    parser.add_argument(
+        "--real-symbols",
+        nargs="*",
+        default=["005930.KS", "000660.KS", "035420.KS", "051910.KS", "207940.KS"],
+        help="Symbols used when --fetch-real is enabled",
+    )
+    parser.add_argument("--real-start", default="2020-01-01", help="Start date for real data fetch")
     args = parser.parse_args()
-    run_pipeline(args.input, args.output, args.universe_csv, args.report_json)
+
+    input_csv = args.input
+    if args.fetch_real:
+        save_real_ohlcv_csv(input_csv, symbols=args.real_symbols, start=args.real_start)
+        print(f"Fetched real market data to {input_csv}")
+
+    run_pipeline(input_csv, args.output, args.universe_csv, args.report_json)
 
 
 if __name__ == "__main__":

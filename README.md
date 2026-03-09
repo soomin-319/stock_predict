@@ -7,6 +7,14 @@
 2. **기준선 비교**: walk-forward + naive baseline(0수익률/전일수익률)
 3. **신호 튜닝**: signal weight grid-search(top decile 수익률 최적화)
 4. **백테스트**: 비용(수수료+슬리피지) 반영 long-only top-k
+
+## 실제 데이터 가져와서 바로 실행
+```bash
+python src/pipeline.py --fetch-real
+```
+- 기본 실데이터 티커: `005930.KS`, `000660.KS`, `035420.KS`, `051910.KS`, `207940.KS`
+- 기본 저장 경로: `data/real_ohlcv.csv`
+- 기본 예측 출력 경로: `C:\Users\카운\Desktop\predictions_direct.csv`
 설계 문서의 핵심 권장사항(다음날 로그수익률 + 방향분류 + 불확실성 구간 + 신호 점수)을 반영한 **초기 베이스라인 코드**입니다.
 
 ## 포함 기능
@@ -23,17 +31,21 @@
 ## 설치 후 실행(권장)
 ```bash
 python -m pip install -e .
-stock-predict --input data/sample_ohlcv.csv --output predictions.csv
+stock-predict --input data/real_ohlcv.csv --output C:\Users\카운\Desktop\predictions_direct.csv
 ```
 
 ## 직접 실행
 ```bash
-python src/pipeline.py --input data/sample_ohlcv.csv --output predictions.csv
+python src/pipeline.py --input data/real_ohlcv.csv --output C:\Users\카운\Desktop\predictions_direct.csv
 ```
 
 ## 실제 운용 권장 실행 예시
 ```bash
 python src/pipeline.py \
+  --fetch-real \
+  --input data/real_ohlcv.csv \
+  --universe-csv data/your_universe.csv \
+  --output C:\Users\카운\Desktop\predictions_direct.csv \
   --input data/your_ohlcv.csv \
   --universe-csv data/your_universe.csv \
   --output output/predictions.csv \
@@ -43,6 +55,11 @@ python src/pipeline.py \
 - `--universe-csv`: `Symbol` 컬럼 필수
   - 실전에서는 KOSPI200+KOSDAQ150 구성 종목을 넣어 고정 유니버스로 운용 권장
 - `--report-json`: 단계 2~4 결과(검증/기준선/튜닝/백테스트) 저장
+
+## 콘솔 출력
+실행 시 아래가 콘솔에 함께 출력됩니다.
+- `Pipeline summary` (검증/기준선/튜닝/백테스트 요약)
+- `Top predictions` (상위 신호 종목 테이블)
 
 ## 입력 CSV 필수 컬럼
 - `Date`, `Open`, `High`, `Low`, `Close`, `Volume`
