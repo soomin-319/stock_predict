@@ -7,6 +7,18 @@
 2. **기준선 비교**: walk-forward + naive baseline(0수익률/전일수익률)
 3. **신호 튜닝**: signal weight grid-search(top decile 수익률 최적화)
 4. **백테스트**: 비용(수수료+슬리피지) 반영 long-only top-k
+설계 문서의 핵심 권장사항(다음날 로그수익률 + 방향분류 + 불확실성 구간 + 신호 점수)을 반영한 **초기 베이스라인 코드**입니다.
+
+## 포함 기능
+- 다음날 로그수익률 타깃 생성
+- 상승/하락 분류 타깃 생성
+- 기술적 파생 특징 생성(수익률, 이동평균, 변동성, RSI, 거래량 비율)
+- 멀티헤드 모델
+  - 회귀(head 1)
+  - 분류(head 2)
+  - 분위수 회귀 기반 불확실성(head 3)
+- Walk-forward 검증
+- 최종 출력: `predicted_return`, `predicted_close`, `up_probability`, `uncertainty_band`, `signal_score`
 
 ## 설치 후 실행(권장)
 ```bash
