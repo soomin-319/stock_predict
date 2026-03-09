@@ -106,6 +106,9 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "avg_turnover" in payload["backtest"]
     assert "avg_selected_count" in payload["backtest"]
     assert Path(payload["artifacts"]["oof_predictions_csv"]).exists()
+    assert Path(payload["artifacts"]["actual_vs_predicted"]).exists()
+    assert Path(payload["artifacts"]["symbol_summary_csv"]).exists()
+    assert Path(payload["artifacts"]["symbol_summary_png"]).exists()
 
 
 def test_external_features_fail_gracefully_without_noise(monkeypatch):

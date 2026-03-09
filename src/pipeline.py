@@ -25,7 +25,12 @@ from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
 from src.inference.predict import build_prediction_frame
 from src.models.lgbm_heads import MultiHeadPrediction, MultiHeadStockModel
-from src.reports.visualize import save_backtest_figures, save_signal_histogram
+from src.reports.visualize import (
+    save_actual_vs_predicted_plot,
+    save_backtest_figures,
+    save_signal_histogram,
+    save_symbol_summary_artifacts,
+)
 from src.validation.backtest import run_long_only_topk_backtest
 from src.validation.baselines import evaluate_baselines
 from src.validation.signal_tuning import tune_signal_weights
@@ -221,6 +226,7 @@ def run_pipeline(
     figure_dir_path = resolve_output_dir(figure_dir)
     fig_paths = save_backtest_figures(backtest_series, str(figure_dir_path))
     signal_hist = save_signal_histogram(scored_oof, str(figure_dir_path))
+    actual_vs_pred = save_actual_vs_predicted_plot(scored_oof, str(figure_dir_path))
 
     _print_progress(11, total_steps, "Training final model and creating latest predictions")
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
@@ -230,6 +236,7 @@ def run_pipeline(
     latest = feat.sort_values("Date").groupby("Symbol", as_index=False).tail(1)
     latest_pred = model.predict(latest)
     pred_df = build_prediction_frame(latest, latest_pred, cfg.signal)
+    symbol_summary_artifacts = save_symbol_summary_artifacts(pred_df, scored_oof, str(figure_dir_path))
 
     _print_progress(12, total_steps, "Saving artifacts")
     output_path = resolve_output_path(output_csv)
@@ -255,6 +262,8 @@ def run_pipeline(
             "figure_dir": str(figure_dir_path),
             **fig_paths,
             "signal_hist": signal_hist,
+            "actual_vs_predicted": actual_vs_pred,
+            **symbol_summary_artifacts,
         },
     }
 
