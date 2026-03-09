@@ -128,17 +128,53 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame, top_n: int = 10):
         "neutral": "관망",
         "weak_negative": "매도",
         "strong_negative": "매도",
+        "no_data": "관망",
+    }
+    label_to_ko = {
+        "strong_positive": "강한매수",
+        "weak_positive": "약한매수",
+        "neutral": "중립",
+        "weak_negative": "약한매도",
+        "strong_negative": "강한매도",
+        "no_data": "데이터없음",
     }
 
-    display_cols = ["symbol_name", "recommendation", "predicted_return", "predicted_price_change", "signal_label"]
     top = pred_df.sort_values("signal_score", ascending=False).head(top_n).copy()
     if "symbol_name" not in top.columns:
         top["symbol_name"] = top["Symbol"]
+
     top["recommendation"] = top["signal_label"].astype(str).map(label_to_action).fillna("관망")
+    top["signal_label_ko"] = top["signal_label"].astype(str).map(label_to_ko).fillna("중립")
     top["predicted_price_change"] = top["predicted_close"] - top["Close"]
 
-    print("\n=== Top predictions (종목이름, 권고, 예상 수익률 %, 예상 수익률 가격, 시그널 라벨) ===")
-    print(top[display_cols].round(3).to_string(index=False))
+    display_df = pd.DataFrame(
+        {
+            "종목명": top["symbol_name"].astype(str),
+            "권고": top["recommendation"].astype(str),
+            "예상 수익률(%)": top["predicted_return"].astype(float),
+            "예상 수익률 가격": top["predicted_price_change"].astype(float),
+            "시그널 라벨": top["signal_label_ko"].astype(str),
+        }
+    )
+
+    print("\n=== Top predictions ===")
+    print(
+        display_df.to_string(
+            index=False,
+            justify="left",
+            formatters={
+                "예상 수익률(%)": lambda x: f"{x:,.3f}",
+                "예상 수익률 가격": lambda x: f"{x:,.3f}",
+            },
+            col_space={
+                "종목명": 14,
+                "권고": 6,
+                "예상 수익률(%)": 14,
+                "예상 수익률 가격": 16,
+                "시그널 라벨": 10,
+            },
+        )
+    )
 
 
 def _split_oof_for_tuning_and_eval(scored_oof: pd.DataFrame, tune_ratio: float = 0.7) -> tuple[pd.DataFrame, pd.DataFrame]:
