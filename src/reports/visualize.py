@@ -224,9 +224,10 @@ def build_symbol_summary_table(pred_df: pd.DataFrame, oof_df: pd.DataFrame) -> p
 
     table = pred_df.copy()
     table["종목코드"] = table["Symbol"].astype(str).str.replace(r"\..*$", "", regex=True)
-    table["종목명"] = table["Symbol"].astype(str)
+    table["종목명"] = table.get("symbol_name", table["Symbol"]).astype(str)
     table["상승확률"] = table["up_probability"]
     table["하락확률"] = 1.0 - table["up_probability"]
+    table["상승/하락(±)"] = table["상승확률"].map(lambda x: f"+{x:.3f}") + " / " + table["하락확률"].map(lambda x: f"-{x:.3f}")
     table["시그널라벨"] = table["signal_label"].astype(str).map(
         {
             "strong_positive": "강한매수",
@@ -248,13 +249,14 @@ def build_symbol_summary_table(pred_df: pd.DataFrame, oof_df: pd.DataFrame) -> p
             "시그널 라벨": table["시그널라벨"],
             "내일 예상 종가": table["predicted_close"],
             "오늘 종가": table["Close"],
-            "상승 확률": table["상승확률"],
-            "하락 확률": table["하락확률"],
+            "상승/하락 확률(±)": table["상승/하락(±)"],
             "상승/하락 방향 정확도": table["direction_accuracy"],
             "불확실성 범위": table["uncertainty_band"],
             "시그널 점수": table["signal_score"],
         }
     )
+    num_cols = summary.select_dtypes(include=["number"]).columns
+    summary.loc[:, num_cols] = summary.loc[:, num_cols].round(3)
     return summary.sort_values("시그널 점수", ascending=False)
 
 
@@ -275,8 +277,8 @@ def save_symbol_summary_artifacts(pred_df: pd.DataFrame, oof_df: pd.DataFrame, o
     fig, ax = plt.subplots(figsize=(18, 0.55 * (len(top) + 2)))
     ax.axis("off")
     display_df = top.copy()
-    for col in ["예상수익률(%)", "내일 예상 종가", "오늘 종가", "상승 확률", "하락 확률", "상승/하락 방향 정확도", "시그널 점수"]:
-        display_df[col] = display_df[col].map(lambda v: f"{v:.4f}")
+    for col in ["예상수익률(%)", "내일 예상 종가", "오늘 종가", "상승/하락 방향 정확도", "시그널 점수"]:
+        display_df[col] = display_df[col].map(lambda v: f"{v:.3f}")
     if not use_korean:
         display_df["시그널 라벨"] = display_df["시그널 라벨"].replace({
             "강한매수": "Strong Buy",
@@ -292,8 +294,7 @@ def save_symbol_summary_artifacts(pred_df: pd.DataFrame, oof_df: pd.DataFrame, o
             "시그널 라벨": "SignalLabel",
             "내일 예상 종가": "PredClose(T+1)",
             "오늘 종가": "Close(T)",
-            "상승 확률": "UpProb",
-            "하락 확률": "DownProb",
+            "상승/하락 확률(±)": "UpDownProb(±)",
             "상승/하락 방향 정확도": "DirectionAcc",
             "불확실성 범위": "UncertaintyBand",
             "시그널 점수": "SignalScore",
