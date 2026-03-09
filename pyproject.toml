@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stock-predict"
+version = "0.1.0"
+description = "Next-day stock prediction baseline pipeline"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "pandas",
+  "scikit-learn",
+  "yfinance",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+stock-predict = "src.pipeline:main"
+
+[tool.setuptools]
+packages = ["src", "src.config", "src.data", "src.features", "src.models", "src.validation", "src.inference"]
