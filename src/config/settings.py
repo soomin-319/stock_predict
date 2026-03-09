@@ -16,6 +16,16 @@ class FeatureConfig:
     moving_average_windows: List[int] = field(default_factory=lambda: [5, 10, 20, 60, 120])
     volatility_windows: List[int] = field(default_factory=lambda: [5, 20, 60])
     rsi_period: int = 14
+    cci_period: int = 20
+    stochastic_period: int = 14
+
+
+@dataclass
+class ExternalFeatureConfig:
+    enabled: bool = True
+    market_symbols: List[str] = field(
+        default_factory=lambda: ["^KS11", "^KQ11", "^GSPC", "^IXIC", "^SOX", "^VIX", "KRW=X", "^TNX"]
+    )
 
 
 @dataclass
@@ -46,6 +56,7 @@ class BacktestConfig:
 class AppConfig:
     universe: UniverseConfig = field(default_factory=UniverseConfig)
     feature: FeatureConfig = field(default_factory=FeatureConfig)
+    external: ExternalFeatureConfig = field(default_factory=ExternalFeatureConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     signal: SignalConfig = field(default_factory=SignalConfig)
     backtest: BacktestConfig = field(default_factory=BacktestConfig)

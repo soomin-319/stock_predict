@@ -38,7 +38,24 @@ def test_multihead_prediction_shapes():
         c
         for c in feat.columns
         if c.startswith(("ret_", "ma_", "close_to_ma_", "vol_"))
-        or c in {"daily_return", "gap_return", "intraday_return", "range_pct", "vol_ratio_20", "rsi_14"}
+        or c
+        in {
+            "daily_return",
+            "gap_return",
+            "intraday_return",
+            "range_pct",
+            "vol_ratio_20",
+            "rsi_14",
+            "macd",
+            "macd_signal",
+            "macd_hist",
+            "atr_14",
+            "stoch_k",
+            "stoch_d",
+            "cci_20",
+            "obv",
+            "obv_change_5d",
+        }
     ]
 
     train = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
@@ -64,11 +81,12 @@ def test_resolve_output_path_windows_tmp_mapping():
     assert out.name == "predictions.csv"
 
 
-def test_run_pipeline_generates_report(tmp_path):
+def test_run_pipeline_generates_report_and_figures(tmp_path):
     inp = Path("data/sample_ohlcv.csv")
     out = tmp_path / "predictions.csv"
     rep = tmp_path / "report.json"
-    run_pipeline(str(inp), str(out), universe_csv=None, report_json=str(rep))
+    fig = tmp_path / "figures"
+    run_pipeline(str(inp), str(out), universe_csv=None, report_json=str(rep), figure_dir=str(fig), use_external=False)
 
     assert out.exists()
     assert rep.exists()
@@ -77,3 +95,5 @@ def test_run_pipeline_generates_report(tmp_path):
     assert "baselines" in payload
     assert "tuned_signal" in payload
     assert "backtest" in payload
+    assert "artifacts" in payload
+    assert Path(payload["artifacts"]["oof_predictions_csv"]).exists()

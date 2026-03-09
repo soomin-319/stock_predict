@@ -12,6 +12,7 @@ dependencies = [
   "pandas",
   "scikit-learn",
   "yfinance",
+  "matplotlib",
 ]
 
 [project.optional-dependencies]
@@ -21,4 +22,4 @@ dev = ["pytest"]
 stock-predict = "src.pipeline:main"
 
 [tool.setuptools]
-packages = ["src", "src.config", "src.data", "src.features", "src.models", "src.validation", "src.inference"]
+packages = ["src", "src.config", "src.data", "src.features", "src.models", "src.validation", "src.inference", "src.reports"]
