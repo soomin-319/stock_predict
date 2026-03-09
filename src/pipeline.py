@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import tempfile
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
@@ -17,7 +18,7 @@ if __package__ is None or __package__ == "":
 from src.config.settings import AppConfig
 from src.data.cleaners import clean_ohlcv
 from src.data.fetch_real_data import save_real_ohlcv_csv
-from src.data.krx_universe import get_kospi200_kosdaq150_symbols, save_universe_csv
+from src.data.krx_universe import get_kospi200_kosdaq150_symbols, get_symbol_name_map, save_universe_csv
 from src.data.loaders import load_ohlcv_csv
 from src.data.universe import filter_by_universe, load_universe_symbols
 from src.features.external_features import add_external_market_features_with_coverage
@@ -25,7 +26,14 @@ from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
 from src.inference.predict import build_prediction_frame
 from src.models.lgbm_heads import MultiHeadPrediction, MultiHeadStockModel
-from src.reports.visualize import save_backtest_figures, save_signal_histogram
+from src.reports.visualize import (
+    save_actual_vs_predicted_plot,
+    save_actual_vs_predicted_price_plot,
+    save_diagnostic_figures,
+    save_backtest_figures,
+    save_signal_histogram,
+    save_symbol_summary_artifacts,
+)
 from src.validation.backtest import run_long_only_topk_backtest
 from src.validation.baselines import evaluate_baselines
 from src.validation.signal_tuning import tune_signal_weights
@@ -109,11 +117,85 @@ def _adaptive_training_cfg(cfg, feat: pd.DataFrame):
     return tuned
 
 
+def _display_width(text: str) -> int:
+    width = 0
+    for ch in str(text):
+        width += 2 if unicodedata.east_asian_width(ch) in {"W", "F"} else 1
+    return width
+
+
+def _pad_display(text: str, width: int, align: str = "left") -> str:
+    s = str(text)
+    pad = max(0, width - _display_width(s))
+    if align == "right":
+        return " " * pad + s
+    return s + " " * pad
+
+
 def _print_prediction_console_summary(pred_df: pd.DataFrame, top_n: int = 10):
-    cols = ["Symbol", "predicted_return", "up_probability", "uncertainty_band", "signal_score", "signal_label"]
-    top = pred_df.sort_values("signal_score", ascending=False).head(top_n)[cols].copy()
+    if pred_df.empty:
+        print("\n=== Top predictions ===")
+        print("(no rows)")
+        return
+
+    label_to_action = {
+        "strong_positive": "매수",
+        "weak_positive": "매수",
+        "neutral": "관망",
+        "weak_negative": "매도",
+        "strong_negative": "매도",
+        "no_data": "관망",
+    }
+    label_to_ko = {
+        "strong_positive": "강한매수",
+        "weak_positive": "약한매수",
+        "neutral": "중립",
+        "weak_negative": "약한매도",
+        "strong_negative": "강한매도",
+        "no_data": "데이터없음",
+    }
+
+    top = pred_df.sort_values("signal_score", ascending=False).head(top_n).copy()
+    if "symbol_name" not in top.columns:
+        top["symbol_name"] = top["Symbol"]
+
+    top["recommendation"] = top["signal_label"].astype(str).map(label_to_action).fillna("관망")
+    top["signal_label_ko"] = top["signal_label"].astype(str).map(label_to_ko).fillna("중립")
+    top["predicted_price_change"] = (top["predicted_close"] - top["Close"]).round(0).astype("Int64")
+
+    rows = []
+    for _, r in top.iterrows():
+        rows.append(
+            {
+                "종목명": str(r["symbol_name"]),
+                "권고": str(r["recommendation"]),
+                "예상 수익률(%)": f"{float(r['predicted_return']):,.3f}",
+                "예상 수익률 가격": f"{int(r['predicted_price_change']):,}",
+                "시그널 라벨": str(r["signal_label_ko"]),
+            }
+        )
+
+    headers = ["종목명", "권고", "예상 수익률(%)", "예상 수익률 가격", "시그널 라벨"]
+    col_widths = {
+        h: max(_display_width(h), *( _display_width(row[h]) for row in rows ))
+        for h in headers
+    }
+
     print("\n=== Top predictions ===")
-    print(top.to_string(index=False))
+    header_line = "  ".join(_pad_display(h, col_widths[h], "left") for h in headers)
+    print(header_line)
+    for row in rows:
+        print(
+            "  ".join(
+                [
+                    _pad_display(row["종목명"], col_widths["종목명"], "left"),
+                    _pad_display(row["권고"], col_widths["권고"], "left"),
+                    _pad_display(row["예상 수익률(%)"], col_widths["예상 수익률(%)"], "right"),
+                    _pad_display(row["예상 수익률 가격"], col_widths["예상 수익률 가격"], "right"),
+                    _pad_display(row["시그널 라벨"], col_widths["시그널 라벨"], "left"),
+                ]
+            )
+        )
 
 
 def _split_oof_for_tuning_and_eval(scored_oof: pd.DataFrame, tune_ratio: float = 0.7) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -145,7 +227,64 @@ def _print_progress(step: int, total: int, message: str):
     print(f"[{step}/{total}] {message}")
 
 
+def _round_floats(obj, digits: int = 3):
+    if isinstance(obj, float):
+        return round(obj, digits)
+    if isinstance(obj, dict):
+        return {k: _round_floats(v, digits) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_round_floats(v, digits) for v in obj]
+    return obj
 
+
+def _compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
+    if scored_oof.empty:
+        return {}
+
+    req = {"target_log_return", "rel_strength", "norm_return", "predicted_log_return", "uncertainty_score", "uncertainty_width"}
+    if not req.issubset(set(scored_oof.columns)):
+        return {}
+
+    df = scored_oof[list(req)].copy().dropna()
+    if df.empty:
+        return {}
+
+    actual_up = (df["target_log_return"] > 0).astype(int)
+
+    rel_dir_acc = float(((df["rel_strength"] > 0).astype(int) == actual_up).mean())
+    norm_dir_acc = float(((df["norm_return"] > 0).astype(int) == actual_up).mean())
+    pred_dir_acc = float(((df["predicted_log_return"] > 0).astype(int) == actual_up).mean())
+
+    abs_error = (df["predicted_log_return"] - df["target_log_return"]).abs()
+
+    return {
+        "direction_accuracy": {
+            "predicted_log_return": pred_dir_acc,
+            "rel_strength": rel_dir_acc,
+            "norm_return": norm_dir_acc,
+        },
+        "uncertainty_diagnostics": {
+            "corr_uncertainty_vs_abs_error": float(df["uncertainty_width"].corr(abs_error)),
+            "corr_uncertainty_score_vs_abs_error": float(df["uncertainty_score"].corr(abs_error)),
+            "uncertainty_score_zero_ratio": float((df["uncertainty_score"] == 0).mean()),
+            "uncertainty_score_mean": float(df["uncertainty_score"].mean()),
+        },
+    }
+
+
+def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: list[str] | None) -> pd.DataFrame:
+    if not universe_symbols:
+        return pred_df
+
+    universe = pd.DataFrame({"Symbol": sorted(set(str(s) for s in universe_symbols))})
+    out = universe.merge(pred_df, on="Symbol", how="left")
+    if "signal_label" in out.columns:
+        out["signal_label"] = out["signal_label"].astype(object).fillna("no_data")
+    if "Date" in out.columns:
+        out["Date"] = out["Date"].fillna(pd.Timestamp.today().normalize())
+    if "market_regime" in out.columns:
+        out["market_regime"] = out["market_regime"].fillna("unknown")
+    return out
 
 def run_pipeline(
     input_csv: str,
@@ -165,11 +304,21 @@ def run_pipeline(
     cleaned = clean_ohlcv(raw)
 
     _print_progress(3, total_steps, "Applying data cleaning and universe filter")
+    requested_universe_symbols = None
     if universe_csv:
         universe = load_universe_symbols(universe_csv, cfg.universe)
+        requested_universe_symbols = list(universe)
         data = filter_by_universe(cleaned, universe)
     else:
-        data = cleaned.copy()
+        try:
+            requested_universe_symbols = get_kospi200_kosdaq150_symbols()
+            data = filter_by_universe(cleaned, requested_universe_symbols)
+            if data.empty:
+                requested_universe_symbols = sorted(cleaned["Symbol"].astype(str).unique().tolist())
+                data = cleaned.copy()
+        except Exception:
+            requested_universe_symbols = sorted(cleaned["Symbol"].astype(str).unique().tolist())
+            data = cleaned.copy()
 
     _print_progress(4, total_steps, "Building price features")
     feat = build_features(data, cfg.feature)
@@ -221,6 +370,9 @@ def run_pipeline(
     figure_dir_path = resolve_output_dir(figure_dir)
     fig_paths = save_backtest_figures(backtest_series, str(figure_dir_path))
     signal_hist = save_signal_histogram(scored_oof, str(figure_dir_path))
+    actual_vs_pred = save_actual_vs_predicted_plot(scored_oof, str(figure_dir_path))
+    actual_vs_pred_price = save_actual_vs_predicted_price_plot(scored_oof, str(figure_dir_path))
+    diagnostic_figs = save_diagnostic_figures(scored_oof, str(figure_dir_path))
 
     _print_progress(11, total_steps, "Training final model and creating latest predictions")
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
@@ -230,8 +382,20 @@ def run_pipeline(
     latest = feat.sort_values("Date").groupby("Symbol", as_index=False).tail(1)
     latest_pred = model.predict(latest)
     pred_df = build_prediction_frame(latest, latest_pred, cfg.signal)
+    pred_df = _expand_predictions_to_universe(pred_df, requested_universe_symbols)
+
+    symbol_name_map = get_symbol_name_map(pred_df["Symbol"].dropna().astype(str).tolist())
+    pred_df["symbol_name"] = pred_df["Symbol"].astype(str).map(symbol_name_map).fillna(pred_df["Symbol"].astype(str))
+
+    symbol_summary_artifacts = save_symbol_summary_artifacts(pred_df, scored_oof, str(figure_dir_path))
+    oof_diagnostics = _compute_oof_diagnostics(scored_oof)
 
     _print_progress(12, total_steps, "Saving artifacts")
+    pred_numeric_cols = pred_df.select_dtypes(include=["number"]).columns
+    pred_df.loc[:, pred_numeric_cols] = pred_df.loc[:, pred_numeric_cols].round(3)
+    oof_numeric_cols = scored_oof.select_dtypes(include=["number"]).columns
+    scored_oof.loc[:, oof_numeric_cols] = scored_oof.loc[:, oof_numeric_cols].round(3)
+
     output_path = resolve_output_path(output_csv)
     pred_df.to_csv(output_path, index=False)
 
@@ -249,20 +413,33 @@ def run_pipeline(
         "backtest_samples": int(len(backtest_input)),
         "backtest": {k: v for k, v in backtest.items() if k != "series"},
         "external_feature_coverage": external_coverage,
+        "oof_diagnostics": oof_diagnostics,
+        "prediction_coverage": {
+            "requested_universe_size": int(len(set(requested_universe_symbols))) if requested_universe_symbols else None,
+            "predictions_row_count": int(len(pred_df)),
+            "available_prediction_count": int(pred_df["predicted_return"].notna().sum()) if "predicted_return" in pred_df.columns else 0,
+            "missing_prediction_count": int(pred_df["predicted_return"].isna().sum()) if "predicted_return" in pred_df.columns else 0,
+        },
+        "visualization_note": "진단 그래프는 전체 종목/전체 OOF 샘플을 집계한 결과입니다.",
         "artifacts": {
             "predictions_csv": str(output_path),
             "oof_predictions_csv": str(oof_path),
             "figure_dir": str(figure_dir_path),
             **fig_paths,
             "signal_hist": signal_hist,
+            "actual_vs_predicted": actual_vs_pred,
+            "actual_vs_predicted_price": actual_vs_pred_price,
+            **diagnostic_figs,
+            **symbol_summary_artifacts,
         },
     }
 
     if report_json:
         report_path = resolve_output_path(report_json)
-        report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False))
+        report_path.write_text(json.dumps(_round_floats(report, 3), indent=2, ensure_ascii=False))
         print(f"Saved report to {report_path}")
 
+    print("[안내] 시각자료(그래프)는 개별 종목별 차트가 아니라 전체 종목 샘플을 집계한 요약 진단입니다.")
     _print_prediction_console_summary(pred_df, top_n=min(10, len(pred_df)))
     print(f"Saved inference output to {output_path}")
 
