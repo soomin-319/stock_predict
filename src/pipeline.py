@@ -17,6 +17,7 @@ if __package__ is None or __package__ == "":
 from src.config.settings import AppConfig
 from src.data.cleaners import clean_ohlcv
 from src.data.fetch_real_data import save_real_ohlcv_csv
+from src.data.krx_universe import get_kospi200_kosdaq150_symbols, save_universe_csv
 from src.data.loaders import load_ohlcv_csv
 from src.data.universe import filter_by_universe, load_universe_symbols
 from src.features.external_features import add_external_market_features_with_coverage
@@ -238,24 +239,34 @@ def run_pipeline(
 def main():
     parser = argparse.ArgumentParser(description="Stock next-day prediction pipeline")
     parser.add_argument("--input", required=False, default="data/real_ohlcv.csv", help="OHLCV CSV path")
-    parser.add_argument("--output", default=r"C:\Users\카운\Desktop\predictions_direct.csv", help="Output CSV path")
+    parser.add_argument("--output", default=r"C:\Users\카운\Desktop\result\predictions_direct.csv", help="Output CSV path")
     parser.add_argument("--universe-csv", default=None, help="Optional universe CSV with Symbol column")
-    parser.add_argument("--report-json", default="reports/pipeline_report.json", help="Pipeline summary JSON")
-    parser.add_argument("--figure-dir", default="reports/figures", help="Directory for generated charts")
+    parser.add_argument("--report-json", default=r"C:\Users\카운\Desktop\result\pipeline_report.json", help="Pipeline summary JSON")
+    parser.add_argument("--figure-dir", default=r"C:\Users\카운\Desktop\result\figures", help="Directory for generated charts")
     parser.add_argument("--fetch-real", action="store_true", help="Fetch real OHLCV from yfinance before running")
     parser.add_argument("--disable-external", action="store_true", help="Disable external market feature download")
     parser.add_argument(
         "--real-symbols",
         nargs="*",
-        default=["005930.KS", "000660.KS", "035420.KS", "051910.KS", "207940.KS", "TSLA", "NVDA"],
-        help="Symbols used when --fetch-real is enabled",
+        default=None,
+        help="Symbols used when --fetch-real is enabled (default: auto KOSPI200+KOSDAQ150)",
     )
     parser.add_argument("--real-start", default="2018-01-01", help="Start date for real data fetch")
     args = parser.parse_args()
 
     input_csv = args.input
     if args.fetch_real:
-        save_real_ohlcv_csv(input_csv, symbols=args.real_symbols, start=args.real_start)
+        symbols = args.real_symbols
+        if not symbols:
+            symbols = get_kospi200_kosdaq150_symbols()
+            print(f"Auto-loaded KOSPI200+KOSDAQ150 symbols: {len(symbols)}")
+            if args.universe_csv is None:
+                auto_universe_csv = str(resolve_output_path(r"C:\Users\카운\Desktop\result\universe_kospi200_kosdaq150.csv"))
+                save_universe_csv(auto_universe_csv, symbols)
+                args.universe_csv = auto_universe_csv
+                print(f"Saved universe CSV to {auto_universe_csv}")
+
+        save_real_ohlcv_csv(input_csv, symbols=symbols, start=args.real_start)
         print(f"Fetched real market data to {input_csv}")
 
     run_pipeline(args.input, args.output, args.universe_csv, args.report_json, args.figure_dir, use_external=not args.disable_external)

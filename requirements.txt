@@ -5,3 +5,4 @@ pytest
 yfinance
 matplotlib
 lightgbm
+pykrx

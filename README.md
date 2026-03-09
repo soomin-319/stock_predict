@@ -71,3 +71,13 @@ python src/pipeline.py   --input data/real_ohlcv.csv   --output /tmp/predictions
 - 백테스트 현실화: `min_up_probability`, `min_signal_score` 필터를 통과한 종목만 Top-K에 포함되도록 개선했습니다.
 - 백테스트 리포트 확장: `avg_turnover`, `avg_selected_count`를 추가해 포트폴리오 교체율/선정 종목 수를 확인할 수 있습니다.
 - 외부 지표 가시성 강화: 리포트 JSON에 `external_feature_coverage`를 기록해 요청/성공/실패/fallback 사용 현황을 확인할 수 있습니다.
+
+
+## 기본 산출물 저장 위치
+- 기본값으로 아래 경로에 저장됩니다.
+  - 예측 CSV: `C:\Users\카운\Desktop\result\predictions_direct.csv`
+  - 리포트 JSON: `C:\Users\카운\Desktop\result\pipeline_report.json`
+  - 그래프: `C:\Users\카운\Desktop\result\figures`
+
+## 350개 유니버스 자동 구성
+- `--fetch-real` 실행 시 `--real-symbols`를 생략하면 KOSPI 시가총액 상위 200 + KOSDAQ 상위 150을 자동 구성해(총 350개) 데이터를 수집합니다.

@@ -24,7 +24,7 @@ def build_prediction_frame(
     out["predicted_close"] = out["Close"] * np.exp(out["predicted_return"])
     out["up_probability"] = pred.up_probability
     out["uncertainty_width"] = pred.quantile_high - pred.quantile_low
-    out["uncertainty_band"] = pred.quantile_low.astype(str) + " ~ " + pred.quantile_high.astype(str)
+    out["uncertainty_band"] = pd.Series(pred.quantile_low, index=out.index).astype(str) + " ~ " + pd.Series(pred.quantile_high, index=out.index).astype(str)
 
     out["rel_strength"] = normalize_series(out["predicted_return"])
     out["uncertainty_score"] = normalize_series(out["uncertainty_width"]).clip(lower=0)
