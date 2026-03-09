@@ -19,7 +19,7 @@ from src.data.cleaners import clean_ohlcv
 from src.data.fetch_real_data import save_real_ohlcv_csv
 from src.data.loaders import load_ohlcv_csv
 from src.data.universe import filter_by_universe, load_universe_symbols
-from src.features.external_features import add_external_market_features
+from src.features.external_features import add_external_market_features_with_coverage
 from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
 from src.inference.predict import build_prediction_frame
@@ -143,8 +143,9 @@ def run_pipeline(
     _print_progress(4, total_steps, "Building price features")
     feat = build_features(data, cfg.feature)
     _print_progress(5, total_steps, "Adding external market features")
+    external_coverage = {"requested": 0, "successful": 0, "failed": 0, "fallback_used": 0, "details": []}
     if cfg.external.enabled and use_external:
-        feat = add_external_market_features(feat, cfg.external.market_symbols)
+        feat, external_coverage = add_external_market_features_with_coverage(feat, cfg.external.market_symbols)
     feat = annotate_market_regime(feat)
     feat = feat.dropna(subset=["target_log_return"]).copy()
     feature_columns = _feature_columns(feat)
@@ -215,6 +216,7 @@ def run_pipeline(
         "tuning_samples": int(len(tune_df)),
         "backtest_samples": int(len(backtest_input)),
         "backtest": {k: v for k, v in backtest.items() if k != "series"},
+        "external_feature_coverage": external_coverage,
         "artifacts": {
             "predictions_csv": str(output_path),
             "oof_predictions_csv": str(oof_path),

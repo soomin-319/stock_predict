@@ -65,3 +65,9 @@ python src/pipeline.py   --input data/real_ohlcv.csv   --output /tmp/predictions
 - 모델 백엔드 고도화: `MultiHeadStockModel`이 LightGBM 사용 가능 시 LightGBM을 우선 사용하고, 미설치 환경에서는 sklearn GBDT로 자동 fallback합니다.
 - 신호 튜닝/백테스트 분리: OOF 데이터를 시간순으로 분할해(기본 70:30) 앞 구간에서 가중치 튜닝, 뒤 구간(holdout)에서 백테스트를 수행하도록 개선했습니다.
 - 리포트 확장: `tuning_samples`, `backtest_samples`를 JSON에 기록해 튜닝/평가 샘플 규모를 확인할 수 있습니다.
+
+
+## Week2 구현 반영 사항
+- 백테스트 현실화: `min_up_probability`, `min_signal_score` 필터를 통과한 종목만 Top-K에 포함되도록 개선했습니다.
+- 백테스트 리포트 확장: `avg_turnover`, `avg_selected_count`를 추가해 포트폴리오 교체율/선정 종목 수를 확인할 수 있습니다.
+- 외부 지표 가시성 강화: 리포트 JSON에 `external_feature_coverage`를 기록해 요청/성공/실패/fallback 사용 현황을 확인할 수 있습니다.

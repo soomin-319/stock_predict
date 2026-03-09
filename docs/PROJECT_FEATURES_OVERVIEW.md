@@ -65,6 +65,7 @@
 - KOSPI/KOSDAQ/S&P500/NASDAQ/SOX/VIX/USDKRW/미국10년금리 수집
 - 각 외부지표의 종가, 1일/5일 수익률, 20일 변동성 생성
 - 네트워크/티커 실패 시 graceful fallback/skip 처리
+- 외부 지표 수집 커버리지(요청/성공/실패/fallback) 리포트 제공
 
 ### 4.3 시장 국면 (`src/features/regime_features.py`)
 - `close_to_ma_20`, `vol_20` 기반 단순 국면 라벨링
@@ -104,8 +105,9 @@
 
 ### 6.3 백테스트 (`src/validation/backtest.py`)
 - Long-only Top-K
+- `min_up_probability`, `min_signal_score` 필터 적용
 - 수수료/슬리피지 차감
-- 누적수익률, Sharpe, MDD 계산
+- 누적수익률, Sharpe, MDD + 평균 turnover/평균 선정 종목 수 계산
 
 ### 6.4 시각화 (`src/reports/visualize.py`)
 - `equity_curve.png`
@@ -130,7 +132,7 @@
 
 ## 8. 대표 산출물
 - 예측 결과: `--output`
-- 실행 리포트: `--report-json`
+- 실행 리포트: `--report-json` (외부지표 coverage, tuning/backtest 샘플, 백테스트 확장 지표 포함)
 - OOF 결과: `reports/oof_predictions.csv`
 - 그래프: `--figure-dir/*.png`
 

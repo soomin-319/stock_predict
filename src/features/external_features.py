@@ -53,30 +53,45 @@ def _symbol_candidates(symbol: str) -> tuple[str, list[str]]:
     return alias, [symbol]
 
 
-def add_external_market_features(df: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
+def add_external_market_features_with_coverage(df: pd.DataFrame, symbols: list[str]) -> tuple[pd.DataFrame, dict]:
     out = df.copy()
+    coverage = {
+        "requested": len(symbols),
+        "successful": 0,
+        "failed": 0,
+        "fallback_used": 0,
+        "details": [],
+    }
+
     if out.empty or not symbols:
-        return out
+        return out, coverage
 
     start = out["Date"].min().strftime("%Y-%m-%d")
     end = (out["Date"].max() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     base_dates = pd.Series(sorted(out["Date"].unique()), name="Date")
     ext = pd.DataFrame({"Date": pd.to_datetime(base_dates)})
 
-    success_count = 0
     for sym in symbols:
         col_base, candidates = _symbol_candidates(sym)
 
         s = pd.Series(dtype=float)
+        used_candidate = None
         for candidate in candidates:
             s = _safe_download(candidate, start=start, end=end)
             if not s.empty:
+                used_candidate = candidate
                 break
 
         if s.empty:
+            coverage["failed"] += 1
+            coverage["details"].append({"symbol": sym, "status": "failed", "used": None})
             continue
 
-        success_count += 1
+        coverage["successful"] += 1
+        if used_candidate != sym:
+            coverage["fallback_used"] += 1
+
+        coverage["details"].append({"symbol": sym, "status": "ok", "used": used_candidate})
         e = s.reset_index()
         e.columns = ["Date", f"{col_base}_close"]
         e["Date"] = pd.to_datetime(e["Date"])
@@ -86,9 +101,14 @@ def add_external_market_features(df: pd.DataFrame, symbols: list[str]) -> pd.Dat
         e[f"{col_base}_vol_20"] = e[f"{col_base}_ret_1d"].rolling(20).std()
         ext = ext.merge(e, on="Date", how="left")
 
-    if success_count == 0:
-        return out
+    if coverage["successful"] == 0:
+        return out, coverage
 
     ext = ext.sort_values("Date").ffill().bfill()
     out = out.merge(ext, on="Date", how="left")
+    return out, coverage
+
+
+def add_external_market_features(df: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
+    out, _ = add_external_market_features_with_coverage(df, symbols)
     return out

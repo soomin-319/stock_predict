@@ -97,6 +97,11 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "tuned_signal" in payload
     assert "backtest" in payload
     assert "artifacts" in payload
+    assert "external_feature_coverage" in payload
+    assert "tuning_samples" in payload
+    assert "backtest_samples" in payload
+    assert "avg_turnover" in payload["backtest"]
+    assert "avg_selected_count" in payload["backtest"]
     assert Path(payload["artifacts"]["oof_predictions_csv"]).exists()
 
 
@@ -127,3 +132,20 @@ def test_split_oof_for_tuning_and_eval():
     assert not tune_df.empty
     assert not eval_df.empty
     assert tune_df["Date"].max() < eval_df["Date"].min()
+
+
+def test_external_feature_coverage_fields(monkeypatch):
+    from src.features.external_features import add_external_market_features_with_coverage
+
+    def _fail(*args, **kwargs):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr("yfinance.download", _fail)
+
+    raw = make_sample_df(days=20)
+    out, coverage = add_external_market_features_with_coverage(raw, ["^GSPC", "^IXIC"]) 
+
+    assert len(out) == len(raw)
+    assert coverage["requested"] == 2
+    assert coverage["successful"] == 0
+    assert coverage["failed"] == 2
