@@ -84,24 +84,31 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out["macd_signal"] = macd_sig
     out["macd_hist"] = macd_hist
 
-    out["atr_14"] = grouped.apply(
-        lambda g: _compute_atr(g["High"], g["Low"], g["Close"], period=14)
-    ).reset_index(level=0, drop=True)
+    high_group = grouped["High"]
+    low_group = grouped["Low"]
+    close_group = grouped["Close"]
 
-    stoch_k = grouped.apply(
-        lambda g: _compute_stochastic(g["High"], g["Low"], g["Close"], period=cfg.stochastic_period)[0]
-    ).reset_index(level=0, drop=True)
-    stoch_d = grouped.apply(
-        lambda g: _compute_stochastic(g["High"], g["Low"], g["Close"], period=cfg.stochastic_period)[1]
-    ).reset_index(level=0, drop=True)
-    out["stoch_k"] = stoch_k
-    out["stoch_d"] = stoch_d
+    tr1 = out["High"] - out["Low"]
+    tr2 = (out["High"] - close_group.shift(1)).abs()
+    tr3 = (out["Low"] - close_group.shift(1)).abs()
+    out["atr_14"] = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1).groupby(out["Symbol"]).transform(
+        lambda x: x.rolling(14).mean()
+    )
 
-    out["cci_20"] = grouped.apply(
-        lambda g: _compute_cci(g["High"], g["Low"], g["Close"], period=cfg.cci_period)
-    ).reset_index(level=0, drop=True)
+    low_min = low_group.transform(lambda x: x.rolling(cfg.stochastic_period).min())
+    high_max = high_group.transform(lambda x: x.rolling(cfg.stochastic_period).max())
+    out["stoch_k"] = 100 * (out["Close"] - low_min) / (high_max - low_min + 1e-9)
+    out["stoch_d"] = out.groupby("Symbol", group_keys=False)["stoch_k"].transform(lambda x: x.rolling(3).mean())
 
-    out["obv"] = grouped.apply(lambda g: _compute_obv(g["Close"], g["Volume"])).reset_index(level=0, drop=True)
+    typical_price = (out["High"] + out["Low"] + out["Close"]) / 3
+    tp_ma = typical_price.groupby(out["Symbol"]).transform(lambda x: x.rolling(cfg.cci_period).mean())
+    tp_mad = typical_price.groupby(out["Symbol"]).transform(
+        lambda x: x.rolling(cfg.cci_period).apply(lambda y: np.mean(np.abs(y - np.mean(y))), raw=True)
+    )
+    out["cci_20"] = (typical_price - tp_ma) / (0.015 * tp_mad.replace(0, np.nan))
+
+    price_direction = np.sign(close_group.diff().fillna(0))
+    out["obv"] = (price_direction * out["Volume"].fillna(0)).groupby(out["Symbol"]).cumsum()
     out["obv_change_5d"] = grouped["obv"].transform(lambda x: x.pct_change(5))
 
     out["target_log_return"] = grouped["Close"].transform(lambda x: np.log(x.shift(-1) / x))

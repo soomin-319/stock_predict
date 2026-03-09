@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import contextlib
+import io
+
 import pandas as pd
 import yfinance as yf
 
 
 def _safe_download(symbol: str, start: str, end: str | None) -> pd.Series:
     try:
-        df = yf.download(symbol, start=start, end=end, auto_adjust=False, progress=False)
+        with contextlib.redirect_stderr(io.StringIO()):
+            df = yf.download(symbol, start=start, end=end, auto_adjust=False, progress=False, threads=False)
         if df is None or df.empty:
             return pd.Series(dtype=float)
         if isinstance(df.columns, pd.MultiIndex):
@@ -16,6 +20,15 @@ def _safe_download(symbol: str, start: str, end: str | None) -> pd.Series:
         return s
     except Exception:
         return pd.Series(dtype=float)
+
+
+def _symbol_candidates(symbol: str) -> tuple[str, list[str]]:
+    if symbol == "^SOX":
+        return "sox", ["^SOX", "SOXX"]
+    if symbol == "^VIX":
+        return "vix", ["^VIX", "VIXY"]
+    alias = symbol.replace("^", "").replace("=", "_").replace("-", "_").lower()
+    return alias, [symbol]
 
 
 def add_external_market_features(df: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
@@ -29,10 +42,16 @@ def add_external_market_features(df: pd.DataFrame, symbols: list[str]) -> pd.Dat
     ext = pd.DataFrame({"Date": pd.to_datetime(base_dates)})
 
     for sym in symbols:
-        s = _safe_download(sym, start=start, end=end)
+        col_base, candidates = _symbol_candidates(sym)
+
+        s = pd.Series(dtype=float)
+        for candidate in candidates:
+            s = _safe_download(candidate, start=start, end=end)
+            if not s.empty:
+                break
         if s.empty:
             continue
-        col_base = sym.replace("^", "").replace("=", "_").replace("-", "_").lower()
+
         e = s.reset_index()
         e.columns = ["Date", f"{col_base}_close"]
         e["Date"] = pd.to_datetime(e["Date"])
