@@ -27,6 +27,8 @@ from src.inference.predict import build_prediction_frame
 from src.models.lgbm_heads import MultiHeadPrediction, MultiHeadStockModel
 from src.reports.visualize import (
     save_actual_vs_predicted_plot,
+    save_actual_vs_predicted_price_plot,
+    save_diagnostic_figures,
     save_backtest_figures,
     save_signal_histogram,
     save_symbol_summary_artifacts,
@@ -152,6 +154,56 @@ def _print_progress(step: int, total: int, message: str):
 
 
 
+
+def _compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
+    if scored_oof.empty:
+        return {}
+
+    req = {"target_log_return", "rel_strength", "norm_return", "predicted_log_return", "uncertainty_score", "uncertainty_width"}
+    if not req.issubset(set(scored_oof.columns)):
+        return {}
+
+    df = scored_oof[list(req)].copy().dropna()
+    if df.empty:
+        return {}
+
+    actual_up = (df["target_log_return"] > 0).astype(int)
+
+    rel_dir_acc = float(((df["rel_strength"] > 0).astype(int) == actual_up).mean())
+    norm_dir_acc = float(((df["norm_return"] > 0).astype(int) == actual_up).mean())
+    pred_dir_acc = float(((df["predicted_log_return"] > 0).astype(int) == actual_up).mean())
+
+    abs_error = (df["predicted_log_return"] - df["target_log_return"]).abs()
+
+    return {
+        "direction_accuracy": {
+            "predicted_log_return": pred_dir_acc,
+            "rel_strength": rel_dir_acc,
+            "norm_return": norm_dir_acc,
+        },
+        "uncertainty_diagnostics": {
+            "corr_uncertainty_vs_abs_error": float(df["uncertainty_width"].corr(abs_error)),
+            "corr_uncertainty_score_vs_abs_error": float(df["uncertainty_score"].corr(abs_error)),
+            "uncertainty_score_zero_ratio": float((df["uncertainty_score"] == 0).mean()),
+            "uncertainty_score_mean": float(df["uncertainty_score"].mean()),
+        },
+    }
+
+
+def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: list[str] | None) -> pd.DataFrame:
+    if not universe_symbols:
+        return pred_df
+
+    universe = pd.DataFrame({"Symbol": sorted(set(str(s) for s in universe_symbols))})
+    out = universe.merge(pred_df, on="Symbol", how="left")
+    if "signal_label" in out.columns:
+        out["signal_label"] = out["signal_label"].astype(object).fillna("no_data")
+    if "Date" in out.columns:
+        out["Date"] = out["Date"].fillna(pd.Timestamp.today().normalize())
+    if "market_regime" in out.columns:
+        out["market_regime"] = out["market_regime"].fillna("unknown")
+    return out
+
 def run_pipeline(
     input_csv: str,
     output_csv: str,
@@ -170,8 +222,10 @@ def run_pipeline(
     cleaned = clean_ohlcv(raw)
 
     _print_progress(3, total_steps, "Applying data cleaning and universe filter")
+    requested_universe_symbols = None
     if universe_csv:
         universe = load_universe_symbols(universe_csv, cfg.universe)
+        requested_universe_symbols = list(universe)
         data = filter_by_universe(cleaned, universe)
     else:
         data = cleaned.copy()
@@ -227,6 +281,8 @@ def run_pipeline(
     fig_paths = save_backtest_figures(backtest_series, str(figure_dir_path))
     signal_hist = save_signal_histogram(scored_oof, str(figure_dir_path))
     actual_vs_pred = save_actual_vs_predicted_plot(scored_oof, str(figure_dir_path))
+    actual_vs_pred_price = save_actual_vs_predicted_price_plot(scored_oof, str(figure_dir_path))
+    diagnostic_figs = save_diagnostic_figures(scored_oof, str(figure_dir_path))
 
     _print_progress(11, total_steps, "Training final model and creating latest predictions")
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
@@ -236,7 +292,9 @@ def run_pipeline(
     latest = feat.sort_values("Date").groupby("Symbol", as_index=False).tail(1)
     latest_pred = model.predict(latest)
     pred_df = build_prediction_frame(latest, latest_pred, cfg.signal)
+    pred_df = _expand_predictions_to_universe(pred_df, requested_universe_symbols)
     symbol_summary_artifacts = save_symbol_summary_artifacts(pred_df, scored_oof, str(figure_dir_path))
+    oof_diagnostics = _compute_oof_diagnostics(scored_oof)
 
     _print_progress(12, total_steps, "Saving artifacts")
     output_path = resolve_output_path(output_csv)
@@ -256,6 +314,13 @@ def run_pipeline(
         "backtest_samples": int(len(backtest_input)),
         "backtest": {k: v for k, v in backtest.items() if k != "series"},
         "external_feature_coverage": external_coverage,
+        "oof_diagnostics": oof_diagnostics,
+        "prediction_coverage": {
+            "requested_universe_size": int(len(set(requested_universe_symbols))) if requested_universe_symbols else None,
+            "predictions_row_count": int(len(pred_df)),
+            "available_prediction_count": int(pred_df["predicted_return"].notna().sum()) if "predicted_return" in pred_df.columns else 0,
+            "missing_prediction_count": int(pred_df["predicted_return"].isna().sum()) if "predicted_return" in pred_df.columns else 0,
+        },
         "artifacts": {
             "predictions_csv": str(output_path),
             "oof_predictions_csv": str(oof_path),
@@ -263,6 +328,8 @@ def run_pipeline(
             **fig_paths,
             "signal_hist": signal_hist,
             "actual_vs_predicted": actual_vs_pred,
+            "actual_vs_predicted_price": actual_vs_pred_price,
+            **diagnostic_figs,
             **symbol_summary_artifacts,
         },
     }

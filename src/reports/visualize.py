@@ -122,6 +122,94 @@ def save_actual_vs_predicted_plot(oof_df: pd.DataFrame, out_dir: str) -> str | N
     return str(fig_path)
 
 
+
+
+def save_actual_vs_predicted_price_plot(oof_df: pd.DataFrame, out_dir: str) -> str | None:
+    required = {"Date", "Close", "predicted_log_return", "target_log_return"}
+    if oof_df.empty or not required.issubset(set(oof_df.columns)):
+        return None
+
+    p = Path(out_dir)
+    p.mkdir(parents=True, exist_ok=True)
+    fig_path = p / "actual_vs_predicted_price.png"
+
+    use_korean = _configure_korean_font()
+    work = oof_df.copy()
+    work["Date"] = pd.to_datetime(work["Date"])
+    work["actual_next_close"] = work["Close"] * np.exp(work["target_log_return"])
+    work["predicted_next_close"] = work["Close"] * np.exp(work["predicted_log_return"])
+    daily = (
+        work.groupby("Date", as_index=False)[["actual_next_close", "predicted_next_close"]]
+        .mean()
+        .sort_values("Date")
+    )
+
+    plt.figure(figsize=(11, 4.5))
+    plt.plot(
+        daily["Date"],
+        daily["actual_next_close"],
+        label="실제 다음 종가(평균)" if use_korean else "Actual next close (mean)",
+        linewidth=1.7,
+    )
+    plt.plot(
+        daily["Date"],
+        daily["predicted_next_close"],
+        label="예측 다음 종가(평균)" if use_korean else "Predicted next close (mean)",
+        linewidth=1.7,
+    )
+    plt.title("실제 vs 예측 가격 비교" if use_korean else "Actual vs Predicted Price")
+    plt.xlabel("날짜" if use_korean else "Date")
+    plt.ylabel("가격" if use_korean else "Price")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(fig_path)
+    plt.close()
+    return str(fig_path)
+
+
+def save_diagnostic_figures(oof_df: pd.DataFrame, out_dir: str) -> dict:
+    if oof_df.empty:
+        return {}
+    p = Path(out_dir)
+    p.mkdir(parents=True, exist_ok=True)
+    use_korean = _configure_korean_font()
+    out = {}
+
+    if {"up_probability", "target_log_return"}.issubset(set(oof_df.columns)):
+        cal_path = p / "up_probability_calibration.png"
+        cal = oof_df[["up_probability", "target_log_return"]].copy().dropna()
+        if not cal.empty:
+            cal["actual_up"] = (cal["target_log_return"] > 0).astype(int)
+            cal["prob_bin"] = pd.cut(cal["up_probability"], bins=np.linspace(0, 1, 11), include_lowest=True)
+            grp = cal.groupby("prob_bin", observed=False).agg(pred_prob=("up_probability", "mean"), actual_up_rate=("actual_up", "mean")).dropna()
+            if not grp.empty:
+                plt.figure(figsize=(5.5, 5.5))
+                plt.plot([0, 1], [0, 1], "k--", alpha=0.6)
+                plt.plot(grp["pred_prob"], grp["actual_up_rate"], marker="o")
+                plt.title("상승확률 캘리브레이션" if use_korean else "Up-probability calibration")
+                plt.xlabel("예측 상승확률" if use_korean else "Predicted up probability")
+                plt.ylabel("실제 상승 비율" if use_korean else "Actual up rate")
+                plt.tight_layout()
+                plt.savefig(cal_path)
+                plt.close()
+                out["up_probability_calibration"] = str(cal_path)
+
+    if {"uncertainty_width", "predicted_log_return", "target_log_return"}.issubset(set(oof_df.columns)):
+        unc_path = p / "uncertainty_vs_error.png"
+        unc = oof_df[["uncertainty_width", "predicted_log_return", "target_log_return"]].copy().dropna()
+        if not unc.empty:
+            unc["abs_error"] = (unc["predicted_log_return"] - unc["target_log_return"]).abs()
+            plt.figure(figsize=(7, 4.5))
+            plt.scatter(unc["uncertainty_width"], unc["abs_error"], alpha=0.35, s=10)
+            plt.title("불확실성 폭 vs 예측오차" if use_korean else "Uncertainty width vs absolute error")
+            plt.xlabel("불확실성 폭" if use_korean else "Uncertainty width")
+            plt.ylabel("절대 오차" if use_korean else "Absolute error")
+            plt.tight_layout()
+            plt.savefig(unc_path)
+            plt.close()
+            out["uncertainty_vs_error"] = str(unc_path)
+
+    return out
 def build_symbol_summary_table(pred_df: pd.DataFrame, oof_df: pd.DataFrame) -> pd.DataFrame:
     if pred_df.empty:
         return pd.DataFrame()
