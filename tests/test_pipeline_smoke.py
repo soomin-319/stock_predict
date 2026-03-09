@@ -106,6 +106,10 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "avg_turnover" in payload["backtest"]
     assert "avg_selected_count" in payload["backtest"]
     assert Path(payload["artifacts"]["oof_predictions_csv"]).exists()
+    assert Path(payload["artifacts"]["actual_vs_predicted"]).exists()
+    assert Path(payload["artifacts"]["actual_vs_predicted_price"]).exists()
+    assert Path(payload["artifacts"]["symbol_summary_csv"]).exists()
+    assert Path(payload["artifacts"]["symbol_summary_png"]).exists()
 
 
 def test_external_features_fail_gracefully_without_noise(monkeypatch):
@@ -152,3 +156,29 @@ def test_external_feature_coverage_fields(monkeypatch):
     assert coverage["requested"] == 2
     assert coverage["successful"] == 0
     assert coverage["failed"] == 2
+
+
+def test_uncertainty_score_uses_percentile_scale():
+    from src.inference.predict import build_prediction_frame
+    from src.models.lgbm_heads import MultiHeadPrediction
+
+    cfg = AppConfig()
+    latest = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2024-01-01", "2024-01-01", "2024-01-01"]),
+            "Symbol": ["A", "B", "C"],
+            "Close": [100.0, 101.0, 99.0],
+            "market_regime": ["neutral", "neutral", "neutral"],
+        }
+    )
+    pred = MultiHeadPrediction(
+        predicted_return=np.array([0.01, 0.0, -0.01]),
+        up_probability=np.array([0.6, 0.5, 0.4]),
+        quantile_low=np.array([-0.02, -0.01, -0.03]),
+        quantile_mid=np.array([0.0, 0.0, 0.0]),
+        quantile_high=np.array([0.03, 0.01, 0.02]),
+    )
+    out = build_prediction_frame(latest, pred, cfg.signal)
+
+    assert (out["uncertainty_score"] > 0).all()
+    assert (out["uncertainty_score"] <= 1).all()

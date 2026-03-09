@@ -14,6 +14,15 @@ def normalize_series(values: pd.Series) -> pd.Series:
     return (values - values.mean()) / std
 
 
+def percentile_score(values: pd.Series) -> pd.Series:
+    valid = values.dropna()
+    if valid.empty:
+        return pd.Series(0.0, index=values.index)
+    if valid.nunique() == 1:
+        return pd.Series(0.5, index=values.index)
+    return values.rank(method="average", pct=True).fillna(0.5)
+
+
 def build_prediction_frame(
     latest_df: pd.DataFrame,
     pred: MultiHeadPrediction,
@@ -28,7 +37,9 @@ def build_prediction_frame(
     out["uncertainty_band"] = pd.Series(pred.quantile_low, index=out.index).astype(str) + " ~ " + pd.Series(pred.quantile_high, index=out.index).astype(str)
 
     out["rel_strength"] = normalize_series(out["predicted_log_return"])
-    out["uncertainty_score"] = normalize_series(out["uncertainty_width"]).clip(lower=0)
+    # 과거 z-score + clip 방식은 음수 구간이 전부 0이 되어 정보가 손실될 수 있어,
+    # 0~1 분위 백분위 점수로 치환한다.
+    out["uncertainty_score"] = percentile_score(out["uncertainty_width"])
     out["norm_return"] = normalize_series(out["predicted_log_return"])
 
     out["signal_score"] = (
