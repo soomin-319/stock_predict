@@ -2,7 +2,8 @@
 
 ## 1. 프로젝트 목적
 본 프로젝트는 다음 거래일 기준으로 아래 값을 생성하는 End-to-End 파이프라인을 제공합니다.
-- 다음날 로그수익률(`predicted_return`)
+- 다음날 퍼센트 수익률(`predicted_return`, %)
+- 원시 로그수익률(`predicted_log_return`)
 - 상승 확률(`up_probability`)
 - 분위수 기반 불확실성 구간(`uncertainty_band`)
 - 최종 신호 점수/라벨(`signal_score`, `signal_label`)

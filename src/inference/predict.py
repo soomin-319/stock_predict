@@ -20,15 +20,16 @@ def build_prediction_frame(
     signal_cfg: SignalConfig,
 ) -> pd.DataFrame:
     out = latest_df[["Date", "Symbol", "Close", "market_regime"]].copy()
-    out["predicted_return"] = pred.predicted_return
-    out["predicted_close"] = out["Close"] * np.exp(out["predicted_return"])
+    out["predicted_log_return"] = pred.predicted_return
+    out["predicted_return"] = np.expm1(out["predicted_log_return"]) * 100.0
+    out["predicted_close"] = out["Close"] * np.exp(out["predicted_log_return"])
     out["up_probability"] = pred.up_probability
     out["uncertainty_width"] = pred.quantile_high - pred.quantile_low
     out["uncertainty_band"] = pd.Series(pred.quantile_low, index=out.index).astype(str) + " ~ " + pd.Series(pred.quantile_high, index=out.index).astype(str)
 
-    out["rel_strength"] = normalize_series(out["predicted_return"])
+    out["rel_strength"] = normalize_series(out["predicted_log_return"])
     out["uncertainty_score"] = normalize_series(out["uncertainty_width"]).clip(lower=0)
-    out["norm_return"] = normalize_series(out["predicted_return"])
+    out["norm_return"] = normalize_series(out["predicted_log_return"])
 
     out["signal_score"] = (
         signal_cfg.return_weight * out["norm_return"]

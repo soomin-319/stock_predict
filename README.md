@@ -81,3 +81,8 @@ python src/pipeline.py   --input data/real_ohlcv.csv   --output /tmp/predictions
 
 ## 350개 유니버스 자동 구성
 - `--fetch-real` 실행 시 `--real-symbols`를 생략하면 KOSPI 시가총액 상위 200 + KOSDAQ 상위 150을 자동 구성해(총 350개) 데이터를 수집합니다.
+
+
+## 출력 해석
+- `predicted_return`은 사용자 가독성을 위해 **퍼센트 수익률(%)**로 출력됩니다.
+- 원래 모델의 로그수익률 값은 `predicted_log_return` 컬럼으로 함께 제공합니다.
