@@ -17,7 +17,7 @@ if __package__ is None or __package__ == "":
 
 from src.config.settings import AppConfig
 from src.data.cleaners import clean_ohlcv
-from src.data.fetch_real_data import save_real_ohlcv_csv
+from src.data.fetch_real_data import append_real_ohlcv_csv, normalize_user_symbols, save_real_ohlcv_csv
 from src.data.krx_universe import get_kospi200_kosdaq150_symbols, get_symbol_name_map, save_universe_csv
 from src.data.loaders import load_ohlcv_csv
 from src.data.universe import filter_by_universe, load_universe_symbols
@@ -146,9 +146,9 @@ def _recommendation_from_signal(signal_label: str, predicted_return: float | int
     return "관망"
 
 
-def _print_prediction_console_summary(pred_df: pd.DataFrame, top_n: int = 10):
+def _print_prediction_console_summary(pred_df: pd.DataFrame):
     if pred_df.empty:
-        print("\n=== Top predictions ===")
+        print("\n=== Predictions (all symbols, by confidence) ===")
         print("(no rows)")
         return
 
@@ -158,55 +158,56 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame, top_n: int = 10):
         "neutral": "중립",
         "weak_negative": "약한매도",
         "strong_negative": "강한매도",
-        "no_data": "데이터없음",
     }
 
-    top = pred_df.sort_values("signal_score", ascending=False).head(top_n).copy()
-    if "symbol_name" not in top.columns:
-        top["symbol_name"] = top["Symbol"]
+    out = pred_df.copy()
+    if "symbol_name" not in out.columns:
+        out["symbol_name"] = out["Symbol"]
 
-    top["recommendation"] = top.apply(
+    out["recommendation"] = out.apply(
         lambda r: _recommendation_from_signal(r.get("signal_label"), r.get("predicted_return")), axis=1
     )
-    top["signal_label_ko"] = top["signal_label"].astype(str).map(label_to_ko).fillna("중립")
-    top["predicted_close_int"] = top["predicted_close"].abs().round(0).astype("Int64")
+    out["signal_label_ko"] = out["signal_label"].astype(str).map(label_to_ko).fillna("중립")
+    out["confidence_score"] = (1 - out["uncertainty_score"].fillna(1)).clip(lower=0, upper=1)
+    out["predicted_close_int"] = out["predicted_close"].abs().round(0).astype("Int64")
+    out = out.sort_values(["confidence_score", "signal_score"], ascending=[False, False]).copy()
 
     rows = []
-    for _, r in top.iterrows():
-        ret_text = "-" if pd.isna(r["predicted_return"]) else f"{float(r['predicted_return']):,.3f}"
-        pred_close_text = "-" if pd.isna(r["predicted_close_int"]) else f"{int(r['predicted_close_int']):,}"
+    for _, r in out.iterrows():
+        ret_text = "-" if pd.isna(r.get("predicted_return")) else f"{float(r['predicted_return']):,.3f}"
+        pred_close_text = "-" if pd.isna(r.get("predicted_close_int")) else f"{int(r['predicted_close_int']):,}"
+        conf_text = "-" if pd.isna(r.get("confidence_score")) else f"{float(r['confidence_score']):.3f}"
         rows.append(
             {
+                "심볼": str(r.get("Symbol", "")),
                 "종목명": str(r["symbol_name"]),
                 "권고": str(r["recommendation"]),
+                "신뢰도": conf_text,
                 "예상 수익률(%)": ret_text,
                 "내일 예측 종가": pred_close_text,
                 "시그널 라벨": str(r["signal_label_ko"]),
             }
         )
 
-    headers = ["종목명", "권고", "예상 수익률(%)", "내일 예측 종가", "시그널 라벨"]
-    col_widths = {
-        h: max(_display_width(h), *( _display_width(row[h]) for row in rows ))
-        for h in headers
-    }
+    headers = ["심볼", "종목명", "권고", "신뢰도", "예상 수익률(%)", "내일 예측 종가", "시그널 라벨"]
+    col_widths = {h: max(_display_width(h), *(_display_width(row[h]) for row in rows)) for h in headers}
 
-    print("\n=== Top predictions ===")
-    header_line = "  ".join(_pad_display(h, col_widths[h], "left") for h in headers)
-    print(header_line)
+    print("\n=== Predictions (all symbols, by confidence) ===")
+    print("  ".join(_pad_display(h, col_widths[h], "left") for h in headers))
     for row in rows:
         print(
             "  ".join(
                 [
+                    _pad_display(row["심볼"], col_widths["심볼"], "left"),
                     _pad_display(row["종목명"], col_widths["종목명"], "left"),
                     _pad_display(row["권고"], col_widths["권고"], "left"),
+                    _pad_display(row["신뢰도"], col_widths["신뢰도"], "right"),
                     _pad_display(row["예상 수익률(%)"], col_widths["예상 수익률(%)"], "right"),
                     _pad_display(row["내일 예측 종가"], col_widths["내일 예측 종가"], "right"),
                     _pad_display(row["시그널 라벨"], col_widths["시그널 라벨"], "left"),
                 ]
             )
         )
-
 
 def _split_oof_for_tuning_and_eval(scored_oof: pd.DataFrame, tune_ratio: float = 0.7) -> tuple[pd.DataFrame, pd.DataFrame]:
     dates = sorted(pd.to_datetime(scored_oof["Date"]).dropna().unique())
@@ -282,27 +283,6 @@ def _compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
     }
 
 
-def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: list[str] | None) -> pd.DataFrame:
-    if not universe_symbols:
-        return pred_df
-
-    universe = pd.DataFrame({"Symbol": sorted(set(str(s) for s in universe_symbols))})
-    out = universe.merge(pred_df, on="Symbol", how="left")
-    if "signal_label" in out.columns:
-        out["signal_label"] = out["signal_label"].astype(object).fillna("no_data")
-    if "Date" in out.columns:
-        out["Date"] = out["Date"].fillna(pd.Timestamp.today().normalize())
-    if "market_regime" in out.columns:
-        out["market_regime"] = out["market_regime"].fillna("unknown")
-    return out
-
-def _ensure_universe_size(symbols: list[str], expected_size: int) -> list[str]:
-    uniq = list(dict.fromkeys(str(s) for s in symbols))
-    if len(uniq) >= expected_size:
-        return uniq[:expected_size]
-    pads = [f"NO_DATA_{i:03d}" for i in range(1, expected_size - len(uniq) + 1)]
-    return uniq + pads
-
 def _round_floats(obj, digits: int = 3):
     if isinstance(obj, float):
         return round(obj, digits)
@@ -352,15 +332,8 @@ def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: lis
     if not universe_symbols:
         return pred_df
 
-    universe = pd.DataFrame({"Symbol": sorted(set(str(s) for s in universe_symbols))})
-    out = universe.merge(pred_df, on="Symbol", how="left")
-    if "signal_label" in out.columns:
-        out["signal_label"] = out["signal_label"].astype(object).fillna("no_data")
-    if "Date" in out.columns:
-        out["Date"] = out["Date"].fillna(pd.Timestamp.today().normalize())
-    if "market_regime" in out.columns:
-        out["market_regime"] = out["market_regime"].fillna("unknown")
-    return out
+    universe = set(str(s) for s in universe_symbols)
+    return pred_df[pred_df["Symbol"].astype(str).isin(universe)].copy()
 
 def run_pipeline(
     input_csv: str,
@@ -386,21 +359,8 @@ def run_pipeline(
         requested_universe_symbols = list(universe)
         data = filter_by_universe(cleaned, universe)
     else:
-        try:
-            requested_universe_symbols = get_kospi200_kosdaq150_symbols()
-            data = filter_by_universe(cleaned, requested_universe_symbols)
-            if data.empty:
-                requested_universe_symbols = _ensure_universe_size(
-                    sorted(cleaned["Symbol"].astype(str).unique().tolist()),
-                    cfg.universe.expected_size,
-                )
-                data = cleaned.copy()
-        except Exception:
-            requested_universe_symbols = _ensure_universe_size(
-                sorted(cleaned["Symbol"].astype(str).unique().tolist()),
-                cfg.universe.expected_size,
-            )
-            data = cleaned.copy()
+        requested_universe_symbols = sorted(cleaned["Symbol"].astype(str).unique().tolist())
+        data = cleaned.copy()
 
     _print_progress(4, total_steps, "Building price features")
     feat = build_features(data, cfg.feature)
@@ -464,8 +424,6 @@ def run_pipeline(
     latest = feat.sort_values("Date").groupby("Symbol", as_index=False).tail(1)
     latest_pred = model.predict(latest)
     pred_df = build_prediction_frame(latest, latest_pred, cfg.signal)
-    pred_df = _expand_predictions_to_universe(pred_df, requested_universe_symbols)
-
     symbol_name_map = get_symbol_name_map(pred_df["Symbol"].dropna().astype(str).tolist())
     pred_df["symbol_name"] = pred_df["Symbol"].astype(str).map(symbol_name_map).fillna(pred_df["Symbol"].astype(str))
 
@@ -522,7 +480,7 @@ def run_pipeline(
         print(f"Saved report to {report_path}")
 
     print("[안내] 시각자료(그래프)는 개별 종목별 차트가 아니라 전체 종목 샘플을 집계한 요약 진단입니다.")
-    _print_prediction_console_summary(pred_df, top_n=min(10, len(pred_df)))
+    _print_prediction_console_summary(pred_df)
     print(f"Saved inference output to {output_path}")
 
 
@@ -542,9 +500,20 @@ def main():
         help="Symbols used when --fetch-real is enabled (default: auto KOSPI200+KOSDAQ150)",
     )
     parser.add_argument("--real-start", default="2018-01-01", help="Start date for real data fetch")
+    parser.add_argument(
+        "--add-symbols",
+        nargs="*",
+        default=None,
+        help="Append user-entered stock codes/symbols into --input CSV (e.g., 005930 000660.KS)",
+    )
     args = parser.parse_args()
 
     input_csv = args.input
+    if args.add_symbols:
+        symbols_to_add = normalize_user_symbols(args.add_symbols)
+        if symbols_to_add:
+            append_real_ohlcv_csv(input_csv, symbols=symbols_to_add, start=args.real_start)
+            print(f"Added symbols to {input_csv}: {len(symbols_to_add)}")
     if args.fetch_real:
         symbols = args.real_symbols
         if not symbols:

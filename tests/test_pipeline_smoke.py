@@ -184,8 +184,52 @@ def test_uncertainty_score_uses_percentile_scale():
     assert (out["uncertainty_score"] <= 1).all()
 
 
-def test_ensure_universe_size_pads_to_expected():
-    out = _ensure_universe_size(["A", "B"], expected_size=5)
-    assert len(out) == 5
-    assert out[:2] == ["A", "B"]
-    assert out[2:] == ["NO_DATA_001", "NO_DATA_002", "NO_DATA_003"]
+
+
+def test_normalize_user_symbols_parses_codes():
+    from src.data.fetch_real_data import normalize_user_symbols
+
+    out = normalize_user_symbols(["005930", "000660.KS", "035420, 207940"])
+    assert "000660.KS" in out
+    assert "005930.KS" in out or "005930.KQ" in out
+    assert any(x.startswith("035420.") for x in out)
+
+
+def test_append_real_ohlcv_csv_merges_without_duplicates(tmp_path):
+    from src.data.fetch_real_data import append_real_ohlcv_csv
+
+    target = tmp_path / "real_ohlcv.csv"
+    base = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+            "Symbol": ["AAA", "AAA"],
+            "Open": [1, 1],
+            "High": [1, 1],
+            "Low": [1, 1],
+            "Close": [1, 1],
+            "Volume": [100, 100],
+        }
+    )
+    base.to_csv(target, index=False)
+
+    import src.data.fetch_real_data as fr
+
+    def _mock_fetch(symbols, start="2020-01-01", end=None):
+        return pd.DataFrame(
+            {
+                "Date": pd.to_datetime(["2024-01-02", "2024-01-03"]),
+                "Symbol": ["AAA", "BBB"],
+                "Open": [2, 3],
+                "High": [2, 3],
+                "Low": [2, 3],
+                "Close": [2, 3],
+                "Volume": [200, 300],
+            }
+        )
+
+    fr.fetch_real_ohlcv = _mock_fetch
+    append_real_ohlcv_csv(target, ["AAA", "BBB"])
+
+    out = pd.read_csv(target)
+    assert len(out) == 3
+    assert set(out["Symbol"]) == {"AAA", "BBB"}
