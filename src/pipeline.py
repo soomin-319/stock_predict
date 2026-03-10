@@ -100,6 +100,20 @@ def _feature_columns(df: pd.DataFrame) -> list[str]:
         "cci_20",
         "obv",
         "obv_change_5d",
+        "value_traded",
+        "turnover_rank_daily",
+        "is_top_turnover_10",
+        "foreign_net_buy",
+        "institution_net_buy",
+        "disclosure_score",
+        "news_sentiment",
+        "foreign_buy_signal",
+        "institution_buy_signal",
+        "smart_money_buy_signal",
+        "close_to_52w_high",
+        "near_52w_high_flag",
+        "breakout_52w_flag",
+        "investor_event_score",
     }
     return [
         c
@@ -184,7 +198,7 @@ def _position_size_hint(confidence_score: float | int | None, risk_flag: str) ->
 
 def _print_prediction_console_summary(pred_df: pd.DataFrame):
     if pred_df.empty:
-        print("\n=== Predictions (all symbols, by confidence) ===")
+        print("\n=== Predictions (Top10 by direction accuracy) ===")
         print("(no rows)")
         return
 
@@ -193,33 +207,37 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame):
         out["symbol_name"] = out["Symbol"]
 
     out["confidence_score"] = (1 - out["uncertainty_score"].fillna(1)).clip(lower=0, upper=1)
+    if "history_direction_accuracy" not in out.columns:
+        out["history_direction_accuracy"] = 0.5
     out["recommendation"] = out.apply(
         lambda r: _recommendation_from_signal(r.get("signal_score"), r.get("predicted_return")), axis=1
     )
     out["confidence_label"] = out["confidence_score"].map(_confidence_label)
     out["predicted_close_int"] = out["predicted_close"].abs().round(0).astype("Int64")
-    out = out.sort_values(["confidence_score", "signal_score"], ascending=[False, False]).copy()
+    out = out.sort_values(["history_direction_accuracy", "signal_score"], ascending=[False, False]).head(10).copy()
 
     rows = []
     for _, r in out.iterrows():
         ret_text = "-" if pd.isna(r.get("predicted_return")) else f"{float(r['predicted_return']):,.3f}"
         pred_close_text = "-" if pd.isna(r.get("predicted_close_int")) else f"{int(r['predicted_close_int']):,}"
         conf_text = "-" if pd.isna(r.get("confidence_score")) else f"{float(r['confidence_score']):.3f}"
+        dir_acc_text = "-" if pd.isna(r.get("history_direction_accuracy")) else f"{float(r['history_direction_accuracy']):.3f}"
         rows.append(
             {
                 "심볼": str(r.get("Symbol", "")),
                 "종목명": str(r["symbol_name"]),
                 "권고": str(r["recommendation"]),
+                "방향정확도": dir_acc_text,
                 "신뢰도": conf_text,
                 "예상 수익률(%)": ret_text,
                 "내일 예측 종가": pred_close_text,
             }
         )
 
-    headers = ["심볼", "종목명", "권고", "신뢰도", "예상 수익률(%)", "내일 예측 종가"]
+    headers = ["심볼", "종목명", "권고", "방향정확도", "신뢰도", "예상 수익률(%)", "내일 예측 종가"]
     col_widths = {h: max(_display_width(h), *(_display_width(row[h]) for row in rows)) for h in headers}
 
-    print("\n=== Predictions (all symbols, by confidence) ===")
+    print("\n=== Predictions (Top10 by direction accuracy) ===")
     print("  ".join(_pad_display(h, col_widths[h], "left") for h in headers))
     for row in rows:
         print(
@@ -228,6 +246,7 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame):
                     _pad_display(row["심볼"], col_widths["심볼"], "left"),
                     _pad_display(row["종목명"], col_widths["종목명"], "left"),
                     _pad_display(row["권고"], col_widths["권고"], "left"),
+                    _pad_display(row["방향정확도"], col_widths["방향정확도"], "right"),
                     _pad_display(row["신뢰도"], col_widths["신뢰도"], "right"),
                     _pad_display(row["예상 수익률(%)"], col_widths["예상 수익률(%)"], "right"),
                     _pad_display(row["내일 예측 종가"], col_widths["내일 예측 종가"], "right"),

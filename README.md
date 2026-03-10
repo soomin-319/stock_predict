@@ -43,6 +43,7 @@ python src/pipeline.py \
 ## 입력 컬럼
 - `Date`, `Open`, `High`, `Low`, `Close`, `Volume`
 - 선택: `Symbol`
+- 선택(투자자/이벤트 확장 feature): `외국인순매수`/`ForeignNetBuy`, `기관순매수`/`InstitutionNetBuy`, `공시점수`/`DisclosureScore`, `뉴스점수`/`NewsSentiment`
 
 ## 참고
 - 모든 산출물 저장 경로는 입력값과 무관하게 프로젝트의 `result/` 폴더로 고정됩니다. 폴더가 없으면 자동 생성됩니다.
