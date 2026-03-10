@@ -238,3 +238,33 @@ def test_append_real_ohlcv_csv_merges_without_duplicates(tmp_path):
     out = pd.read_csv(target)
     assert len(out) == 3
     assert set(out["Symbol"]) == {"AAA", "BBB"}
+
+
+def test_append_real_ohlcv_csv_no_data_does_not_crash(tmp_path):
+    from src.data.fetch_real_data import append_real_ohlcv_csv
+    import src.data.fetch_real_data as fr
+
+    target = tmp_path / "real_ohlcv.csv"
+    base = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2024-01-01"]),
+            "Symbol": ["AAA"],
+            "Open": [1],
+            "High": [1],
+            "Low": [1],
+            "Close": [1],
+            "Volume": [100],
+        }
+    )
+    base.to_csv(target, index=False)
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("No data fetched from yfinance")
+
+    fr.fetch_real_ohlcv = _raise
+    out_path = append_real_ohlcv_csv(target, ["ZZZ"])
+
+    assert out_path == target
+    out = pd.read_csv(target)
+    assert len(out) == 1
+    assert out.loc[0, "Symbol"] == "AAA"

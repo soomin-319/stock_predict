@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable
+import contextlib
+import io
+import logging
+import warnings
 
 import pandas as pd
 import yfinance as yf
@@ -9,7 +13,13 @@ import yfinance as yf
 
 def _import_pykrx_stock():
     try:
-        from pykrx import stock
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"pkg_resources is deprecated as an API.*",
+                category=UserWarning,
+            )
+            from pykrx import stock
 
         return stock
     except Exception:
@@ -54,10 +64,35 @@ def _normalize_yf_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _safe_download_ohlcv(symbol: str, start: str, end: str | None = None) -> pd.DataFrame:
+    yf_logger = logging.getLogger("yfinance")
+    prev_level = yf_logger.level
+    prev_disabled = yf_logger.disabled
+    try:
+        yf_logger.disabled = True
+        yf_logger.setLevel(logging.CRITICAL)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                return yf.download(
+                    symbol,
+                    start=start,
+                    end=end,
+                    auto_adjust=False,
+                    progress=False,
+                    threads=False,
+                )
+    except Exception:
+        return pd.DataFrame()
+    finally:
+        yf_logger.disabled = prev_disabled
+        yf_logger.setLevel(prev_level)
+
+
 def fetch_real_ohlcv(symbols: Iterable[str], start: str = "2020-01-01", end: str | None = None) -> pd.DataFrame:
     frames = []
     for symbol in symbols:
-        df = yf.download(symbol, start=start, end=end, auto_adjust=False, progress=False)
+        df = _safe_download_ohlcv(symbol, start=start, end=end)
         if df is None or df.empty:
             continue
         df = _normalize_yf_columns(df).reset_index()
@@ -91,7 +126,10 @@ def append_real_ohlcv_csv(path: str | Path, symbols: Iterable[str], start: str =
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
 
-    new_df = fetch_real_ohlcv(symbols=symbols, start=start, end=end)
+    try:
+        new_df = fetch_real_ohlcv(symbols=symbols, start=start, end=end)
+    except RuntimeError:
+        return p
     if p.exists():
         base = pd.read_csv(p)
         if "Date" in base.columns:
