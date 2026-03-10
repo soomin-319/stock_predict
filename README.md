@@ -17,13 +17,8 @@ python -m pip install -r requirements.txt
 
 ## 빠른 실행
 ### 1) 샘플 데이터 스모크
-```bash
-python src/pipeline.py \
-  --input data/sample_ohlcv.csv \
-  --disable-external \
-  --output /tmp/predictions_smoke.csv \
-  --report-json /tmp/pipeline_report_smoke.json \
-  --figure-dir /tmp/figures_smoke
+```powershell
+python src/pipeline.py --input data/sample_ohlcv.csv --disable-external --output predictions_smoke.csv --report-json pipeline_report_smoke.json --figure-dir figures_smoke
 ```
 
 ### 2) 실제 데이터(fetch + 외부 시장 feature)
@@ -32,16 +27,29 @@ python src/pipeline.py --fetch-real --input data/real_ohlcv.csv
 ```
 
 ### 3) 투자자 컨텍스트 연동(fetch-investor-context)
+```powershell
+python src/pipeline.py `
+  --fetch-real `
+  --fetch-investor-context `
+  --dart-api-key "YOUR_DART_API_KEY" `
+  --dart-corp-map-csv data/dart_corp_map.csv `
+  --input data/real_ohlcv.csv `
+  --output predictions_with_context.csv `
+  --report-json pipeline_report_with_context.json `
+  --figure-dir figures_with_context
+```
+
+### (참고) bash/zsh에서 줄바꿈 실행
 ```bash
 python src/pipeline.py \
   --fetch-real \
   --fetch-investor-context \
-  --dart-api-key <YOUR_DART_API_KEY> \
+  --dart-api-key "YOUR_DART_API_KEY" \
   --dart-corp-map-csv data/dart_corp_map.csv \
   --input data/real_ohlcv.csv \
-  --output /tmp/predictions_with_context.csv \
-  --report-json /tmp/pipeline_report_with_context.json \
-  --figure-dir /tmp/figures_with_context
+  --output predictions_with_context.csv \
+  --report-json pipeline_report_with_context.json \
+  --figure-dir figures_with_context
 ```
 
 ## CLI 옵션 요약
