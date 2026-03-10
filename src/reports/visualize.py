@@ -287,6 +287,7 @@ def save_symbol_level_comparison_figures(oof_df: pd.DataFrame, out_dir: str, max
         recent = _prepare_recent_month_frame(sdf)
         if not recent.empty:
             x_dates = recent["Date"]
+            day_labels = x_dates.dt.strftime("%m-%d").tolist()
 
             r_price = recent_dir / f"{safe}_recent_month_price.png"
             plt.figure(figsize=(10, 4))
@@ -295,11 +296,12 @@ def save_symbol_level_comparison_figures(oof_df: pd.DataFrame, out_dir: str, max
             _annotate_all_points(x_dates, recent["actual_next_close"], "{:.0f}")
             _annotate_all_points(x_dates, recent["predicted_next_close"], "{:.0f}")
             ax = plt.gca()
-            ax.xaxis.set_major_formatter(mdates.DateFormatter("%d"))
+            ax.set_xticks(x_dates)
+            ax.set_xticklabels(day_labels)
             plt.title(f"{symbol} - 최근1개월 실제/예측 가격" if use_korean else f"{symbol} - Recent Month Price")
             plt.xlabel("일" if use_korean else "Day")
             plt.ylabel("가격" if use_korean else "Price")
-            plt.xticks(rotation=0)
+            plt.xticks(rotation=45, ha="right")
             plt.legend()
             plt.tight_layout()
             plt.savefig(r_price)
@@ -312,11 +314,12 @@ def save_symbol_level_comparison_figures(oof_df: pd.DataFrame, out_dir: str, max
             _annotate_all_points(x_dates, recent["actual_return_pct"], "{:.3f}")
             _annotate_all_points(x_dates, recent["predicted_return_pct"], "{:.3f}")
             ax = plt.gca()
-            ax.xaxis.set_major_formatter(mdates.DateFormatter("%d"))
+            ax.set_xticks(x_dates)
+            ax.set_xticklabels(day_labels)
             plt.title(f"{symbol} - 최근1개월 실제/예측 수익률" if use_korean else f"{symbol} - Recent Month Return")
             plt.xlabel("일" if use_korean else "Day")
             plt.ylabel("수익률(%)" if use_korean else "Return(%)")
-            plt.xticks(rotation=0)
+            plt.xticks(rotation=45, ha="right")
             plt.legend()
             plt.tight_layout()
             plt.savefig(r_ret)
