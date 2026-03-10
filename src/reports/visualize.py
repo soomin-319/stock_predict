@@ -9,6 +9,9 @@ import matplotlib.pyplot as plt
 from matplotlib import font_manager
 import numpy as np
 import pandas as pd
+from sklearn.calibration import calibration_curve
+
+warnings.filterwarnings("ignore", message=r"Glyph .* missing from font", category=UserWarning)
 
 warnings.filterwarnings("ignore", message=r"Glyph .* missing from font", category=UserWarning)
 
@@ -22,11 +25,23 @@ def save_backtest_figures(backtest_series: pd.DataFrame, out_dir: str) -> dict:
         return out
 
     bt = backtest_series.copy()
-    bt["Date"] = pd.to_datetime(bt["Date"])
+    bt["Date"] = pd.to_datetime(bt["Date"], errors="coerce")
+    bt = bt.dropna(subset=["Date"]).sort_values("Date").drop_duplicates(subset=["Date"], keep="last")
+    if bt.empty or "equity" not in bt.columns or "drawdown" not in bt.columns:
+        return out
+
+    bt["equity"] = pd.to_numeric(bt["equity"], errors="coerce")
+    bt["drawdown"] = pd.to_numeric(bt["drawdown"], errors="coerce")
+    bt = bt.dropna(subset=["equity", "drawdown"])
+    if bt.empty:
+        return out
+
+    if (bt["drawdown"] >= 0).all():
+        bt["drawdown"] = -bt["drawdown"].abs()
 
     fig1 = p / "equity_curve.png"
     plt.figure(figsize=(10, 4))
-    plt.plot(bt["Date"], bt["equity"])
+    plt.plot(bt["Date"], bt["equity"], linewidth=1.7)
     plt.title("Backtest Equity Curve")
     plt.tight_layout()
     plt.savefig(fig1)
@@ -34,7 +49,7 @@ def save_backtest_figures(backtest_series: pd.DataFrame, out_dir: str) -> dict:
 
     fig2 = p / "drawdown_curve.png"
     plt.figure(figsize=(10, 4))
-    plt.plot(bt["Date"], bt["drawdown"])
+    plt.plot(bt["Date"], bt["drawdown"], linewidth=1.7)
     plt.title("Backtest Drawdown")
     plt.tight_layout()
     plt.savefig(fig2)
@@ -241,19 +256,20 @@ def save_symbol_level_comparison_figures(oof_df: pd.DataFrame, out_dir: str, max
         plt.savefig(ret_fig)
         plt.close()
 
-        # recent month charts (day-of-month x-axis + annotate all points)
+        # recent month charts (day-of-month labels + annotate all points)
         max_date = sdf["Date"].max()
-        recent = sdf[sdf["Date"] >= (max_date - pd.Timedelta(days=31))].copy()
+        recent = sdf[sdf["Date"] >= (max_date - pd.Timedelta(days=31))].copy().sort_values("Date")
         if not recent.empty:
-            recent["day"] = recent["Date"].dt.day.astype(int)
+            x_pos = np.arange(len(recent))
+            day_labels = recent["Date"].dt.day.astype(int).astype(str).tolist()
 
             r_price = recent_dir / f"{safe}_recent_month_price.png"
             plt.figure(figsize=(10, 4))
-            plt.plot(recent["day"], recent["actual_next_close"], marker="o", label="실제 다음 종가" if use_korean else "Actual next close")
-            plt.plot(recent["day"], recent["predicted_next_close"], marker="o", label="예측 다음 종가" if use_korean else "Predicted next close")
-            _annotate_all_points(recent["day"], recent["actual_next_close"], "{:.3f}")
-            _annotate_all_points(recent["day"], recent["predicted_next_close"], "{:.3f}")
-            plt.xticks(recent["day"].tolist(), [str(int(x)) for x in recent["day"].tolist()])
+            plt.plot(x_pos, recent["actual_next_close"], marker="o", label="실제 다음 종가" if use_korean else "Actual next close")
+            plt.plot(x_pos, recent["predicted_next_close"], marker="o", label="예측 다음 종가" if use_korean else "Predicted next close")
+            _annotate_all_points(x_pos, recent["actual_next_close"], "{:.0f}")
+            _annotate_all_points(x_pos, recent["predicted_next_close"], "{:.0f}")
+            plt.xticks(x_pos.tolist(), day_labels)
             plt.title(f"{symbol} - 최근1개월 실제/예측 가격" if use_korean else f"{symbol} - Recent Month Price")
             plt.xlabel("일" if use_korean else "Day")
             plt.ylabel("가격" if use_korean else "Price")
@@ -264,11 +280,11 @@ def save_symbol_level_comparison_figures(oof_df: pd.DataFrame, out_dir: str, max
 
             r_ret = recent_dir / f"{safe}_recent_month_return.png"
             plt.figure(figsize=(10, 4))
-            plt.plot(recent["day"], recent["actual_return_pct"], marker="o", label="실제 수익률(%)" if use_korean else "Actual return(%)")
-            plt.plot(recent["day"], recent["predicted_return_pct"], marker="o", label="예측 수익률(%)" if use_korean else "Predicted return(%)")
-            _annotate_all_points(recent["day"], recent["actual_return_pct"], "{:.3f}")
-            _annotate_all_points(recent["day"], recent["predicted_return_pct"], "{:.3f}")
-            plt.xticks(recent["day"].tolist(), [str(int(x)) for x in recent["day"].tolist()])
+            plt.plot(x_pos, recent["actual_return_pct"], marker="o", label="실제 수익률(%)" if use_korean else "Actual return(%)")
+            plt.plot(x_pos, recent["predicted_return_pct"], marker="o", label="예측 수익률(%)" if use_korean else "Predicted return(%)")
+            _annotate_all_points(x_pos, recent["actual_return_pct"], "{:.0f}")
+            _annotate_all_points(x_pos, recent["predicted_return_pct"], "{:.0f}")
+            plt.xticks(x_pos.tolist(), day_labels)
             plt.title(f"{symbol} - 최근1개월 실제/예측 수익률" if use_korean else f"{symbol} - Recent Month Return")
             plt.xlabel("일" if use_korean else "Day")
             plt.ylabel("수익률(%)" if use_korean else "Return(%)")
@@ -300,18 +316,23 @@ def save_diagnostic_figures(oof_df: pd.DataFrame, out_dir: str) -> dict:
         cal_path = p / "up_probability_calibration.png"
         cal = oof_df[["up_probability", "target_log_return"]].copy().dropna()
         if not cal.empty:
-            cal["actual_up"] = (cal["target_log_return"] > 0).astype(int)
+            y_true = (cal["target_log_return"] > 0).astype(int).values
+            y_prob = cal["up_probability"].astype(float).clip(0, 1).values
             n_bins = min(10, max(3, int(np.sqrt(len(cal)))))
-            cal["prob_bin"] = pd.qcut(cal["up_probability"], q=n_bins, duplicates="drop")
-            grp = cal.groupby("prob_bin", observed=False).agg(pred_prob=("up_probability", "mean"), actual_up_rate=("actual_up", "mean")).dropna()
-            grp = grp.sort_values("pred_prob")
-            if not grp.empty:
+            try:
+                frac_pos, mean_pred = calibration_curve(y_true, y_prob, n_bins=n_bins, strategy="quantile")
+            except Exception:
+                frac_pos, mean_pred = np.array([]), np.array([])
+
+            if len(frac_pos) > 0:
                 plt.figure(figsize=(5.5, 5.5))
                 plt.plot([0, 1], [0, 1], "k--", alpha=0.6)
-                plt.plot(grp["pred_prob"], grp["actual_up_rate"], marker="o")
+                plt.plot(mean_pred, frac_pos, marker="o")
                 plt.title("상승확률 캘리브레이션" if use_korean else "Up-probability calibration")
                 plt.xlabel("예측 상승확률" if use_korean else "Predicted up probability")
                 plt.ylabel("실제 상승 비율" if use_korean else "Actual up rate")
+                plt.ylim(0, 1)
+                plt.xlim(0, 1)
                 plt.tight_layout()
                 plt.savefig(cal_path)
                 plt.close()
