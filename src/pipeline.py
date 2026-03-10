@@ -196,6 +196,26 @@ def _position_size_hint(confidence_score: float | int | None, risk_flag: str) ->
     return "관망"
 
 
+def _backtest_summary_fields(backtest: dict) -> dict[str, float]:
+    keys = ["days", "cum_return", "avg_daily_return", "sharpe", "max_drawdown", "avg_turnover", "avg_selected_count"]
+    out = {}
+    for k in keys:
+        v = backtest.get(k, 0.0)
+        out[f"backtest_{k}"] = float(v) if isinstance(v, (int, float)) else 0.0
+    return out
+
+
+def _print_backtest_console_summary(backtest: dict):
+    print("\n=== Backtest Summary ===")
+    print(f"Days: {int(backtest.get('days', 0))}")
+    print(f"CumReturn: {float(backtest.get('cum_return', 0.0)):.3f}")
+    print(f"AvgDailyReturn: {float(backtest.get('avg_daily_return', 0.0)):.4f}")
+    print(f"Sharpe: {float(backtest.get('sharpe', 0.0)):.3f}")
+    print(f"MaxDrawdown: {float(backtest.get('max_drawdown', 0.0)):.3f}")
+    print(f"AvgTurnover: {float(backtest.get('avg_turnover', 0.0)):.3f}")
+    print(f"AvgSelectedCount: {float(backtest.get('avg_selected_count', 0.0)):.2f}")
+
+
 def _print_prediction_console_summary(pred_df: pd.DataFrame):
     if pred_df.empty:
         print("\n=== Predictions (Top10 by direction accuracy) ===")
@@ -566,10 +586,15 @@ def run_pipeline(
         ).astype(float)
         sym_acc = tmp_acc.groupby("Symbol", as_index=False)["history_direction_accuracy"].mean()
     pred_df = pred_df.merge(sym_acc, on="Symbol", how="left")
+    pred_df["history_direction_accuracy"] = pred_df["history_direction_accuracy"].fillna(0.5)
     pred_df["risk_flag"] = pred_df.apply(_risk_flag, axis=1)
     pred_df["position_size_hint"] = pred_df.apply(
         lambda r: _position_size_hint(r.get("confidence_score"), r.get("risk_flag", "")), axis=1
     )
+
+    bt_summary_cols = _backtest_summary_fields(backtest)
+    for k, v in bt_summary_cols.items():
+        pred_df[k] = v
 
     symbol_summary_artifacts = save_symbol_summary_artifacts(pred_df, scored_oof, str(figure_dir_path))
     oof_diagnostics = _compute_oof_diagnostics(scored_oof)
@@ -629,6 +654,7 @@ def run_pipeline(
         print(f"Saved report to {report_path}")
 
     print("[안내] 시각자료는 전체 집계 그래프와 종목별(OOF) 전체기간/최근1개월 실제·예측 비교 그래프를 함께 제공합니다.")
+    _print_backtest_console_summary(backtest)
     _print_prediction_console_summary(pred_df)
     print(f"Saved inference output to {output_path}")
 

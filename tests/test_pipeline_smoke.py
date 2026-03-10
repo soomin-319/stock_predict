@@ -119,8 +119,11 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     pred_df = pd.read_csv(pred_path)
     assert "signal_label" in pred_df.columns
     assert pred_df["signal_label"].astype(str).str.contains("신뢰도").all()
+    assert "history_direction_accuracy" in pred_df.columns
     assert "risk_flag" in pred_df.columns
     assert "position_size_hint" in pred_df.columns
+    assert "backtest_cum_return" in pred_df.columns
+    assert "backtest_sharpe" in pred_df.columns
 
 
 def test_external_features_fail_gracefully_without_noise(monkeypatch):
