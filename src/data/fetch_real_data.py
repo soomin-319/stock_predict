@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable
+from datetime import datetime
 import contextlib
 import io
 import logging
@@ -89,14 +90,58 @@ def _safe_download_ohlcv(symbol: str, start: str, end: str | None = None) -> pd.
         yf_logger.setLevel(prev_level)
 
 
+def _fetch_krx_ohlcv(symbol: str, start: str, end: str | None = None) -> pd.DataFrame:
+    if not symbol.endswith((".KS", ".KQ")):
+        return pd.DataFrame()
+    stock = _import_pykrx_stock()
+    if stock is None:
+        return pd.DataFrame()
+
+    ticker = symbol.split(".")[0]
+    start_s = pd.to_datetime(start).strftime("%Y%m%d")
+    end_s = pd.to_datetime(end).strftime("%Y%m%d") if end else datetime.now().strftime("%Y%m%d")
+
+    try:
+        df = stock.get_market_ohlcv_by_date(start_s, end_s, ticker)
+    except Exception:
+        return pd.DataFrame()
+
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    renamed = df.rename(
+        columns={
+            "시가": "Open",
+            "고가": "High",
+            "저가": "Low",
+            "종가": "Close",
+            "거래량": "Volume",
+        }
+    )
+    required = ["Open", "High", "Low", "Close", "Volume"]
+    if any(c not in renamed.columns for c in required):
+        return pd.DataFrame()
+
+    out = renamed[required].copy().reset_index()
+    first_col = out.columns[0]
+    out = out.rename(columns={first_col: "Date"})
+    out["Date"] = pd.to_datetime(out["Date"])
+    out["Symbol"] = symbol
+    return out[["Date", "Open", "High", "Low", "Close", "Volume", "Symbol"]]
+
+
 def fetch_real_ohlcv(symbols: Iterable[str], start: str = "2020-01-01", end: str | None = None) -> pd.DataFrame:
     frames = []
     for symbol in symbols:
         df = _safe_download_ohlcv(symbol, start=start, end=end)
         if df is None or df.empty:
+            df = _fetch_krx_ohlcv(symbol, start=start, end=end)
+            if df.empty:
+                continue
+            frames.append(df[["Date", "Open", "High", "Low", "Close", "Volume", "Symbol"]])
             continue
-        df = _normalize_yf_columns(df).reset_index()
 
+        df = _normalize_yf_columns(df).reset_index()
         required = ["Date", "Open", "High", "Low", "Close", "Volume"]
         if any(c not in df.columns for c in required):
             continue
@@ -106,7 +151,7 @@ def fetch_real_ohlcv(symbols: Iterable[str], start: str = "2020-01-01", end: str
         frames.append(out)
 
     if not frames:
-        raise RuntimeError("No data fetched from yfinance")
+        raise RuntimeError("No data fetched from providers (yfinance/pykrx)")
 
     all_df = pd.concat(frames, axis=0, ignore_index=True)
     all_df = all_df[["Date", "Symbol", "Open", "High", "Low", "Close", "Volume"]]
@@ -129,6 +174,7 @@ def append_real_ohlcv_csv(path: str | Path, symbols: Iterable[str], start: str =
     try:
         new_df = fetch_real_ohlcv(symbols=symbols, start=start, end=end)
     except RuntimeError:
+        print("[경고] 추가 요청한 심볼 데이터를 가져오지 못해 기존 CSV를 유지합니다.")
         return p
     if p.exists():
         base = pd.read_csv(p)

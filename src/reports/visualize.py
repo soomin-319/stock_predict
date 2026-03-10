@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import warnings
 
 import matplotlib as mpl
 mpl.use("Agg")
@@ -8,6 +9,8 @@ import matplotlib.pyplot as plt
 from matplotlib import font_manager
 import numpy as np
 import pandas as pd
+
+warnings.filterwarnings("ignore", message=r"Glyph .* missing from font", category=UserWarning)
 
 
 def save_backtest_figures(backtest_series: pd.DataFrame, out_dir: str) -> dict:
@@ -230,7 +233,6 @@ def build_symbol_summary_table(pred_df: pd.DataFrame, oof_df: pd.DataFrame) -> p
     table["하락확률"] = 1.0 - table["up_probability"]
     table["상승/하락(±)"] = table["상승확률"].map(lambda x: f"+{x:.3f}") + " / " + table["하락확률"].map(lambda x: f"-{x:.3f}")
     table["시그널라벨"] = table["signal_label"].astype(str).replace({"nan": "신뢰도 보통"}).fillna("신뢰도 보통")
-    table["예측사유"] = table.get("prediction_reason", "")
 
     table = table.merge(accuracy, on="Symbol", how="left")
     table["direction_accuracy"] = table["direction_accuracy"].fillna(0.5)
@@ -241,7 +243,6 @@ def build_symbol_summary_table(pred_df: pd.DataFrame, oof_df: pd.DataFrame) -> p
             "종목명": table["종목명"],
             "예상수익률(%)": table["predicted_return"],
             "시그널 라벨": table["시그널라벨"],
-            "예측 사유": table["예측사유"],
             "내일 예상 종가": table["predicted_close"],
             "오늘 종가": table["Close"],
             "상승/하락 확률(±)": table["상승/하락(±)"],
@@ -280,23 +281,11 @@ def save_symbol_summary_artifacts(pred_df: pd.DataFrame, oof_df: pd.DataFrame, o
             "신뢰도 보통": "Medium Confidence",
             "신뢰도 낮음": "Low Confidence",
         })
-        if "예측 사유" in display_df.columns:
-            display_df["예측 사유"] = (
-                display_df["예측 사유"]
-                .astype(str)
-                .str.replace("예측방향", "Direction", regex=False)
-                .str.replace("상승", "Up", regex=False)
-                .str.replace("하락", "Down", regex=False)
-                .str.replace("상승확률", "UpProb", regex=False)
-                .str.replace("신뢰도", "Confidence", regex=False)
-                .str.replace("과거방향정확도", "HistDirAcc", regex=False)
-            )
         display_df = display_df.rename(columns={
             "종목코드": "Code",
             "종목명": "Name",
             "예상수익률(%)": "ExpectedReturn(%)",
             "시그널 라벨": "ConfidenceLabel",
-            "예측 사유": "PredictionReason",
             "내일 예상 종가": "PredClose(T+1)",
             "오늘 종가": "Close(T)",
             "상승/하락 확률(±)": "UpDownProb(±)",

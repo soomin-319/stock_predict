@@ -112,7 +112,6 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert Path(payload["artifacts"]["symbol_summary_png"]).exists()
 
     pred_df = pd.read_csv(pred_path)
-    assert "prediction_reason" in pred_df.columns
     assert "signal_label" in pred_df.columns
     assert pred_df["signal_label"].astype(str).str.contains("신뢰도").all()
 
@@ -200,7 +199,7 @@ def test_normalize_user_symbols_parses_codes():
     assert any(x.startswith("035420.") for x in out)
 
 
-def test_append_real_ohlcv_csv_merges_without_duplicates(tmp_path):
+def test_append_real_ohlcv_csv_merges_without_duplicates(tmp_path, monkeypatch):
     from src.data.fetch_real_data import append_real_ohlcv_csv
 
     target = tmp_path / "real_ohlcv.csv"
@@ -232,7 +231,7 @@ def test_append_real_ohlcv_csv_merges_without_duplicates(tmp_path):
             }
         )
 
-    fr.fetch_real_ohlcv = _mock_fetch
+    monkeypatch.setattr(fr, "fetch_real_ohlcv", _mock_fetch)
     append_real_ohlcv_csv(target, ["AAA", "BBB"])
 
     out = pd.read_csv(target)
@@ -240,7 +239,7 @@ def test_append_real_ohlcv_csv_merges_without_duplicates(tmp_path):
     assert set(out["Symbol"]) == {"AAA", "BBB"}
 
 
-def test_append_real_ohlcv_csv_no_data_does_not_crash(tmp_path):
+def test_append_real_ohlcv_csv_no_data_does_not_crash(tmp_path, monkeypatch):
     from src.data.fetch_real_data import append_real_ohlcv_csv
     import src.data.fetch_real_data as fr
 
@@ -261,10 +260,41 @@ def test_append_real_ohlcv_csv_no_data_does_not_crash(tmp_path):
     def _raise(*args, **kwargs):
         raise RuntimeError("No data fetched from yfinance")
 
-    fr.fetch_real_ohlcv = _raise
+    monkeypatch.setattr(fr, "fetch_real_ohlcv", _raise)
     out_path = append_real_ohlcv_csv(target, ["ZZZ"])
 
     assert out_path == target
     out = pd.read_csv(target)
     assert len(out) == 1
     assert out.loc[0, "Symbol"] == "AAA"
+
+
+def test_fetch_real_ohlcv_falls_back_to_pykrx(monkeypatch):
+    import src.data.fetch_real_data as fr
+
+    def _empty_download(*args, **kwargs):
+        return pd.DataFrame()
+
+    class _MockStock:
+        @staticmethod
+        def get_market_ohlcv_by_date(start, end, ticker):
+            idx = pd.to_datetime(["2024-01-01", "2024-01-02"])
+            return pd.DataFrame(
+                {
+                    "시가": [1, 2],
+                    "고가": [1, 2],
+                    "저가": [1, 2],
+                    "종가": [1, 2],
+                    "거래량": [100, 200],
+                },
+                index=idx,
+            )
+
+    monkeypatch.setattr(fr, "_safe_download_ohlcv", _empty_download)
+    monkeypatch.setattr(fr, "_import_pykrx_stock", lambda: _MockStock)
+
+    out = fr.fetch_real_ohlcv(["005930.KS"], start="2024-01-01")
+
+    assert not out.empty
+    assert set(["Date", "Symbol", "Open", "High", "Low", "Close", "Volume"]).issubset(out.columns)
+    assert out["Symbol"].iloc[0] == "005930.KS"

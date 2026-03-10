@@ -157,18 +157,6 @@ def _confidence_label(confidence_score: float | int | None) -> str:
     return "신뢰도 낮음"
 
 
-def _build_prediction_reason(row: pd.Series) -> str:
-    direction = "상승" if float(row.get("predicted_return", 0.0)) >= 0 else "하락"
-    up_prob = row.get("up_probability")
-    conf = row.get("confidence_score")
-    acc = row.get("history_direction_accuracy")
-
-    up_prob_txt = "-" if pd.isna(up_prob) else f"{float(up_prob):.3f}"
-    conf_txt = "-" if pd.isna(conf) else f"{float(conf):.3f}"
-    acc_txt = "-" if pd.isna(acc) else f"{float(acc):.3f}"
-    return f"예측방향:{direction}, 상승확률:{up_prob_txt}, 신뢰도:{conf_txt}, 과거방향정확도:{acc_txt}"
-
-
 def _print_prediction_console_summary(pred_df: pd.DataFrame):
     if pred_df.empty:
         print("\n=== Predictions (all symbols, by confidence) ===")
@@ -184,7 +172,6 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame):
         lambda r: _recommendation_from_signal(r.get("signal_score"), r.get("predicted_return")), axis=1
     )
     out["confidence_label"] = out["confidence_score"].map(_confidence_label)
-    out["prediction_reason"] = out.apply(_build_prediction_reason, axis=1)
     out["predicted_close_int"] = out["predicted_close"].abs().round(0).astype("Int64")
     out = out.sort_values(["confidence_score", "signal_score"], ascending=[False, False]).copy()
 
@@ -201,11 +188,10 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame):
                 "신뢰도": conf_text,
                 "예상 수익률(%)": ret_text,
                 "내일 예측 종가": pred_close_text,
-                "예측 사유": str(r["prediction_reason"]),
             }
         )
 
-    headers = ["심볼", "종목명", "권고", "신뢰도", "예상 수익률(%)", "내일 예측 종가", "예측 사유"]
+    headers = ["심볼", "종목명", "권고", "신뢰도", "예상 수익률(%)", "내일 예측 종가"]
     col_widths = {h: max(_display_width(h), *(_display_width(row[h]) for row in rows)) for h in headers}
 
     print("\n=== Predictions (all symbols, by confidence) ===")
@@ -220,7 +206,6 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame):
                     _pad_display(row["신뢰도"], col_widths["신뢰도"], "right"),
                     _pad_display(row["예상 수익률(%)"], col_widths["예상 수익률(%)"], "right"),
                     _pad_display(row["내일 예측 종가"], col_widths["내일 예측 종가"], "right"),
-                    _pad_display(row["예측 사유"], col_widths["예측 사유"], "left"),
                 ]
             )
         )
@@ -540,6 +525,68 @@ def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: lis
     universe = set(str(s) for s in universe_symbols)
     return pred_df[pred_df["Symbol"].astype(str).isin(universe)].copy()
 
+
+
+def _ensure_universe_size(symbols: list[str], expected_size: int) -> list[str]:
+    """Backward-compatible helper retained for older tests/import paths."""
+    uniq = list(dict.fromkeys(str(s) for s in symbols))
+    if len(uniq) >= expected_size:
+        return uniq[:expected_size]
+    pads = [f"NO_DATA_{i:03d}" for i in range(1, expected_size - len(uniq) + 1)]
+    return uniq + pads
+
+def _round_floats(obj, digits: int = 3):
+    if isinstance(obj, float):
+        return round(obj, digits)
+    if isinstance(obj, dict):
+        return {k: _round_floats(v, digits) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_round_floats(v, digits) for v in obj]
+    return obj
+
+
+def _compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
+    if scored_oof.empty:
+        return {}
+
+    req = {"target_log_return", "rel_strength", "norm_return", "predicted_log_return", "uncertainty_score", "uncertainty_width"}
+    if not req.issubset(set(scored_oof.columns)):
+        return {}
+
+    df = scored_oof[list(req)].copy().dropna()
+    if df.empty:
+        return {}
+
+    actual_up = (df["target_log_return"] > 0).astype(int)
+
+    rel_dir_acc = float(((df["rel_strength"] > 0).astype(int) == actual_up).mean())
+    norm_dir_acc = float(((df["norm_return"] > 0).astype(int) == actual_up).mean())
+    pred_dir_acc = float(((df["predicted_log_return"] > 0).astype(int) == actual_up).mean())
+
+    abs_error = (df["predicted_log_return"] - df["target_log_return"]).abs()
+
+    return {
+        "direction_accuracy": {
+            "predicted_log_return": pred_dir_acc,
+            "rel_strength": rel_dir_acc,
+            "norm_return": norm_dir_acc,
+        },
+        "uncertainty_diagnostics": {
+            "corr_uncertainty_vs_abs_error": float(df["uncertainty_width"].corr(abs_error)),
+            "corr_uncertainty_score_vs_abs_error": float(df["uncertainty_score"].corr(abs_error)),
+            "uncertainty_score_zero_ratio": float((df["uncertainty_score"] == 0).mean()),
+            "uncertainty_score_mean": float(df["uncertainty_score"].mean()),
+        },
+    }
+
+
+def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: list[str] | None) -> pd.DataFrame:
+    if not universe_symbols:
+        return pred_df
+
+    universe = set(str(s) for s in universe_symbols)
+    return pred_df[pred_df["Symbol"].astype(str).isin(universe)].copy()
+
 def run_pipeline(
     input_csv: str,
     output_csv: str,
@@ -642,7 +689,6 @@ def run_pipeline(
         ).astype(float)
         sym_acc = tmp_acc.groupby("Symbol", as_index=False)["history_direction_accuracy"].mean()
     pred_df = pred_df.merge(sym_acc, on="Symbol", how="left")
-    pred_df["prediction_reason"] = pred_df.apply(_build_prediction_reason, axis=1)
 
     symbol_summary_artifacts = save_symbol_summary_artifacts(pred_df, scored_oof, str(figure_dir_path))
     oof_diagnostics = _compute_oof_diagnostics(scored_oof)
