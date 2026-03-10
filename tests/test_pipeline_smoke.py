@@ -101,6 +101,9 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "backtest" in payload
     assert "artifacts" in payload
     assert "external_feature_coverage" in payload
+    assert "probability_calibration" in payload
+    assert "ece" in payload["probability_calibration"]
+    assert "brier" in payload["probability_calibration"]
     assert "tuning_samples" in payload
     assert "backtest_samples" in payload
     assert "avg_turnover" in payload["backtest"]
@@ -116,6 +119,8 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     pred_df = pd.read_csv(pred_path)
     assert "signal_label" in pred_df.columns
     assert pred_df["signal_label"].astype(str).str.contains("신뢰도").all()
+    assert "risk_flag" in pred_df.columns
+    assert "position_size_hint" in pred_df.columns
 
 
 def test_external_features_fail_gracefully_without_noise(monkeypatch):

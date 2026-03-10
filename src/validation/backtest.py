@@ -14,20 +14,41 @@ def run_long_only_topk_backtest(pred_df: pd.DataFrame, cfg: BacktestConfig) -> d
     holdings_history: list[set[str]] = []
     selected_count = []
 
+    prev_symbols: set[str] = set()
     for dt, grp in df.groupby("Date"):
         eligible = grp[(grp["up_probability"] >= cfg.min_up_probability) & (grp["signal_score"] >= cfg.min_signal_score)]
-        top = eligible.head(cfg.top_k)
+        ranked = eligible.head(max(cfg.top_k * 3, cfg.top_k))
+
+        # Turnover cap: keep as many previous holdings as possible, then add newcomers.
+        if prev_symbols and cfg.turnover_limit < 1.0 and not ranked.empty:
+            old = ranked[ranked["Symbol"].astype(str).isin(prev_symbols)]
+            new = ranked[~ranked["Symbol"].astype(str).isin(prev_symbols)]
+            max_new = int(round(cfg.top_k * max(0.0, cfg.turnover_limit)))
+            top = pd.concat([old.head(cfg.top_k - max_new), new.head(max_new)], ignore_index=True)
+            top = top.sort_values("signal_score", ascending=False).head(cfg.top_k)
+        else:
+            top = ranked.head(cfg.top_k)
+
         if top.empty:
             daily_returns.append((pd.to_datetime(dt), 0.0))
             holdings_history.append(set())
             selected_count.append(0)
+            prev_symbols = set()
             continue
 
         gross = top["target_log_return"].mean()
-        cost = (cfg.fee_bps + cfg.slippage_bps) / 10000.0
+        dyn_penalty = 0.0
+        if "uncertainty_score" in top.columns:
+            dyn_penalty += float(top["uncertainty_score"].fillna(0).mean())
+        if "vol_ratio_20" in top.columns:
+            vol_pen = top["vol_ratio_20"].replace([np.inf, -np.inf], np.nan).fillna(1.0)
+            dyn_penalty += float((vol_pen - 1.0).clip(lower=0).mean())
+
+        cost = (cfg.fee_bps + cfg.slippage_bps + cfg.dynamic_slippage_bps * dyn_penalty) / 10000.0
         net = gross - cost
         daily_returns.append((pd.to_datetime(dt), net))
-        holdings_history.append(set(top["Symbol"].astype(str).tolist()))
+        prev_symbols = set(top["Symbol"].astype(str).tolist())
+        holdings_history.append(prev_symbols)
         selected_count.append(int(len(top)))
 
     if not daily_returns:
