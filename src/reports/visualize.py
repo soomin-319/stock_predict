@@ -173,6 +173,14 @@ def save_actual_vs_predicted_price_plot(oof_df: pd.DataFrame, out_dir: str) -> s
 
 
 
+
+
+def _annotate_all_points(x, y, fmt: str = "{:.3f}"):
+    for xi, yi in zip(x, y):
+        if pd.isna(yi):
+            continue
+        plt.annotate(fmt.format(float(yi)), (xi, yi), textcoords="offset points", xytext=(0, 6), ha="center", fontsize=7)
+
 def _safe_symbol_filename(symbol: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(symbol))
 
@@ -184,7 +192,9 @@ def save_symbol_level_comparison_figures(oof_df: pd.DataFrame, out_dir: str, max
 
     p = Path(out_dir)
     symbol_dir = p / "symbol_level"
+    recent_dir = symbol_dir / "recent_month"
     symbol_dir.mkdir(parents=True, exist_ok=True)
+    recent_dir.mkdir(parents=True, exist_ok=True)
     use_korean = _configure_korean_font()
 
     work = oof_df.copy()
@@ -199,6 +209,7 @@ def save_symbol_level_comparison_figures(oof_df: pd.DataFrame, out_dir: str, max
         symbols = symbols[:max_symbols]
 
     generated = 0
+    recent_generated = 0
     for symbol in symbols:
         sdf = work[work["Symbol"].astype(str) == symbol].sort_values("Date")
         if sdf.empty:
@@ -230,11 +241,50 @@ def save_symbol_level_comparison_figures(oof_df: pd.DataFrame, out_dir: str, max
         plt.savefig(ret_fig)
         plt.close()
 
+        # recent month charts (day-of-month x-axis + annotate all points)
+        max_date = sdf["Date"].max()
+        recent = sdf[sdf["Date"] >= (max_date - pd.Timedelta(days=31))].copy()
+        if not recent.empty:
+            recent["day"] = recent["Date"].dt.day.astype(int)
+
+            r_price = recent_dir / f"{safe}_recent_month_price.png"
+            plt.figure(figsize=(10, 4))
+            plt.plot(recent["day"], recent["actual_next_close"], marker="o", label="실제 다음 종가" if use_korean else "Actual next close")
+            plt.plot(recent["day"], recent["predicted_next_close"], marker="o", label="예측 다음 종가" if use_korean else "Predicted next close")
+            _annotate_all_points(recent["day"], recent["actual_next_close"], "{:.3f}")
+            _annotate_all_points(recent["day"], recent["predicted_next_close"], "{:.3f}")
+            plt.xticks(recent["day"].tolist(), [str(int(x)) for x in recent["day"].tolist()])
+            plt.title(f"{symbol} - 최근1개월 실제/예측 가격" if use_korean else f"{symbol} - Recent Month Price")
+            plt.xlabel("일" if use_korean else "Day")
+            plt.ylabel("가격" if use_korean else "Price")
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(r_price)
+            plt.close()
+
+            r_ret = recent_dir / f"{safe}_recent_month_return.png"
+            plt.figure(figsize=(10, 4))
+            plt.plot(recent["day"], recent["actual_return_pct"], marker="o", label="실제 수익률(%)" if use_korean else "Actual return(%)")
+            plt.plot(recent["day"], recent["predicted_return_pct"], marker="o", label="예측 수익률(%)" if use_korean else "Predicted return(%)")
+            _annotate_all_points(recent["day"], recent["actual_return_pct"], "{:.3f}")
+            _annotate_all_points(recent["day"], recent["predicted_return_pct"], "{:.3f}")
+            plt.xticks(recent["day"].tolist(), [str(int(x)) for x in recent["day"].tolist()])
+            plt.title(f"{symbol} - 최근1개월 실제/예측 수익률" if use_korean else f"{symbol} - Recent Month Return")
+            plt.xlabel("일" if use_korean else "Day")
+            plt.ylabel("수익률(%)" if use_korean else "Return(%)")
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(r_ret)
+            plt.close()
+            recent_generated += 2
+
         generated += 2
 
     return {
         "symbol_level_figure_dir": str(symbol_dir),
+        "symbol_level_recent_month_dir": str(recent_dir),
         "symbol_level_figure_count": generated,
+        "symbol_level_recent_month_figure_count": recent_generated,
         "symbol_level_symbol_count": len(symbols),
     }
 
@@ -335,9 +385,6 @@ def save_symbol_summary_artifacts(pred_df: pd.DataFrame, oof_df: pd.DataFrame, o
     p.mkdir(parents=True, exist_ok=True)
     use_korean = _configure_korean_font()
 
-    csv_path = p / "symbol_summary_table.csv"
-    summary.to_csv(csv_path, index=False, encoding="utf-8-sig")
-
     top = summary.head(20).copy()
     png_path = p / "symbol_summary_table_top20.png"
     fig, ax = plt.subplots(figsize=(18, 0.55 * (len(top) + 2)))
@@ -374,4 +421,4 @@ def save_symbol_summary_artifacts(pred_df: pd.DataFrame, oof_df: pd.DataFrame, o
     plt.savefig(png_path)
     plt.close(fig)
 
-    return {"symbol_summary_csv": str(csv_path), "symbol_summary_png": str(png_path)}
+    return {"symbol_summary_png": str(png_path)}

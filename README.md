@@ -14,8 +14,9 @@
   - `actual_vs_predicted_price.png` (실제/예측 다음 종가 비교)
   - `up_probability_calibration.png` (상승확률 보정 품질)
   - `uncertainty_vs_error.png` (불확실성 폭 vs 절대 오차)
-  - `symbol_summary_table_top20.png` / `symbol_summary_table.csv` (종목별 요약표, 한글 폰트 fallback 적용)
-  - `symbol_level/*.png` (각 종목별 실제/예측 가격 및 수익률 비교 그래프)
+  - `symbol_summary_table_top20.png` (종목별 요약표 이미지, 한글 폰트 fallback 적용)
+  - `symbol_level/*.png` (각 종목별 전체 기간 실제/예측 가격 및 수익률 비교 그래프)
+  - `symbol_level/recent_month/*.png` (각 종목별 최근 1개월 비교 그래프: x축 일자(일), 모든 포인트 값 표시)
 - OOF 예측 저장: `reports/oof_predictions.csv`
 
 ## 실제 데이터 가져와서 실행
@@ -104,7 +105,6 @@ python src/pipeline.py   --input data/real_ohlcv.csv   --output /tmp/predictions
 - `uncertainty_vs_error.png`: 불확실성 폭과 예측 오차의 관계
 - `symbol_level/*_actual_vs_predicted_price.png`: 종목별 실제/예측 가격 비교
 - `symbol_level/*_actual_vs_predicted_return.png`: 종목별 실제/예측 수익률 비교
-- `symbol_summary_table.csv`: 종목별 핵심 예측 요약표
 - `symbol_summary_table_top20.png`: 상위 20개 종목 요약표 이미지
 
 ## 시그널 점수/라벨 해석
