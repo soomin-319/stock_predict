@@ -6,6 +6,7 @@ import warnings
 import matplotlib as mpl
 mpl.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from matplotlib import font_manager
 import numpy as np
 import pandas as pd
