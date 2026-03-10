@@ -283,6 +283,16 @@ def _compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
     }
 
 
+
+
+def _ensure_universe_size(symbols: list[str], expected_size: int) -> list[str]:
+    """Backward-compatible helper retained for older tests/import paths."""
+    uniq = list(dict.fromkeys(str(s) for s in symbols))
+    if len(uniq) >= expected_size:
+        return uniq[:expected_size]
+    pads = [f"NO_DATA_{i:03d}" for i in range(1, expected_size - len(uniq) + 1)]
+    return uniq + pads
+
 def _round_floats(obj, digits: int = 3):
     if isinstance(obj, float):
         return round(obj, digits)
