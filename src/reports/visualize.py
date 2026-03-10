@@ -13,6 +13,8 @@ from sklearn.calibration import calibration_curve
 
 warnings.filterwarnings("ignore", message=r"Glyph .* missing from font", category=UserWarning)
 
+warnings.filterwarnings("ignore", message=r"Glyph .* missing from font", category=UserWarning)
+
 
 def save_backtest_figures(backtest_series: pd.DataFrame, out_dir: str) -> dict:
     p = Path(out_dir)
