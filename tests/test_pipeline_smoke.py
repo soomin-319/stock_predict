@@ -8,7 +8,7 @@ from src.config.settings import AppConfig
 from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
 from src.models.lgbm_heads import MultiHeadStockModel
-from src.pipeline import _split_oof_for_tuning_and_eval, resolve_output_path, run_pipeline
+from src.pipeline import _ensure_universe_size, _split_oof_for_tuning_and_eval, resolve_output_path, run_pipeline
 
 
 def make_sample_df(days: int = 320):
