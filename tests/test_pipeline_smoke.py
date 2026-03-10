@@ -111,6 +111,11 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert Path(payload["artifacts"]["symbol_summary_csv"]).exists()
     assert Path(payload["artifacts"]["symbol_summary_png"]).exists()
 
+    pred_df = pd.read_csv(pred_path)
+    assert "prediction_reason" in pred_df.columns
+    assert "signal_label" in pred_df.columns
+    assert pred_df["signal_label"].astype(str).str.contains("신뢰도").all()
+
 
 def test_external_features_fail_gracefully_without_noise(monkeypatch):
     from src.features.external_features import add_external_market_features
