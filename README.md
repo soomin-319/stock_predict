@@ -10,6 +10,11 @@
   - `equity_curve.png`
   - `drawdown_curve.png`
   - `signal_score_hist.png`
+  - `actual_vs_predicted_return.png` (실제/예측 수익률 비교)
+  - `actual_vs_predicted_price.png` (실제/예측 다음 종가 비교)
+  - `up_probability_calibration.png` (상승확률 보정 품질)
+  - `uncertainty_vs_error.png` (불확실성 폭 vs 절대 오차)
+  - `symbol_summary_table_top20.png` / `symbol_summary_table.csv` (종목별 요약표, 한글 폰트 fallback 적용)
 - OOF 예측 저장: `reports/oof_predictions.csv`
 
 ## 실제 데이터 가져와서 실행
