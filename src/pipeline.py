@@ -21,6 +21,7 @@ from src.data.cleaners import clean_ohlcv
 from src.data.fetch_real_data import append_real_ohlcv_csv, normalize_user_symbols, save_real_ohlcv_csv
 from src.data.krx_universe import get_kospi200_kosdaq150_symbols, get_symbol_name_map, save_universe_csv
 from src.data.loaders import load_ohlcv_csv
+from src.data.investor_context import InvestorContextConfig, add_investor_context_with_coverage
 from src.data.universe import filter_by_universe, load_universe_symbols
 from src.features.external_features import add_external_market_features_with_coverage
 from src.features.price_features import build_features
@@ -484,6 +485,9 @@ def run_pipeline(
     report_json: str | None = None,
     figure_dir: str = "reports/figures",
     use_external: bool = True,
+    use_investor_context: bool = False,
+    dart_api_key: str | None = None,
+    dart_corp_map_csv: str | None = None,
 ):
     total_steps = 12
     _print_progress(1, total_steps, "Loading app configuration")
@@ -505,6 +509,22 @@ def run_pipeline(
         data = cleaned.copy()
 
     _print_progress(4, total_steps, "Building price features")
+    investor_context_coverage = {
+        "enabled": False,
+        "flow": {"requested": 0, "successful": 0, "failed": 0},
+        "disclosure": {"requested": 0, "successful": 0, "failed": 0},
+        "news": {"requested": 0, "successful": 0, "failed": 0},
+    }
+    if use_investor_context:
+        data, investor_context_coverage = add_investor_context_with_coverage(
+            data,
+            InvestorContextConfig(
+                enabled=True,
+                dart_api_key=dart_api_key,
+                dart_corp_map_csv=dart_corp_map_csv,
+            ),
+        )
+
     feat = build_features(data, cfg.feature)
     _print_progress(5, total_steps, "Adding external market features")
     external_coverage = {"requested": 0, "successful": 0, "failed": 0, "fallback_used": 0, "details": []}
@@ -622,6 +642,7 @@ def run_pipeline(
         "backtest_samples": int(len(backtest_input)),
         "backtest": {k: v for k, v in backtest.items() if k != "series"},
         "external_feature_coverage": external_coverage,
+        "investor_context_coverage": investor_context_coverage,
         "oof_diagnostics": oof_diagnostics,
         "probability_calibration": probability_calibration_metrics(
             (scored_oof["target_log_return"] > 0).astype(int).values,
@@ -668,6 +689,9 @@ def main():
     parser.add_argument("--figure-dir", default=r"C:\Users\카운\Desktop\result\figures", help="Directory for generated charts")
     parser.add_argument("--fetch-real", action="store_true", help="Fetch real OHLCV from yfinance before running")
     parser.add_argument("--disable-external", action="store_true", help="Disable external market feature download")
+    parser.add_argument("--fetch-investor-context", action="store_true", help="Fetch investor/disclosure/news context features")
+    parser.add_argument("--dart-api-key", default=None, help="OpenDART API key for disclosure fetch")
+    parser.add_argument("--dart-corp-map-csv", default=None, help="CSV path with Symbol,corp_code for OpenDART")
     parser.add_argument(
         "--real-symbols",
         nargs="*",
@@ -703,7 +727,17 @@ def main():
         save_real_ohlcv_csv(input_csv, symbols=symbols, start=args.real_start)
         print(f"Fetched real market data to {input_csv}")
 
-    run_pipeline(args.input, args.output, args.universe_csv, args.report_json, args.figure_dir, use_external=not args.disable_external)
+    run_pipeline(
+        args.input,
+        args.output,
+        args.universe_csv,
+        args.report_json,
+        args.figure_dir,
+        use_external=not args.disable_external,
+        use_investor_context=args.fetch_investor_context,
+        dart_api_key=args.dart_api_key,
+        dart_corp_map_csv=args.dart_corp_map_csv,
+    )
 
 
 if __name__ == "__main__":

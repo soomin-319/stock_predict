@@ -28,6 +28,9 @@ python src/pipeline.py --fetch-real
 ```bash
 python src/pipeline.py \
   --fetch-real \
+  --fetch-investor-context \
+  --dart-api-key <YOUR_DART_API_KEY> \
+  --dart-corp-map-csv data/dart_corp_map.csv \
   --input data/real_ohlcv.csv \
   --output C:\Users\카운\Desktop\predictions_direct.csv \
   --report-json reports/pipeline_report.json \
