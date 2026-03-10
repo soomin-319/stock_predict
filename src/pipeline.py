@@ -9,6 +9,7 @@ import unicodedata
 from pathlib import Path
 
 import pandas as pd
+from sklearn.isotonic import IsotonicRegression
 
 if __package__ is None or __package__ == "":
     project_root = Path(__file__).resolve().parents[1]
@@ -466,6 +467,116 @@ def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: lis
     universe = set(str(s) for s in universe_symbols)
     return pred_df[pred_df["Symbol"].astype(str).isin(universe)].copy()
 
+
+
+def _ensure_universe_size(symbols: list[str], expected_size: int) -> list[str]:
+    """Backward-compatible helper retained for older tests/import paths."""
+    uniq = list(dict.fromkeys(str(s) for s in symbols))
+    if len(uniq) >= expected_size:
+        return uniq[:expected_size]
+    pads = [f"NO_DATA_{i:03d}" for i in range(1, expected_size - len(uniq) + 1)]
+    return uniq + pads
+
+def _round_floats(obj, digits: int = 3):
+    if isinstance(obj, float):
+        return round(obj, digits)
+    if isinstance(obj, dict):
+        return {k: _round_floats(v, digits) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_round_floats(v, digits) for v in obj]
+    return obj
+
+
+def _compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
+    if scored_oof.empty:
+        return {}
+
+    req = {"target_log_return", "rel_strength", "norm_return", "predicted_log_return", "uncertainty_score", "uncertainty_width"}
+    if not req.issubset(set(scored_oof.columns)):
+        return {}
+
+    df = scored_oof[list(req)].copy().dropna()
+    if df.empty:
+        return {}
+
+    actual_up = (df["target_log_return"] > 0).astype(int)
+
+    rel_dir_acc = float(((df["rel_strength"] > 0).astype(int) == actual_up).mean())
+    norm_dir_acc = float(((df["norm_return"] > 0).astype(int) == actual_up).mean())
+    pred_dir_acc = float(((df["predicted_log_return"] > 0).astype(int) == actual_up).mean())
+
+    abs_error = (df["predicted_log_return"] - df["target_log_return"]).abs()
+
+    return {
+        "direction_accuracy": {
+            "predicted_log_return": pred_dir_acc,
+            "rel_strength": rel_dir_acc,
+            "norm_return": norm_dir_acc,
+        },
+        "uncertainty_diagnostics": {
+            "corr_uncertainty_vs_abs_error": float(df["uncertainty_width"].corr(abs_error)),
+            "corr_uncertainty_score_vs_abs_error": float(df["uncertainty_score"].corr(abs_error)),
+            "uncertainty_score_zero_ratio": float((df["uncertainty_score"] == 0).mean()),
+            "uncertainty_score_mean": float(df["uncertainty_score"].mean()),
+        },
+    }
+
+
+def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: list[str] | None) -> pd.DataFrame:
+    if not universe_symbols:
+        return pred_df
+
+    universe = set(str(s) for s in universe_symbols)
+    return pred_df[pred_df["Symbol"].astype(str).isin(universe)].copy()
+
+def _calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Index | list | tuple | pd.Series) -> pd.Series:
+    if oof_df.empty or "up_probability" not in oof_df.columns or "target_log_return" not in oof_df.columns:
+        return pd.Series(up_probs, dtype=float)
+
+    cal = oof_df[["up_probability", "target_log_return"]].copy().dropna()
+    if cal.empty or cal["up_probability"].nunique() < 3:
+        return pd.Series(up_probs, dtype=float)
+
+    y = (cal["target_log_return"] > 0).astype(int)
+    try:
+        iso = IsotonicRegression(out_of_bounds="clip")
+        iso.fit(cal["up_probability"].astype(float).values, y.values)
+        return pd.Series(iso.predict(pd.Series(up_probs, dtype=float).values), dtype=float).clip(0.0, 1.0)
+    except Exception:
+        return pd.Series(up_probs, dtype=float)
+
+
+def _safe_to_csv(df: pd.DataFrame, path: Path) -> Path:
+    try:
+        df.to_csv(path, index=False)
+        return path
+    except PermissionError:
+        fallback = path.with_name(f"{path.stem}_fallback{path.suffix}")
+        df.to_csv(fallback, index=False)
+        print(f"[경고] 파일이 열려있어 기본 경로에 저장하지 못했습니다. 대체 경로로 저장: {fallback}")
+        return fallback
+
+
+def _build_combined_symbol_results(pred_df: pd.DataFrame, summary_csv: str | None, out_path: Path) -> str | None:
+    if pred_df.empty or not summary_csv:
+        return None
+    try:
+        summary = pd.read_csv(summary_csv)
+    except Exception:
+        return None
+
+    if summary.empty:
+        return None
+
+    if "Symbol" not in summary.columns:
+        return None
+
+    extra_cols = [c for c in summary.columns if c not in pred_df.columns]
+    combined = pred_df.merge(summary[["Symbol", *extra_cols]], on="Symbol", how="left")
+    saved = _safe_to_csv(combined, out_path)
+    return str(saved)
+
+
 def run_pipeline(
     input_csv: str,
     output_csv: str,
@@ -521,6 +632,7 @@ def run_pipeline(
         raise RuntimeError("OOF predictions are empty. Increase data length or adjust training window.")
 
     oof_pred = _prediction_from_oof_df(oof)
+    oof_pred.up_probability = _calibrate_up_probability(oof, oof_pred.up_probability).values
     scored_oof = build_prediction_frame(oof, oof_pred, cfg.signal)
     scored_oof["target_log_return"] = oof["target_log_return"].values
 
@@ -555,6 +667,7 @@ def run_pipeline(
 
     latest = feat.sort_values("Date").groupby("Symbol", as_index=False).tail(1)
     latest_pred = model.predict(latest)
+    latest_pred.up_probability = _calibrate_up_probability(scored_oof, latest_pred.up_probability).values
     pred_df = build_prediction_frame(latest, latest_pred, cfg.signal)
     symbol_name_map = get_symbol_name_map(pred_df["Symbol"].dropna().astype(str).tolist())
     pred_df["symbol_name"] = pred_df["Symbol"].astype(str).map(symbol_name_map).fillna(pred_df["Symbol"].astype(str))
@@ -580,10 +693,16 @@ def run_pipeline(
     scored_oof.loc[:, oof_numeric_cols] = scored_oof.loc[:, oof_numeric_cols].round(3)
 
     output_path = resolve_output_path(output_csv)
-    pred_df.to_csv(output_path, index=False)
+    output_path = _safe_to_csv(pred_df, output_path)
 
     oof_path = resolve_output_path("oof_predictions.csv")
-    scored_oof.to_csv(oof_path, index=False)
+    oof_path = _safe_to_csv(scored_oof, oof_path)
+
+    combined_csv = _build_combined_symbol_results(
+        pred_df,
+        symbol_summary_artifacts.get("symbol_summary_csv") if symbol_summary_artifacts else None,
+        resolve_output_path("combined_symbol_results.csv"),
+    )
 
     report = {
         "universe_name": cfg.universe.name,
@@ -615,6 +734,7 @@ def run_pipeline(
             **diagnostic_figs,
             **symbol_level_figs,
             **symbol_summary_artifacts,
+            "combined_symbol_results_csv": combined_csv,
         },
     }
 

@@ -112,6 +112,10 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert Path(payload["artifacts"]["symbol_summary_png"]).exists()
     assert Path(payload["artifacts"]["symbol_level_figure_dir"]).exists()
     assert payload["artifacts"]["symbol_level_figure_count"] > 0
+    assert Path(payload["artifacts"]["combined_symbol_results_csv"]).exists()
+
+    combined_df = pd.read_csv(payload["artifacts"]["combined_symbol_results_csv"])
+    assert len(combined_df.columns) == len(set(combined_df.columns))
 
     pred_df = pd.read_csv(pred_path)
     assert "signal_label" in pred_df.columns

@@ -251,8 +251,10 @@ def save_diagnostic_figures(oof_df: pd.DataFrame, out_dir: str) -> dict:
         cal = oof_df[["up_probability", "target_log_return"]].copy().dropna()
         if not cal.empty:
             cal["actual_up"] = (cal["target_log_return"] > 0).astype(int)
-            cal["prob_bin"] = pd.cut(cal["up_probability"], bins=np.linspace(0, 1, 11), include_lowest=True)
+            n_bins = min(10, max(3, int(np.sqrt(len(cal)))))
+            cal["prob_bin"] = pd.qcut(cal["up_probability"], q=n_bins, duplicates="drop")
             grp = cal.groupby("prob_bin", observed=False).agg(pred_prob=("up_probability", "mean"), actual_up_rate=("actual_up", "mean")).dropna()
+            grp = grp.sort_values("pred_prob")
             if not grp.empty:
                 plt.figure(figsize=(5.5, 5.5))
                 plt.plot([0, 1], [0, 1], "k--", alpha=0.6)
@@ -306,6 +308,7 @@ def build_symbol_summary_table(pred_df: pd.DataFrame, oof_df: pd.DataFrame) -> p
 
     summary = pd.DataFrame(
         {
+            "Symbol": table["Symbol"],
             "종목코드": table["종목코드"],
             "종목명": table["종목명"],
             "예상수익률(%)": table["predicted_return"],
@@ -340,8 +343,9 @@ def save_symbol_summary_artifacts(pred_df: pd.DataFrame, oof_df: pd.DataFrame, o
     fig, ax = plt.subplots(figsize=(18, 0.55 * (len(top) + 2)))
     ax.axis("off")
     display_df = top.copy()
-    for col in ["예상수익률(%)", "내일 예상 종가", "오늘 종가", "상승/하락 방향 정확도", "시그널 점수"]:
-        display_df[col] = display_df[col].map(lambda v: f"{v:.3f}")
+    for col in display_df.columns:
+        if pd.api.types.is_numeric_dtype(display_df[col]):
+            display_df[col] = display_df[col].map(lambda v: "" if pd.isna(v) else f"{float(v):.3f}")
     if not use_korean:
         display_df["시그널 라벨"] = display_df["시그널 라벨"].replace({
             "신뢰도 높음": "High Confidence",
@@ -349,6 +353,7 @@ def save_symbol_summary_artifacts(pred_df: pd.DataFrame, oof_df: pd.DataFrame, o
             "신뢰도 낮음": "Low Confidence",
         })
         display_df = display_df.rename(columns={
+            "Symbol": "Symbol",
             "종목코드": "Code",
             "종목명": "Name",
             "예상수익률(%)": "ExpectedReturn(%)",

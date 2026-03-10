@@ -34,7 +34,7 @@ def build_prediction_frame(
     out["predicted_close"] = out["Close"] * np.exp(out["predicted_log_return"])
     out["up_probability"] = pred.up_probability
     out["uncertainty_width"] = pred.quantile_high - pred.quantile_low
-    out["uncertainty_band"] = pd.Series(pred.quantile_low, index=out.index).astype(str) + " ~ " + pd.Series(pred.quantile_high, index=out.index).astype(str)
+    out["uncertainty_band"] = pd.Series(pred.quantile_low, index=out.index).map(lambda v: f"{float(v):.3f}") + " ~ " + pd.Series(pred.quantile_high, index=out.index).map(lambda v: f"{float(v):.3f}")
 
     out["rel_strength"] = normalize_series(out["predicted_log_return"])
     # 과거 z-score + clip 방식은 음수 구간이 전부 0이 되어 정보가 손실될 수 있어,

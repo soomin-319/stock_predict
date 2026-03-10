@@ -92,3 +92,21 @@ python src/pipeline.py   --input data/real_ohlcv.csv   --output /tmp/predictions
 ## 출력 해석
 - `predicted_return`은 사용자 가독성을 위해 **퍼센트 수익률(%)**로 출력됩니다.
 - 원래 모델의 로그수익률 값은 `predicted_log_return` 컬럼으로 함께 제공합니다.
+
+
+## figure 폴더 파일 설명
+- `equity_curve.png`: 백테스트 누적자산 추이
+- `drawdown_curve.png`: 백테스트 손실폭(드로우다운)
+- `signal_score_hist.png`: 시그널 점수 분포
+- `actual_vs_predicted_return.png`: 전체 종목 평균 기준 실제/예측 수익률 비교
+- `actual_vs_predicted_price.png`: 전체 종목 평균 기준 실제/예측 다음 종가 비교
+- `up_probability_calibration.png`: 예측 상승확률과 실제 상승비율의 일치도
+- `uncertainty_vs_error.png`: 불확실성 폭과 예측 오차의 관계
+- `symbol_level/*_actual_vs_predicted_price.png`: 종목별 실제/예측 가격 비교
+- `symbol_level/*_actual_vs_predicted_return.png`: 종목별 실제/예측 수익률 비교
+- `symbol_summary_table.csv`: 종목별 핵심 예측 요약표
+- `symbol_summary_table_top20.png`: 상위 20개 종목 요약표 이미지
+
+## 시그널 점수/라벨 해석
+- `signal_score`: 정규화 수익률 + 상승확률 + 상대강도 - 불확실성 패널티의 가중합
+- `signal_label`: 시그널 점수 구간화로 만든 방향/강도 라벨(학습 출력), 최종 CSV에서는 신뢰도 라벨로 재매핑
