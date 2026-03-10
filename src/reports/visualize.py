@@ -200,6 +200,32 @@ def _safe_symbol_filename(symbol: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(symbol))
 
 
+def _prepare_recent_month_frame(sdf: pd.DataFrame) -> pd.DataFrame:
+    """Prepare a stable recent-month frame for plotting.
+
+    OOF rows can include duplicate Date entries per symbol when fold windows overlap.
+    We collapse to a single row per Date and keep chronological order to avoid
+    self-crossing and disconnected-looking lines in recent-month charts.
+    """
+    if sdf.empty:
+        return sdf
+
+    max_date = sdf["Date"].max()
+    recent = sdf[sdf["Date"] >= (max_date - pd.Timedelta(days=31))].copy()
+    if recent.empty:
+        return recent
+
+    recent = (
+        recent.sort_values("Date")
+        .groupby("Date", as_index=False)
+        [["actual_next_close", "predicted_next_close", "actual_return_pct", "predicted_return_pct"]]
+        .mean()
+        .sort_values("Date")
+        .reset_index(drop=True)
+    )
+    return recent
+
+
 def save_symbol_level_comparison_figures(oof_df: pd.DataFrame, out_dir: str, max_symbols: int | None = None) -> dict:
     required = {"Date", "Symbol", "Close", "predicted_log_return", "target_log_return"}
     if oof_df.empty or not required.issubset(set(oof_df.columns)):
@@ -256,23 +282,25 @@ def save_symbol_level_comparison_figures(oof_df: pd.DataFrame, out_dir: str, max
         plt.savefig(ret_fig)
         plt.close()
 
-        # recent month charts (day-of-month labels + annotate all points)
-        max_date = sdf["Date"].max()
-        recent = sdf[sdf["Date"] >= (max_date - pd.Timedelta(days=31))].copy().sort_values("Date")
+        # recent month charts
+        recent = _prepare_recent_month_frame(sdf)
         if not recent.empty:
-            x_pos = np.arange(len(recent))
-            day_labels = recent["Date"].dt.day.astype(int).astype(str).tolist()
+            x_dates = recent["Date"]
+            day_labels = x_dates.dt.strftime("%m-%d").tolist()
 
             r_price = recent_dir / f"{safe}_recent_month_price.png"
             plt.figure(figsize=(10, 4))
-            plt.plot(x_pos, recent["actual_next_close"], marker="o", label="실제 다음 종가" if use_korean else "Actual next close")
-            plt.plot(x_pos, recent["predicted_next_close"], marker="o", label="예측 다음 종가" if use_korean else "Predicted next close")
-            _annotate_all_points(x_pos, recent["actual_next_close"], "{:.0f}")
-            _annotate_all_points(x_pos, recent["predicted_next_close"], "{:.0f}")
-            plt.xticks(x_pos.tolist(), day_labels)
+            plt.plot(x_dates, recent["actual_next_close"], marker="o", label="실제 다음 종가" if use_korean else "Actual next close")
+            plt.plot(x_dates, recent["predicted_next_close"], marker="o", label="예측 다음 종가" if use_korean else "Predicted next close")
+            _annotate_all_points(x_dates, recent["actual_next_close"], "{:.0f}")
+            _annotate_all_points(x_dates, recent["predicted_next_close"], "{:.0f}")
+            ax = plt.gca()
+            ax.set_xticks(x_dates)
+            ax.set_xticklabels(day_labels)
             plt.title(f"{symbol} - 최근1개월 실제/예측 가격" if use_korean else f"{symbol} - Recent Month Price")
             plt.xlabel("일" if use_korean else "Day")
             plt.ylabel("가격" if use_korean else "Price")
+            plt.xticks(rotation=45, ha="right")
             plt.legend()
             plt.tight_layout()
             plt.savefig(r_price)
@@ -280,14 +308,17 @@ def save_symbol_level_comparison_figures(oof_df: pd.DataFrame, out_dir: str, max
 
             r_ret = recent_dir / f"{safe}_recent_month_return.png"
             plt.figure(figsize=(10, 4))
-            plt.plot(x_pos, recent["actual_return_pct"], marker="o", label="실제 수익률(%)" if use_korean else "Actual return(%)")
-            plt.plot(x_pos, recent["predicted_return_pct"], marker="o", label="예측 수익률(%)" if use_korean else "Predicted return(%)")
-            _annotate_all_points(x_pos, recent["actual_return_pct"], "{:.0f}")
-            _annotate_all_points(x_pos, recent["predicted_return_pct"], "{:.0f}")
-            plt.xticks(x_pos.tolist(), day_labels)
+            plt.plot(x_dates, recent["actual_return_pct"], marker="o", label="실제 수익률(%)" if use_korean else "Actual return(%)")
+            plt.plot(x_dates, recent["predicted_return_pct"], marker="o", label="예측 수익률(%)" if use_korean else "Predicted return(%)")
+            _annotate_all_points(x_dates, recent["actual_return_pct"], "{:.3f}")
+            _annotate_all_points(x_dates, recent["predicted_return_pct"], "{:.3f}")
+            ax = plt.gca()
+            ax.set_xticks(x_dates)
+            ax.set_xticklabels(day_labels)
             plt.title(f"{symbol} - 최근1개월 실제/예측 수익률" if use_korean else f"{symbol} - Recent Month Return")
             plt.xlabel("일" if use_korean else "Day")
             plt.ylabel("수익률(%)" if use_korean else "Return(%)")
+            plt.xticks(rotation=45, ha="right")
             plt.legend()
             plt.tight_layout()
             plt.savefig(r_ret)
