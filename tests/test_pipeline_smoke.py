@@ -110,6 +110,8 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert Path(payload["artifacts"]["actual_vs_predicted_price"]).exists()
     assert Path(payload["artifacts"]["symbol_summary_csv"]).exists()
     assert Path(payload["artifacts"]["symbol_summary_png"]).exists()
+    assert Path(payload["artifacts"]["symbol_level_figure_dir"]).exists()
+    assert payload["artifacts"]["symbol_level_figure_count"] > 0
 
     pred_df = pd.read_csv(pred_path)
     assert "signal_label" in pred_df.columns

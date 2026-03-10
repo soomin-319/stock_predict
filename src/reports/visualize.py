@@ -171,6 +171,73 @@ def save_actual_vs_predicted_price_plot(oof_df: pd.DataFrame, out_dir: str) -> s
     return str(fig_path)
 
 
+
+
+def _safe_symbol_filename(symbol: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in str(symbol))
+
+
+def save_symbol_level_comparison_figures(oof_df: pd.DataFrame, out_dir: str, max_symbols: int | None = None) -> dict:
+    required = {"Date", "Symbol", "Close", "predicted_log_return", "target_log_return"}
+    if oof_df.empty or not required.issubset(set(oof_df.columns)):
+        return {}
+
+    p = Path(out_dir)
+    symbol_dir = p / "symbol_level"
+    symbol_dir.mkdir(parents=True, exist_ok=True)
+    use_korean = _configure_korean_font()
+
+    work = oof_df.copy()
+    work["Date"] = pd.to_datetime(work["Date"])
+    work["actual_next_close"] = work["Close"] * np.exp(work["target_log_return"])
+    work["predicted_next_close"] = work["Close"] * np.exp(work["predicted_log_return"])
+    work["actual_return_pct"] = np.expm1(work["target_log_return"]) * 100.0
+    work["predicted_return_pct"] = np.expm1(work["predicted_log_return"]) * 100.0
+
+    symbols = sorted(work["Symbol"].dropna().astype(str).unique().tolist())
+    if max_symbols is not None:
+        symbols = symbols[:max_symbols]
+
+    generated = 0
+    for symbol in symbols:
+        sdf = work[work["Symbol"].astype(str) == symbol].sort_values("Date")
+        if sdf.empty:
+            continue
+
+        safe = _safe_symbol_filename(symbol)
+
+        price_fig = symbol_dir / f"{safe}_actual_vs_predicted_price.png"
+        plt.figure(figsize=(10, 4))
+        plt.plot(sdf["Date"], sdf["actual_next_close"], label="실제 다음 종가" if use_korean else "Actual next close")
+        plt.plot(sdf["Date"], sdf["predicted_next_close"], label="예측 다음 종가" if use_korean else "Predicted next close")
+        plt.title(f"{symbol} - 실제/예측 가격" if use_korean else f"{symbol} - Actual vs Predicted Price")
+        plt.xlabel("날짜" if use_korean else "Date")
+        plt.ylabel("가격" if use_korean else "Price")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(price_fig)
+        plt.close()
+
+        ret_fig = symbol_dir / f"{safe}_actual_vs_predicted_return.png"
+        plt.figure(figsize=(10, 4))
+        plt.plot(sdf["Date"], sdf["actual_return_pct"], label="실제 수익률(%)" if use_korean else "Actual return(%)")
+        plt.plot(sdf["Date"], sdf["predicted_return_pct"], label="예측 수익률(%)" if use_korean else "Predicted return(%)")
+        plt.title(f"{symbol} - 실제/예측 수익률" if use_korean else f"{symbol} - Actual vs Predicted Return")
+        plt.xlabel("날짜" if use_korean else "Date")
+        plt.ylabel("수익률(%)" if use_korean else "Return(%)")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(ret_fig)
+        plt.close()
+
+        generated += 2
+
+    return {
+        "symbol_level_figure_dir": str(symbol_dir),
+        "symbol_level_figure_count": generated,
+        "symbol_level_symbol_count": len(symbols),
+    }
+
 def save_diagnostic_figures(oof_df: pd.DataFrame, out_dir: str) -> dict:
     if oof_df.empty:
         return {}

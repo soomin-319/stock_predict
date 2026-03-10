@@ -30,6 +30,7 @@ from src.reports.visualize import (
     save_actual_vs_predicted_plot,
     save_actual_vs_predicted_price_plot,
     save_diagnostic_figures,
+    save_symbol_level_comparison_figures,
     save_backtest_figures,
     save_signal_histogram,
     save_symbol_summary_artifacts,
@@ -403,128 +404,6 @@ def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: lis
 
 
 
-def _ensure_universe_size(symbols: list[str], expected_size: int) -> list[str]:
-    """Backward-compatible helper retained for older tests/import paths."""
-    uniq = list(dict.fromkeys(str(s) for s in symbols))
-    if len(uniq) >= expected_size:
-        return uniq[:expected_size]
-    pads = [f"NO_DATA_{i:03d}" for i in range(1, expected_size - len(uniq) + 1)]
-    return uniq + pads
-
-def _round_floats(obj, digits: int = 3):
-    if isinstance(obj, float):
-        return round(obj, digits)
-    if isinstance(obj, dict):
-        return {k: _round_floats(v, digits) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_round_floats(v, digits) for v in obj]
-    return obj
-
-
-def _compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
-    if scored_oof.empty:
-        return {}
-
-    req = {"target_log_return", "rel_strength", "norm_return", "predicted_log_return", "uncertainty_score", "uncertainty_width"}
-    if not req.issubset(set(scored_oof.columns)):
-        return {}
-
-    df = scored_oof[list(req)].copy().dropna()
-    if df.empty:
-        return {}
-
-    actual_up = (df["target_log_return"] > 0).astype(int)
-
-    rel_dir_acc = float(((df["rel_strength"] > 0).astype(int) == actual_up).mean())
-    norm_dir_acc = float(((df["norm_return"] > 0).astype(int) == actual_up).mean())
-    pred_dir_acc = float(((df["predicted_log_return"] > 0).astype(int) == actual_up).mean())
-
-    abs_error = (df["predicted_log_return"] - df["target_log_return"]).abs()
-
-    return {
-        "direction_accuracy": {
-            "predicted_log_return": pred_dir_acc,
-            "rel_strength": rel_dir_acc,
-            "norm_return": norm_dir_acc,
-        },
-        "uncertainty_diagnostics": {
-            "corr_uncertainty_vs_abs_error": float(df["uncertainty_width"].corr(abs_error)),
-            "corr_uncertainty_score_vs_abs_error": float(df["uncertainty_score"].corr(abs_error)),
-            "uncertainty_score_zero_ratio": float((df["uncertainty_score"] == 0).mean()),
-            "uncertainty_score_mean": float(df["uncertainty_score"].mean()),
-        },
-    }
-
-
-def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: list[str] | None) -> pd.DataFrame:
-    if not universe_symbols:
-        return pred_df
-
-    universe = set(str(s) for s in universe_symbols)
-    return pred_df[pred_df["Symbol"].astype(str).isin(universe)].copy()
-
-
-
-def _ensure_universe_size(symbols: list[str], expected_size: int) -> list[str]:
-    """Backward-compatible helper retained for older tests/import paths."""
-    uniq = list(dict.fromkeys(str(s) for s in symbols))
-    if len(uniq) >= expected_size:
-        return uniq[:expected_size]
-    pads = [f"NO_DATA_{i:03d}" for i in range(1, expected_size - len(uniq) + 1)]
-    return uniq + pads
-
-def _round_floats(obj, digits: int = 3):
-    if isinstance(obj, float):
-        return round(obj, digits)
-    if isinstance(obj, dict):
-        return {k: _round_floats(v, digits) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_round_floats(v, digits) for v in obj]
-    return obj
-
-
-def _compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
-    if scored_oof.empty:
-        return {}
-
-    req = {"target_log_return", "rel_strength", "norm_return", "predicted_log_return", "uncertainty_score", "uncertainty_width"}
-    if not req.issubset(set(scored_oof.columns)):
-        return {}
-
-    df = scored_oof[list(req)].copy().dropna()
-    if df.empty:
-        return {}
-
-    actual_up = (df["target_log_return"] > 0).astype(int)
-
-    rel_dir_acc = float(((df["rel_strength"] > 0).astype(int) == actual_up).mean())
-    norm_dir_acc = float(((df["norm_return"] > 0).astype(int) == actual_up).mean())
-    pred_dir_acc = float(((df["predicted_log_return"] > 0).astype(int) == actual_up).mean())
-
-    abs_error = (df["predicted_log_return"] - df["target_log_return"]).abs()
-
-    return {
-        "direction_accuracy": {
-            "predicted_log_return": pred_dir_acc,
-            "rel_strength": rel_dir_acc,
-            "norm_return": norm_dir_acc,
-        },
-        "uncertainty_diagnostics": {
-            "corr_uncertainty_vs_abs_error": float(df["uncertainty_width"].corr(abs_error)),
-            "corr_uncertainty_score_vs_abs_error": float(df["uncertainty_score"].corr(abs_error)),
-            "uncertainty_score_zero_ratio": float((df["uncertainty_score"] == 0).mean()),
-            "uncertainty_score_mean": float(df["uncertainty_score"].mean()),
-        },
-    }
-
-
-def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: list[str] | None) -> pd.DataFrame:
-    if not universe_symbols:
-        return pred_df
-
-    universe = set(str(s) for s in universe_symbols)
-    return pred_df[pred_df["Symbol"].astype(str).isin(universe)].copy()
-
 
 
 def _ensure_universe_size(symbols: list[str], expected_size: int) -> list[str]:
@@ -667,6 +546,7 @@ def run_pipeline(
     actual_vs_pred = save_actual_vs_predicted_plot(scored_oof, str(figure_dir_path))
     actual_vs_pred_price = save_actual_vs_predicted_price_plot(scored_oof, str(figure_dir_path))
     diagnostic_figs = save_diagnostic_figures(scored_oof, str(figure_dir_path))
+    symbol_level_figs = save_symbol_level_comparison_figures(scored_oof, str(figure_dir_path))
 
     _print_progress(11, total_steps, "Training final model and creating latest predictions")
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
@@ -723,7 +603,7 @@ def run_pipeline(
             "available_prediction_count": int(pred_df["predicted_return"].notna().sum()) if "predicted_return" in pred_df.columns else 0,
             "missing_prediction_count": int(pred_df["predicted_return"].isna().sum()) if "predicted_return" in pred_df.columns else 0,
         },
-        "visualization_note": "진단 그래프는 전체 종목/전체 OOF 샘플을 집계한 결과입니다.",
+        "visualization_note": "시각화는 전체 집계 그래프와 종목별 비교 그래프(OOF 기준)를 함께 제공합니다.",
         "artifacts": {
             "predictions_csv": str(output_path),
             "oof_predictions_csv": str(oof_path),
@@ -733,6 +613,7 @@ def run_pipeline(
             "actual_vs_predicted": actual_vs_pred,
             "actual_vs_predicted_price": actual_vs_pred_price,
             **diagnostic_figs,
+            **symbol_level_figs,
             **symbol_summary_artifacts,
         },
     }
@@ -742,7 +623,7 @@ def run_pipeline(
         report_path.write_text(json.dumps(_round_floats(report, 3), indent=2, ensure_ascii=False))
         print(f"Saved report to {report_path}")
 
-    print("[안내] 시각자료(그래프)는 개별 종목별 차트가 아니라 전체 종목 샘플을 집계한 요약 진단입니다.")
+    print("[안내] 시각자료는 전체 집계 그래프와 종목별(OOF) 실제/예측 비교 그래프를 함께 제공합니다.")
     _print_prediction_console_summary(pred_df)
     print(f"Saved inference output to {output_path}")
 
