@@ -19,7 +19,7 @@ if __package__ is None or __package__ == "":
 from src.config.settings import AppConfig
 from src.data.cleaners import clean_ohlcv
 from src.data.fetch_real_data import append_real_ohlcv_csv, normalize_user_symbols, save_real_ohlcv_csv
-from src.data.krx_universe import get_kospi200_kosdaq150_symbols, get_symbol_name_map, save_universe_csv
+from src.data.krx_universe import get_symbol_name_map
 from src.data.loaders import load_ohlcv_csv
 from src.data.investor_context import InvestorContextConfig, add_investor_context_with_coverage
 from src.data.universe import filter_by_universe, load_universe_symbols
@@ -724,7 +724,7 @@ def main():
         "--real-symbols",
         nargs="*",
         default=None,
-        help="Symbols used when --fetch-real is enabled (default: auto KOSPI200+KOSDAQ150)",
+        help="Symbols used when --fetch-real is enabled (no auto KRX universe)",
     )
     parser.add_argument("--real-start", default="2018-01-01", help="Start date for real data fetch")
     parser.add_argument(
@@ -743,23 +743,20 @@ def main():
             print(f"Added symbols to {input_csv}: {len(symbols_to_add)}")
     if args.fetch_real:
         symbols = args.real_symbols
-        if not symbols:
+        if not symbols and args.universe_csv:
             try:
-                symbols = get_kospi200_kosdaq150_symbols()
-                print(f"Auto-loaded KOSPI200+KOSDAQ150 symbols: {len(symbols)}")
-                if args.universe_csv is None:
-                    auto_universe_csv = str(resolve_output_path(r"C:\Users\카운\Desktop\result\universe_kospi200_kosdaq150.csv"))
-                    save_universe_csv(auto_universe_csv, symbols)
-                    args.universe_csv = auto_universe_csv
-                    print(f"Saved universe CSV to {auto_universe_csv}")
+                symbols = load_universe_symbols(args.universe_csv)
+                print(f"Loaded symbols from universe CSV: {len(symbols)}")
             except Exception as exc:
-                print(f"[경고] KRX 자동 유니버스 생성 실패: {exc}")
-                print("[안내] --real-symbols 로 심볼을 직접 지정하거나, 기존 --input 파일의 Symbol 컬럼을 사용합니다.")
-                symbols = _fallback_symbols_from_input_or_default(input_csv)
-                if symbols == DEFAULT_REAL_SYMBOLS:
-                    print(f"Fallback symbols from built-in default universe: {len(symbols)}")
-                else:
-                    print(f"Fallback symbols from input: {len(symbols)}")
+                print(f"[경고] universe CSV 로드 실패: {exc}")
+
+        if not symbols:
+            print("[안내] 자동 KRX 유니버스 생성은 비활성화되어 있습니다. --real-symbols/--universe-csv 또는 input Symbol을 사용합니다.")
+            symbols = _fallback_symbols_from_input_or_default(input_csv)
+            if symbols == DEFAULT_REAL_SYMBOLS:
+                print(f"Fallback symbols from built-in default universe: {len(symbols)}")
+            else:
+                print(f"Fallback symbols from input: {len(symbols)}")
 
         save_real_ohlcv_csv(input_csv, symbols=symbols, start=args.real_start)
         print(f"Fetched real market data to {input_csv}")

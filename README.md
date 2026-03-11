@@ -26,9 +26,8 @@ python src/pipeline.py --input data/sample_ohlcv.csv --disable-external --output
 python src/pipeline.py --fetch-real --input data/real_ohlcv.csv
 ```
 
-> 참고: 일부 Windows/pykrx 환경에서 KRX API 스키마가 달라 자동 유니버스 생성이 실패할 수 있습니다.  
-> 이 경우 코드가 자동으로 `--input`의 `Symbol` 컬럼을 fallback 사용하고, `Symbol`이 없으면 내장 기본 유니버스를 사용합니다.  
-> 운영 환경에서는 `--real-symbols` 또는 `--universe-csv`를 명시해 재현성을 확보하는 것을 권장합니다.
+> 참고: 자동 KRX 유니버스 생성은 비활성화되었습니다.  
+> `--fetch-real` 사용 시 `--real-symbols` 또는 `--universe-csv`를 우선 사용하며, 둘 다 없으면 `--input`의 `Symbol` 컬럼(없으면 내장 기본 유니버스)으로 진행합니다.
 
 ### 3) 투자자 컨텍스트 연동(fetch-investor-context)
 ```powershell
