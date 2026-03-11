@@ -1,112 +1,125 @@
 # Stock Predict
 
-다음날 로그수익률/상승확률/불확실성/신호점수를 제공하는 파이프라인입니다.
+다음 거래일 예측을 위한 멀티헤드(수익률/상승확률/분위수) 주가 예측 파이프라인입니다.
 
-## 이번 개선 적용 내용
-- **OOF(워크포워드) 기반 평가/튜닝/백테스트**로 과최적화 리스크 완화
-- **전문가 기술지표 추가**: RSI, MACD/Signal/Histogram, ATR(14), Stochastic(K/D), CCI(20), OBV
-- **외부 시장 feature 추가**: KOSPI/KOSDAQ/S&P500/NASDAQ/SOX/VIX/USDKRW/미국10년금리
-- **사용자 시각화 아티팩트 자동 생성**:
-  - `equity_curve.png`
-  - `drawdown_curve.png`
-  - `signal_score_hist.png`
-  - `actual_vs_predicted_return.png` (실제/예측 수익률 비교)
-  - `actual_vs_predicted_price.png` (실제/예측 다음 종가 비교)
-  - `up_probability_calibration.png` (상승확률 보정 품질)
-  - `uncertainty_vs_error.png` (불확실성 폭 vs 절대 오차)
-  - `symbol_summary_table_top20.png` (종목별 요약표 이미지, 한글 폰트 fallback 적용)
-  - `symbol_level/*.png` (각 종목별 전체 기간 실제/예측 가격 및 수익률 비교 그래프)
-  - `symbol_level/recent_month/*.png` (각 종목별 최근 1개월 비교 그래프: x축 일자(일), 모든 포인트 값 표시)
-- OOF 예측 저장: `reports/oof_predictions.csv`
+## 핵심 기능
+- 워크포워드 기반 OOF 검증/튜닝/백테스트
+- 회귀 + 분류 + 분위수 예측(불확실성 포함)
+- 외부 시장 지표(지수/환율/금리) feature
+- 투자자 컨텍스트 feature(외국인·기관 수급, 공시, 뉴스 감성) 선택 연동
+- 리포트/그래프/OOF CSV 자동 생성
+- 콘솔 Top10 출력(방향정확도 중심)
 
-## 실제 데이터 가져와서 실행
+## 설치
 ```bash
-python src/pipeline.py --fetch-real
+python -m pip install -r requirements.txt
 ```
 
-## 권장 실행 예시
+## 빠른 실행
+### 1) 샘플 데이터 스모크
+```powershell
+python src/pipeline.py --input data/sample_ohlcv.csv --disable-external --output predictions_smoke.csv --report-json pipeline_report_smoke.json --figure-dir figures_smoke
+```
+
+### 2) 실제 데이터(fetch + 외부 시장 feature)
+```bash
+python src/pipeline.py --fetch-real --input data/real_ohlcv.csv
+```
+
+> 참고: 일부 Windows/pykrx 환경에서 KRX 시총 API 스키마가 달라 자동 유니버스 생성이 실패할 수 있습니다.  
+> 이 경우 코드가 자동으로 `--input`의 `Symbol` 컬럼을 fallback 사용하며, 필요 시 `--real-symbols`로 직접 심볼을 지정하세요.
+
+### 3) 투자자 컨텍스트 연동(fetch-investor-context)
+```powershell
+python src/pipeline.py `
+  --fetch-real `
+  --fetch-investor-context `
+  --dart-api-key "YOUR_DART_API_KEY" `
+  --dart-corp-map-csv data/dart_corp_map.csv `
+  --input data/real_ohlcv.csv `
+  --output predictions_with_context.csv `
+  --report-json pipeline_report_with_context.json `
+  --figure-dir figures_with_context
+```
+
+### (참고) bash/zsh에서 줄바꿈 실행
 ```bash
 python src/pipeline.py \
   --fetch-real \
+  --fetch-investor-context \
+  --dart-api-key "YOUR_DART_API_KEY" \
+  --dart-corp-map-csv data/dart_corp_map.csv \
   --input data/real_ohlcv.csv \
-  --output C:\Users\카운\Desktop\predictions_direct.csv \
-  --report-json reports/pipeline_report.json \
-  --figure-dir reports/figures
+  --output predictions_with_context.csv \
+  --report-json pipeline_report_with_context.json \
+  --figure-dir figures_with_context
 ```
 
-## 주요 산출물
-- 최종 추론: `--output` CSV
-- 리포트: `--report-json` JSON
-- OOF 예측: `reports/oof_predictions.csv`
-- 그래프: `--figure-dir` 하위 PNG들
+## CLI 옵션 요약
+- `--input`: 입력 OHLCV CSV 경로
+- `--output`: 예측 CSV 경로(파일명 기준으로 `result/` 하위 저장)
+- `--universe-csv`: 유니버스 CSV(`Symbol` 컬럼 필요)
+- `--report-json`: 파이프라인 리포트 JSON 경로
+- `--figure-dir`: 그래프 저장 디렉토리
+- `--fetch-real`: yfinance로 실제 OHLCV 수집 후 실행
+- `--real-symbols`: `--fetch-real` 시 대상 심볼 직접 지정
+- `--real-start`: 실제 데이터 수집 시작일
+- `--add-symbols`: 기존 입력 CSV에 사용자 심볼 추가 수집
+- `--disable-external`: 외부 시장 지표 feature 비활성화
+- `--fetch-investor-context`: 투자자 컨텍스트(수급/공시/뉴스) 연동 활성화
+- `--dart-api-key`: OpenDART API Key
+- `--dart-corp-map-csv`: `Symbol,corp_code` 매핑 CSV
 
 ## 입력 컬럼
+### 필수
 - `Date`, `Open`, `High`, `Low`, `Close`, `Volume`
-- 선택: `Symbol`
 
-## 참고
-- 모든 산출물 저장 경로는 입력값과 무관하게 프로젝트의 `result/` 폴더로 고정됩니다. 폴더가 없으면 자동 생성됩니다.
+### 선택
+- `Symbol`
 
+### 투자자 컨텍스트 선택 입력(수동 제공 시 자동 반영)
+- 외국인 순매수: `foreign_net_buy` / `외국인순매수` / `ForeignNetBuy`
+- 기관 순매수: `institution_net_buy` / `기관순매수` / `InstitutionNetBuy`
+- 공시 점수: `disclosure_score` / `공시점수` / `DisclosureScore`
+- 뉴스 감성: `news_sentiment` / `뉴스점수` / `NewsSentiment`
 
-## 설치 및 테스트 예시
+## 주요 산출물
+모든 출력은 **프로젝트 `result/` 폴더**에 저장됩니다.
+
+- 예측 CSV (`--output` 파일명 기준)
+- OOF 예측 CSV: `result/oof_predictions.csv`
+- 리포트 JSON (`--report-json` 파일명 기준)
+- 그래프 PNG (`--figure-dir` 디렉토리명 기준)
+
+### 예측 CSV 주요 컬럼
+- `predicted_log_return`, `predicted_return`, `up_probability`
+- `uncertainty_width`, `uncertainty_score`, `signal_score`, `signal_label`
+- `history_direction_accuracy`, `risk_flag`, `position_size_hint`
+- 백테스트 요약 컬럼: `backtest_days`, `backtest_cum_return`, `backtest_sharpe` 등
+
+### 리포트 JSON 주요 키
+- `walk_forward`, `baselines`, `tuned_signal`, `backtest`
+- `probability_calibration`(ECE/Brier)
+- `external_feature_coverage`
+- `investor_context_coverage`
+- `artifacts`
+
+## 그래프(대표)
+- `equity_curve.png`, `drawdown_curve.png`
+- `signal_score_hist.png`
+- `actual_vs_predicted_return.png`
+- `actual_vs_predicted_price.png`
+- `up_probability_calibration.png`
+- `uncertainty_vs_error.png`
+- `symbol_level/*.png`, `symbol_level/recent_month/*.png`
+
+## 테스트
 ```bash
-python -m pip install -r requirements.txt
 pytest -q
 ```
 
-## 실행 예시 (외부 지표 비활성화, 빠른 스모크)
-```bash
-python src/pipeline.py   --input data/sample_ohlcv.csv   --disable-external   --output /tmp/predictions_smoke.csv   --report-json /tmp/pipeline_report_smoke.json   --figure-dir /tmp/figures_smoke
-```
-
-## 실행 예시 (외부 지표 활성화)
-```bash
-python src/pipeline.py   --input data/real_ohlcv.csv   --output /tmp/predictions_real.csv   --report-json /tmp/pipeline_report_real.json   --figure-dir /tmp/figures_real
-```
-
-## 상세 기능 문서
-- 프로젝트 전체 기능 요약: `docs/PROJECT_FEATURES_OVERVIEW.md`
-
-
-## Week1 구현 반영 사항
-- 모델 백엔드 고도화: `MultiHeadStockModel`이 LightGBM 사용 가능 시 LightGBM을 우선 사용하고, 미설치 환경에서는 sklearn GBDT로 자동 fallback합니다.
-- 신호 튜닝/백테스트 분리: OOF 데이터를 시간순으로 분할해(기본 70:30) 앞 구간에서 가중치 튜닝, 뒤 구간(holdout)에서 백테스트를 수행하도록 개선했습니다.
-- 리포트 확장: `tuning_samples`, `backtest_samples`를 JSON에 기록해 튜닝/평가 샘플 규모를 확인할 수 있습니다.
-
-
-## Week2 구현 반영 사항
-- 백테스트 현실화: `min_up_probability`, `min_signal_score` 필터를 통과한 종목만 Top-K에 포함되도록 개선했습니다.
-- 백테스트 리포트 확장: `avg_turnover`, `avg_selected_count`를 추가해 포트폴리오 교체율/선정 종목 수를 확인할 수 있습니다.
-- 외부 지표 가시성 강화: 리포트 JSON에 `external_feature_coverage`를 기록해 요청/성공/실패/fallback 사용 현황을 확인할 수 있습니다.
-
-
-## 기본 산출물 저장 위치
-- 기본값으로 아래 경로에 저장됩니다.
-  - 예측 CSV: `C:\Users\카운\Desktop\result\predictions_direct.csv`
-  - 리포트 JSON: `C:\Users\카운\Desktop\result\pipeline_report.json`
-  - 그래프: `C:\Users\카운\Desktop\result\figures`
-
-## 350개 유니버스 자동 구성
-- `--fetch-real` 실행 시 `--real-symbols`를 생략하면 KOSPI 시가총액 상위 200 + KOSDAQ 상위 150을 자동 구성해(총 350개) 데이터를 수집합니다.
-
-
-## 출력 해석
-- `predicted_return`은 사용자 가독성을 위해 **퍼센트 수익률(%)**로 출력됩니다.
-- 원래 모델의 로그수익률 값은 `predicted_log_return` 컬럼으로 함께 제공합니다.
-
-
-## figure 폴더 파일 설명
-- `equity_curve.png`: 백테스트 누적자산 추이
-- `drawdown_curve.png`: 백테스트 손실폭(드로우다운)
-- `signal_score_hist.png`: 시그널 점수 분포
-- `actual_vs_predicted_return.png`: 전체 종목 평균 기준 실제/예측 수익률 비교
-- `actual_vs_predicted_price.png`: 전체 종목 평균 기준 실제/예측 다음 종가 비교
-- `up_probability_calibration.png`: 예측 상승확률과 실제 상승비율의 일치도
-- `uncertainty_vs_error.png`: 불확실성 폭과 예측 오차의 관계
-- `symbol_level/*_actual_vs_predicted_price.png`: 종목별 실제/예측 가격 비교
-- `symbol_level/*_actual_vs_predicted_return.png`: 종목별 실제/예측 수익률 비교
-- `symbol_summary_table_top20.png`: 상위 20개 종목 요약표 이미지
-
-## 시그널 점수/라벨 해석
-- `signal_score`: 정규화 수익률 + 상승확률 + 상대강도 - 불확실성 패널티의 가중합
-- `signal_label`: 시그널 점수 구간화로 만든 방향/강도 라벨(학습 출력), 최종 CSV에서는 신뢰도 라벨로 재매핑
+## 참고 문서
+- `docs/PROJECT_FEATURES_OVERVIEW.md`
+- `docs/EXTERNAL_DATA_INTEGRATION_GUIDE.md`
+- `docs/EXPERT_ANALYSIS_ROADMAP.md`
+- `docs/PRIORITIZED_INVESTOR_ACTION_PLAN.md`

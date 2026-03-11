@@ -50,8 +50,10 @@ class BacktestConfig:
     top_k: int = 20
     fee_bps: float = 10.0
     slippage_bps: float = 5.0
+    dynamic_slippage_bps: float = 10.0
     min_up_probability: float = 0.50
     min_signal_score: float = 0.0
+    turnover_limit: float = 0.5
 
 
 @dataclass
