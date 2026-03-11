@@ -716,13 +716,27 @@ def main():
     if args.fetch_real:
         symbols = args.real_symbols
         if not symbols:
-            symbols = get_kospi200_kosdaq150_symbols()
-            print(f"Auto-loaded KOSPI200+KOSDAQ150 symbols: {len(symbols)}")
-            if args.universe_csv is None:
-                auto_universe_csv = str(resolve_output_path(r"C:\Users\카운\Desktop\result\universe_kospi200_kosdaq150.csv"))
-                save_universe_csv(auto_universe_csv, symbols)
-                args.universe_csv = auto_universe_csv
-                print(f"Saved universe CSV to {auto_universe_csv}")
+            try:
+                symbols = get_kospi200_kosdaq150_symbols()
+                print(f"Auto-loaded KOSPI200+KOSDAQ150 symbols: {len(symbols)}")
+                if args.universe_csv is None:
+                    auto_universe_csv = str(resolve_output_path(r"C:\Users\카운\Desktop\result\universe_kospi200_kosdaq150.csv"))
+                    save_universe_csv(auto_universe_csv, symbols)
+                    args.universe_csv = auto_universe_csv
+                    print(f"Saved universe CSV to {auto_universe_csv}")
+            except Exception as exc:
+                print(f"[경고] KRX 자동 유니버스 생성 실패: {exc}")
+                print("[안내] --real-symbols 로 심볼을 직접 지정하거나, 기존 --input 파일의 Symbol 컬럼을 사용합니다.")
+                try:
+                    base_df = load_ohlcv_csv(input_csv)
+                    symbols = sorted(base_df["Symbol"].dropna().astype(str).unique().tolist())
+                except Exception:
+                    symbols = []
+                if not symbols:
+                    raise RuntimeError(
+                        "자동 유니버스 생성에 실패했고 input에서 Symbol도 찾지 못했습니다. --real-symbols를 지정하세요."
+                    )
+                print(f"Fallback symbols from input: {len(symbols)}")
 
         save_real_ohlcv_csv(input_csv, symbols=symbols, start=args.real_start)
         print(f"Fetched real market data to {input_csv}")
