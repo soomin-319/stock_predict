@@ -57,11 +57,28 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out = df.copy()
     grouped = out.groupby("Symbol", group_keys=False)
 
+    # Optional investor-context columns (if provided by upstream data pipeline)
+    alias_map = {
+        "foreign_net_buy": ["foreign_net_buy", "외국인순매수", "ForeignNetBuy"],
+        "institution_net_buy": ["institution_net_buy", "기관순매수", "InstitutionNetBuy"],
+        "disclosure_score": ["disclosure_score", "공시점수", "DisclosureScore"],
+        "news_sentiment": ["news_sentiment", "뉴스점수", "NewsSentiment"],
+    }
+    for canonical, aliases in alias_map.items():
+        src = next((c for c in aliases if c in out.columns), None)
+        if src is None:
+            out[canonical] = 0.0
+        else:
+            out[canonical] = pd.to_numeric(out[src], errors="coerce").fillna(0.0)
+
     out["log_return"] = grouped["Close"].transform(lambda x: np.log(x / x.shift(1)))
     out["daily_return"] = grouped["Close"].transform(lambda x: x.pct_change())
     out["gap_return"] = (out["Open"] / grouped["Close"].shift(1)) - 1
     out["intraday_return"] = (out["Close"] / out["Open"]) - 1
     out["range_pct"] = (out["High"] - out["Low"]) / out["Close"].replace(0, np.nan)
+    out["value_traded"] = out["Close"] * out["Volume"]
+    out["turnover_rank_daily"] = out.groupby("Date")["value_traded"].rank(method="first", ascending=False)
+    out["is_top_turnover_10"] = (out["turnover_rank_daily"] <= 10).astype(float)
 
     for window in cfg.lookback_windows:
         out[f"ret_{window}d"] = grouped["Close"].transform(lambda x: x.pct_change(window))
@@ -110,6 +127,25 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     price_direction = np.sign(close_group.diff().fillna(0))
     out["obv"] = (price_direction * out["Volume"].fillna(0)).groupby(out["Symbol"]).cumsum()
     out["obv_change_5d"] = grouped["obv"].transform(lambda x: x.pct_change(5))
+
+    # Investor-context engineered features
+    out["foreign_buy_signal"] = (out["foreign_net_buy"] > 0).astype(float)
+    out["institution_buy_signal"] = (out["institution_net_buy"] > 0).astype(float)
+    out["smart_money_buy_signal"] = ((out["foreign_net_buy"] + out["institution_net_buy"]) > 0).astype(float)
+
+    rolling_high_252 = grouped["Close"].transform(lambda x: x.rolling(252, min_periods=20).max())
+    prev_rolling_high_252 = grouped["Close"].transform(lambda x: x.shift(1).rolling(252, min_periods=20).max())
+    out["close_to_52w_high"] = out["Close"] / rolling_high_252.replace(0, np.nan)
+    out["near_52w_high_flag"] = (out["close_to_52w_high"] >= 0.95).astype(float)
+    out["breakout_52w_flag"] = (out["Close"] >= prev_rolling_high_252.fillna(np.inf)).astype(float)
+
+    out["investor_event_score"] = (
+        0.35 * out["is_top_turnover_10"]
+        + 0.20 * out["disclosure_score"]
+        + 0.20 * out["news_sentiment"]
+        + 0.15 * out["smart_money_buy_signal"]
+        + 0.10 * out["near_52w_high_flag"]
+    )
 
     out["target_log_return"] = grouped["Close"].transform(lambda x: np.log(x.shift(-1) / x))
     out["target_up"] = (out["target_log_return"] > 0).astype(int)
