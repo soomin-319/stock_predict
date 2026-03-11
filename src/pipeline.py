@@ -44,6 +44,34 @@ from src.validation.walk_forward import walk_forward_oof_predictions, walk_forwa
 from src.validation.metrics import probability_calibration_metrics
 
 
+
+DEFAULT_REAL_SYMBOLS: list[str] = [
+    "005930.KS",  # Samsung Electronics
+    "000660.KS",  # SK Hynix
+    "035420.KS",  # Naver
+    "005380.KS",  # Hyundai Motor
+    "051910.KS",  # LG Chem
+    "068270.KS",  # Celltrion
+    "105560.KS",  # KB Financial
+    "055550.KS",  # Shinhan Financial
+    "012330.KS",  # Hyundai Mobis
+    "034730.KS",  # SK
+]
+
+
+def _fallback_symbols_from_input_or_default(input_csv: str) -> list[str]:
+    """Return fallback symbols when auto KRX universe build fails."""
+    try:
+        base_df = load_ohlcv_csv(input_csv)
+        if "Symbol" in base_df.columns:
+            symbols = sorted(base_df["Symbol"].dropna().astype(str).unique().tolist())
+            if symbols:
+                return symbols
+    except Exception:
+        pass
+    return list(DEFAULT_REAL_SYMBOLS)
+
+
 def _project_result_dir() -> Path:
     root = Path(__file__).resolve().parents[1]
     out = root / "result"
@@ -727,16 +755,11 @@ def main():
             except Exception as exc:
                 print(f"[경고] KRX 자동 유니버스 생성 실패: {exc}")
                 print("[안내] --real-symbols 로 심볼을 직접 지정하거나, 기존 --input 파일의 Symbol 컬럼을 사용합니다.")
-                try:
-                    base_df = load_ohlcv_csv(input_csv)
-                    symbols = sorted(base_df["Symbol"].dropna().astype(str).unique().tolist())
-                except Exception:
-                    symbols = []
-                if not symbols:
-                    raise RuntimeError(
-                        "자동 유니버스 생성에 실패했고 input에서 Symbol도 찾지 못했습니다. --real-symbols를 지정하세요."
-                    )
-                print(f"Fallback symbols from input: {len(symbols)}")
+                symbols = _fallback_symbols_from_input_or_default(input_csv)
+                if symbols == DEFAULT_REAL_SYMBOLS:
+                    print(f"Fallback symbols from built-in default universe: {len(symbols)}")
+                else:
+                    print(f"Fallback symbols from input: {len(symbols)}")
 
         save_real_ohlcv_csv(input_csv, symbols=symbols, start=args.real_start)
         print(f"Fetched real market data to {input_csv}")
