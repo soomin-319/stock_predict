@@ -21,6 +21,9 @@ def test_investor_feature_columns_are_created_from_optional_inputs():
                 "Volume": 100000 + i * 100,
                 "외국인순매수": 1000 if i % 2 == 0 else -1000,
                 "기관순매수": 500 if i % 3 == 0 else -300,
+                "개인순매수": 1500 if i % 2 == 1 else -800,
+                "외국인보유비중": 12.5,
+                "프로그램순매수": 200.0,
                 "공시점수": 0.7,
                 "뉴스점수": 0.4,
                 "뉴스관련도": 0.8,
@@ -34,8 +37,16 @@ def test_investor_feature_columns_are_created_from_optional_inputs():
     feature_cols = _feature_columns(out)
 
     for c in [
+        "market_type_kosdaq",
+        "venue_nxt",
+        "session_offhours",
+        "days_since_listing",
+        "is_newly_listed_60d",
+        "individual_net_buy",
         "foreign_net_buy",
         "institution_net_buy",
+        "foreign_ownership_ratio",
+        "program_trading_flow",
         "disclosure_score",
         "news_sentiment",
         "news_relevance_score",
@@ -53,6 +64,9 @@ def test_investor_feature_columns_are_created_from_optional_inputs():
         "near_52w_high_flag",
         "breakout_52w_flag",
         "investor_event_score",
+        "limit_event_flag",
+        "short_sell_event_score",
+        "shareholder_return_score",
     ]:
         assert c in out.columns
         assert c in feature_cols
