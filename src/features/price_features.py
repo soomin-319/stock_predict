@@ -116,9 +116,10 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out = df.copy()
     grouped = out.groupby("Symbol", group_keys=False)
 
-    # Optional investor-context columns (if provided by upstream data pipeline)
+    # Keep only the high-priority investor/event inputs that drive the
+    # requested selection buckets: top-turnover disclosures, favorable news,
+    # foreign/institution buying, and 52-week-high trend strength.
     numeric_alias_map = {
-        "individual_net_buy": ["individual_net_buy", "개인순매수", "PersonalNetBuy"],
         "foreign_net_buy": ["foreign_net_buy", "외국인순매수", "ForeignNetBuy"],
         "institution_net_buy": ["institution_net_buy", "기관순매수", "InstitutionNetBuy"],
         "foreign_ownership_ratio": ["foreign_ownership_ratio", "외국인보유비중", "ForeignOwnershipRatio"],
@@ -128,76 +129,9 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
         "news_relevance_score": ["news_relevance_score", "뉴스관련도", "NewsRelevanceScore"],
         "news_impact_score": ["news_impact_score", "뉴스영향점수", "NewsImpactScore"],
         "news_article_count": ["news_article_count", "뉴스건수", "NewsArticleCount"],
-        "short_sell_balance": ["short_sell_balance", "공매도잔고", "ShortSellBalance"],
-        "short_sell_ratio": ["short_sell_ratio", "공매도비중", "ShortSellRatio"],
-        "vi_count": ["vi_count", "VI횟수", "VICount"],
-        "pbr": ["pbr", "PBR"],
-        "per": ["per", "PER"],
-        "roe": ["roe", "ROE"],
-        "dividend_yield": ["dividend_yield", "배당수익률", "DividendYield"],
     }
     for canonical, aliases in numeric_alias_map.items():
         out[canonical] = _coerce_numeric_series(out, aliases)
-
-    market_type_series = _coerce_category_series(out, ["market_type", "시장구분", "MarketType"], default="")
-    if not market_type_series.ne("").any():
-        market_type_series = out["Symbol"].astype(str).map(
-            lambda s: "KOSPI" if s.endswith(".KS") else ("KOSDAQ" if s.endswith(".KQ") else "UNKNOWN")
-        )
-    market_type_normalized = market_type_series.str.upper()
-    out["market_type_kospi"] = (market_type_normalized == "KOSPI").astype(float)
-    out["market_type_kosdaq"] = (market_type_normalized == "KOSDAQ").astype(float)
-    out["market_type_konex"] = (market_type_normalized == "KONEX").astype(float)
-
-    venue_series = _coerce_category_series(out, ["venue", "거래소", "Venue"], default="KRX").str.upper()
-    out["venue_krx"] = (venue_series == "KRX").astype(float)
-    out["venue_nxt"] = (venue_series == "NXT").astype(float)
-
-    session_map = {
-        "정규장": "REGULAR",
-        "regular": "REGULAR",
-        "프리마켓": "PREMARKET",
-        "premarket": "PREMARKET",
-        "장전": "PREMARKET",
-        "애프터마켓": "AFTERMARKET",
-        "aftermarket": "AFTERMARKET",
-        "시간외": "OFFHOURS",
-        "offhours": "OFFHOURS",
-    }
-    session_series = _coerce_category_series(out, ["session", "세션", "Session"], default="REGULAR")
-    session_normalized = session_series.astype(str).str.strip().str.lower().map(session_map).fillna("REGULAR")
-    out["session_regular"] = (session_normalized == "REGULAR").astype(float)
-    out["session_premarket"] = (session_normalized == "PREMARKET").astype(float)
-    out["session_aftermarket"] = (session_normalized == "AFTERMARKET").astype(float)
-    out["session_offhours"] = (session_normalized == "OFFHOURS").astype(float)
-
-    listing_date_src = next((c for c in ["listing_date", "상장일", "ListingDate"] if c in out.columns), None)
-    if listing_date_src is not None:
-        listing_dates = pd.to_datetime(out[listing_date_src], errors="coerce")
-        out["days_since_listing"] = (pd.to_datetime(out["Date"]) - listing_dates).dt.days.clip(lower=0).fillna(9999)
-    else:
-        out["days_since_listing"] = _coerce_numeric_series(out, ["days_since_listing", "상장후일수", "DaysSinceListing"], default=9999.0)
-    out["is_newly_listed"] = (out["days_since_listing"] <= 20).astype(float)
-    out["is_newly_listed_60d"] = (out["days_since_listing"] <= 60).astype(float)
-
-    out["warning_level"] = _warning_level_series(out)
-    out["market_warning_flag"] = (out["warning_level"] > 0).astype(float)
-    out["halt_flag"] = _coerce_flag_series(out, ["halt_flag", "거래정지", "HaltFlag"])
-    out["vi_flag"] = _coerce_flag_series(out, ["vi_flag", "VI발동", "VIFlag"])
-    out["short_term_overheat_flag"] = _coerce_flag_series(
-        out, ["short_term_overheat_flag", "단기과열종목", "ShortTermOverheatFlag"]
-    )
-    out["short_sell_flag"] = _coerce_flag_series(out, ["short_sell_flag", "공매도가능", "ShortSellFlag"])
-    out["short_sell_overheat_flag"] = _coerce_flag_series(
-        out, ["short_sell_overheat_flag", "공매도과열종목", "ShortSellOverheatFlag"]
-    )
-    out["buyback_flag"] = _coerce_flag_series(out, ["buyback_flag", "자사주취득", "BuybackFlag"])
-    out["share_cancellation_flag"] = _coerce_flag_series(
-        out, ["share_cancellation_flag", "자사주소각", "ShareCancellationFlag"]
-    )
-    out["value_up_disclosure_flag"] = _coerce_flag_series(
-        out, ["value_up_disclosure_flag", "밸류업공시", "ValueUpDisclosureFlag"]
-    )
 
     out["log_return"] = grouped["Close"].transform(lambda x: np.log(x / x.shift(1)))
     out["daily_return"] = grouped["Close"].transform(lambda x: x.pct_change())
@@ -260,10 +194,6 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out["foreign_buy_signal"] = (out["foreign_net_buy"] > 0).astype(float)
     out["institution_buy_signal"] = (out["institution_net_buy"] > 0).astype(float)
     out["smart_money_buy_signal"] = ((out["foreign_net_buy"] + out["institution_net_buy"]) > 0).astype(float)
-    out["individual_buy_signal"] = (out["individual_net_buy"] > 0).astype(float)
-    out["retail_chase_signal"] = (
-        (out["individual_net_buy"] > 0) & (out["foreign_net_buy"] < 0) & (out["institution_net_buy"] < 0)
-    ).astype(float)
     out["news_positive_signal"] = (
         out["news_relevance_score"] * (out["news_sentiment"] - 0.5).clip(lower=0.0) * 2.0
     )
@@ -299,6 +229,56 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
         + 0.3 * out["share_cancellation_flag"]
         + 0.3 * out["value_up_disclosure_flag"]
     )
+
+    drop_source_cols = [
+        "개인순매수",
+        "PersonalNetBuy",
+        "외국인보유비중",
+        "ForeignOwnershipRatio",
+        "프로그램순매수",
+        "ProgramTradingFlow",
+        "시장구분",
+        "MarketType",
+        "거래소",
+        "Venue",
+        "세션",
+        "Session",
+        "상장일",
+        "ListingDate",
+        "상장후일수",
+        "DaysSinceListing",
+        "투자경보단계",
+        "WarningLevel",
+        "시장경보",
+        "거래정지",
+        "HaltFlag",
+        "VI발동",
+        "VIFlag",
+        "VI횟수",
+        "VICount",
+        "단기과열종목",
+        "ShortTermOverheatFlag",
+        "공매도가능",
+        "ShortSellFlag",
+        "공매도잔고",
+        "ShortSellBalance",
+        "공매도비중",
+        "ShortSellRatio",
+        "공매도과열종목",
+        "ShortSellOverheatFlag",
+        "PBR",
+        "PER",
+        "ROE",
+        "배당수익률",
+        "DividendYield",
+        "자사주취득",
+        "BuybackFlag",
+        "자사주소각",
+        "ShareCancellationFlag",
+        "밸류업공시",
+        "ValueUpDisclosureFlag",
+    ]
+    out = out.drop(columns=[c for c in drop_source_cols if c in out.columns], errors="ignore")
 
     out = out.copy()
     out["target_log_return"] = grouped["Close"].transform(lambda x: np.log(x.shift(-1) / x))

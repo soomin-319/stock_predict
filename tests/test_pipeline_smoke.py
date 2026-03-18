@@ -128,6 +128,22 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "position_size_hint" in detail_df.columns
     assert "backtest_cum_return" in detail_df.columns
     assert "backtest_sharpe" in detail_df.columns
+    assert "foreign_net_buy" in detail_df.columns
+    assert "institution_net_buy" in detail_df.columns
+    assert "disclosure_score" in detail_df.columns
+    assert "news_sentiment" in detail_df.columns
+    assert "news_relevance_score" in detail_df.columns
+    assert "news_impact_score" in detail_df.columns
+    assert "news_article_count" in detail_df.columns
+    assert "is_top_turnover_10" in detail_df.columns
+    assert "smart_money_buy_signal" in detail_df.columns
+    assert "close_to_52w_high" in detail_df.columns
+    assert "near_52w_high_flag" in detail_df.columns
+    assert "breakout_52w_flag" in detail_df.columns
+    assert "program_trading_flow" not in detail_df.columns
+    assert "warning_level" not in detail_df.columns
+    assert "short_sell_ratio" not in detail_df.columns
+    assert "buyback_flag" not in detail_df.columns
     assert "종목코드" in simple_df.columns
     assert "종목명" in simple_df.columns
     assert "권고" in simple_df.columns

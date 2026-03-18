@@ -154,23 +154,9 @@ def _feature_columns(df: pd.DataFrame) -> list[str]:
         "news_relevance_score",
         "news_impact_score",
         "news_article_count",
-        "warning_level",
-        "market_warning_flag",
-        "halt_flag",
-        "vi_flag",
-        "vi_count",
-        "vi_after_return",
-        "vi_after_volume_spike",
-        "short_term_overheat_flag",
-        "short_sell_flag",
-        "short_sell_balance",
-        "short_sell_ratio",
-        "short_sell_overheat_flag",
-        "individual_buy_signal",
         "foreign_buy_signal",
         "institution_buy_signal",
         "smart_money_buy_signal",
-        "retail_chase_signal",
         "news_positive_signal",
         "news_negative_signal",
         "close_to_52w_high",
@@ -282,33 +268,21 @@ def _prediction_reason(row: pd.Series) -> str:
 
     foreign_net_buy = float(row.get("foreign_net_buy", 0) or 0)
     institution_net_buy = float(row.get("institution_net_buy", 0) or 0)
-    individual_net_buy = float(row.get("individual_net_buy", 0) or 0)
-    retail_chase_signal = float(row.get("retail_chase_signal", 0) or 0)
     disclosure_score = float(row.get("disclosure_score", 0) or 0)
     news_positive_signal = float(row.get("news_positive_signal", 0) or 0)
     news_negative_signal = float(row.get("news_negative_signal", 0) or 0)
     breakout_52w_flag = float(row.get("breakout_52w_flag", 0) or 0)
     near_52w_high_flag = float(row.get("near_52w_high_flag", 0) or 0)
-    buyback_flag = float(row.get("buyback_flag", 0) or 0)
-    share_cancellation_flag = float(row.get("share_cancellation_flag", 0) or 0)
-    value_up_disclosure_flag = float(row.get("value_up_disclosure_flag", 0) or 0)
-    warning_level = float(row.get("warning_level", 0) or 0)
-    short_term_overheat_flag = float(row.get("short_term_overheat_flag", 0) or 0)
-    short_sell_overheat_flag = float(row.get("short_sell_overheat_flag", 0) or 0)
-    short_sell_ratio = float(row.get("short_sell_ratio", 0) or 0)
-    vi_flag = float(row.get("vi_flag", 0) or 0)
-    limit_event_flag = float(row.get("limit_event_flag", 0) or 0)
+    is_top_turnover_10 = float(row.get("is_top_turnover_10", 0) or 0)
 
     if foreign_net_buy > 0 and institution_net_buy > 0:
         reasons.append(
             f"외국인 순매수 {foreign_net_buy:,.0f}, 기관 순매수 {institution_net_buy:,.0f}로 동반 수급 유입이 확인됐습니다"
         )
-    elif individual_net_buy > 0 and retail_chase_signal > 0:
-        reasons.append(
-            f"개인 순매수 {individual_net_buy:,.0f}와 추격 신호 {retail_chase_signal:.2f}가 함께 나타나 단기 수급 쏠림이 포착됐습니다"
-        )
 
-    if disclosure_score >= 0.5:
+    if is_top_turnover_10 > 0 and disclosure_score >= 0.5:
+        reasons.append(f"거래대금 상위 10개 종목이면서 공시 점수 {disclosure_score:.2f}로 이벤트 강도가 높습니다")
+    elif disclosure_score >= 0.5:
         reasons.append(f"공시 이벤트 점수 {disclosure_score:.2f}로 공시 재료가 가격에 반영될 가능성이 높습니다")
 
     if news_positive_signal >= 0.15:
@@ -321,29 +295,8 @@ def _prediction_reason(row: pd.Series) -> str:
     elif near_52w_high_flag > 0:
         reasons.append("52주 고점 인접 플래그가 켜져 강한 상대 강도 흐름을 반영했습니다")
 
-    if buyback_flag > 0 or share_cancellation_flag > 0:
-        reasons.append(
-            f"자사주 매입 플래그 {buyback_flag:.0f}, 소각 플래그 {share_cancellation_flag:.0f}로 주주환원 기대를 반영했습니다"
-        )
-    elif value_up_disclosure_flag > 0:
-        reasons.append(f"밸류업 공시 플래그 {value_up_disclosure_flag:.0f}가 있어 기업가치 제고 기대를 반영했습니다")
-
-    risk_reasons: list[str] = []
-    if warning_level >= 2 or short_term_overheat_flag > 0:
-        risk_reasons.append(
-            f"시장경보 레벨 {warning_level:.0f}, 단기과열 플래그 {short_term_overheat_flag:.0f}로 과열 리스크도 함께 존재합니다"
-        )
-    if short_sell_overheat_flag > 0 or short_sell_ratio > 0.03:
-        risk_reasons.append(
-            f"공매도 과열 플래그 {short_sell_overheat_flag:.0f}, 공매도 비중 {short_sell_ratio:.3f}로 수급 부담을 함께 감안했습니다"
-        )
-    if vi_flag > 0 or limit_event_flag > 0:
-        risk_reasons.append(f"VI 플래그 {vi_flag:.0f}, 상·하한가 이벤트 플래그 {limit_event_flag:.0f}로 급변 이력도 존재합니다")
-
-    reasons.extend(risk_reasons[:1])
-
     if not reasons:
-        reasons.append("가격, 수급, 이벤트 관련 피처 전반이 중립권이어서 종합 점수 기반의 기본 예측을 사용했습니다")
+        reasons.append("거래대금, 공시, 뉴스, 수급, 52주 신고가 관련 핵심 피처가 중립권이어서 종합 점수 기반의 기본 예측을 사용했습니다")
     return " / ".join(reasons[:3])
 
 
