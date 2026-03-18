@@ -6,8 +6,6 @@ from typing import List
 class UniverseConfig:
     name: str = "KOSPI200_KOSDAQ150"
     expected_size: int = 350
-    default_kospi_count: int = 200
-    default_kosdaq_count: int = 150
 
 
 @dataclass
