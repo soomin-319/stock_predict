@@ -81,3 +81,34 @@ def test_investor_feature_columns_are_created_from_optional_inputs():
         "market_type_kosdaq",
     ]:
         assert removed not in out.columns
+
+
+def test_build_features_does_not_require_removed_vi_or_short_sell_columns():
+    cfg = AppConfig()
+    df = pd.DataFrame(
+        {
+            "Date": pd.date_range("2024-01-01", periods=30, freq="B"),
+            "Symbol": ["AAA"] * 30,
+            "Open": [100 + i for i in range(30)],
+            "High": [101 + i for i in range(30)],
+            "Low": [99 + i for i in range(30)],
+            "Close": [100 + i for i in range(30)],
+            "Volume": [100000 + i * 100 for i in range(30)],
+            "외국인순매수": [1000] * 30,
+            "기관순매수": [500] * 30,
+            "공시점수": [0.6] * 30,
+            "뉴스점수": [0.7] * 30,
+            "뉴스관련도": [0.8] * 30,
+            "뉴스영향점수": [0.3] * 30,
+            "뉴스건수": [2] * 30,
+        }
+    )
+
+    out = build_features(df, cfg.feature)
+
+    assert "vi_flag" not in out.columns
+    assert "short_sell_ratio" not in out.columns
+    assert "vi_after_return" not in out.columns
+    assert "short_sell_event_score" not in out.columns
+    assert "foreign_net_buy" in out.columns
+    assert "smart_money_buy_signal" in out.columns
