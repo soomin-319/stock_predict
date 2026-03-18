@@ -98,18 +98,6 @@ python src/pipeline.py \
 - 공매도: `short_sell_flag` / `공매도가능` / `ShortSellFlag`, `short_sell_balance` / `공매도잔고` / `ShortSellBalance`, `short_sell_ratio` / `공매도비중` / `ShortSellRatio`, `short_sell_overheat_flag` / `공매도과열종목` / `ShortSellOverheatFlag`
 - 가치/주주환원: `pbr` / `PBR`, `per` / `PER`, `roe` / `ROE`, `dividend_yield` / `배당수익률` / `DividendYield`, `buyback_flag` / `자사주취득` / `BuybackFlag`, `share_cancellation_flag` / `자사주소각` / `ShareCancellationFlag`, `value_up_disclosure_flag` / `밸류업공시` / `ValueUpDisclosureFlag`
 
-### 한국 시장 구조/이벤트 선택 입력(있을 때만 사용)
-- 시장구분: `market_type` / `시장구분` / `MarketType` (`KOSPI`, `KOSDAQ`, `KONEX`)
-- 거래소: `venue` / `거래소` / `Venue` (`KRX`, `NXT`)
-- 세션: `session` / `세션` / `Session` (`정규장`, `프리마켓`, `애프터마켓`, `시간외`)
-- 상장일/상장후일수: `listing_date` / `상장일` / `ListingDate`, `days_since_listing` / `상장후일수` / `DaysSinceListing`
-- 시장경보: `warning_level` / `시장경보` / `투자경보단계` / `WarningLevel`
-- 거래정지: `halt_flag` / `거래정지` / `HaltFlag`
-- VI: `vi_flag` / `VI발동` / `VIFlag`, `vi_count` / `VI횟수` / `VICount`
-- 단기과열: `short_term_overheat_flag` / `단기과열종목` / `ShortTermOverheatFlag`
-- 공매도: `short_sell_flag` / `공매도가능` / `ShortSellFlag`, `short_sell_balance` / `공매도잔고` / `ShortSellBalance`, `short_sell_ratio` / `공매도비중` / `ShortSellRatio`, `short_sell_overheat_flag` / `공매도과열종목` / `ShortSellOverheatFlag`
-- 가치/주주환원: `pbr` / `PBR`, `per` / `PER`, `roe` / `ROE`, `dividend_yield` / `배당수익률` / `DividendYield`, `buyback_flag` / `자사주취득` / `BuybackFlag`, `share_cancellation_flag` / `자사주소각` / `ShareCancellationFlag`, `value_up_disclosure_flag` / `밸류업공시` / `ValueUpDisclosureFlag`
-
 ## 주요 산출물
 모든 출력은 **프로젝트 `result/` 폴더**에 저장됩니다.
 

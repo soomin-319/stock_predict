@@ -364,58 +364,45 @@ def _print_backtest_console_summary(backtest: dict):
 
 def _print_prediction_console_summary(pred_df: pd.DataFrame):
     if pred_df.empty:
-        print("\n=== Predictions (Top10 by direction accuracy) ===")
+        print("\n=== Prediction ===")
         print("(no rows)")
         return
 
     out = pred_df.copy()
-    if "symbol_name" not in out.columns:
-        out["symbol_name"] = out["Symbol"]
-
-    out["confidence_score"] = (1 - out["uncertainty_score"].fillna(1)).clip(lower=0, upper=1)
     if "history_direction_accuracy" not in out.columns:
         out["history_direction_accuracy"] = 0.5
-    out["recommendation"] = out.apply(
-        lambda r: _recommendation_from_signal(r.get("signal_score"), r.get("predicted_return")), axis=1
-    )
-    out["confidence_label"] = out["confidence_score"].map(_confidence_label)
-    out["predicted_close_int"] = out["predicted_close"].abs().round(0).astype("Int64")
     out = out.sort_values(["history_direction_accuracy", "signal_score"], ascending=[False, False]).head(10).copy()
-
+    out = _build_result_simple(out)
     rows = []
     for _, r in out.iterrows():
-        ret_text = "-" if pd.isna(r.get("predicted_return")) else f"{float(r['predicted_return']):,.3f}"
-        pred_close_text = "-" if pd.isna(r.get("predicted_close_int")) else f"{int(r['predicted_close_int']):,}"
-        conf_text = "-" if pd.isna(r.get("confidence_score")) else f"{float(r['confidence_score']):.3f}"
-        dir_acc_text = "-" if pd.isna(r.get("history_direction_accuracy")) else f"{float(r['history_direction_accuracy']):.3f}"
         rows.append(
             {
-                "심볼": str(r.get("Symbol", "")),
-                "종목명": str(r["symbol_name"]),
-                "권고": str(r["recommendation"]),
-                "방향정확도": dir_acc_text,
-                "신뢰도": conf_text,
-                "예상 수익률(%)": ret_text,
-                "내일 예측 종가": pred_close_text,
+                "종목코드": str(r.get("종목코드", "")),
+                "종목명": str(r.get("종목명", "")),
+                "권고": str(r.get("권고", "")),
+                "내일 예상 종가": "-" if pd.isna(r.get("내일 예상 종가")) else f"{float(r['내일 예상 종가']):,.0f}",
+                "내일 예상 수익률(%)": "-" if pd.isna(r.get("내일 예상 수익률(%)")) else f"{float(r['내일 예상 수익률(%)']):,.3f}",
+                "예측 신뢰도": "-" if pd.isna(r.get("예측 신뢰도")) else f"{float(r['예측 신뢰도']):.3f}",
+                "예측 이유": str(r.get("예측 이유", "")),
             }
         )
 
-    headers = ["심볼", "종목명", "권고", "방향정확도", "신뢰도", "예상 수익률(%)", "내일 예측 종가"]
+    headers = ["종목코드", "종목명", "권고", "내일 예상 종가", "내일 예상 수익률(%)", "예측 신뢰도", "예측 이유"]
     col_widths = {h: max(_display_width(h), *(_display_width(row[h]) for row in rows)) for h in headers}
 
-    print("\n=== Predictions (Top10 by direction accuracy) ===")
+    print("\n=== Prediction ===")
     print("  ".join(_pad_display(h, col_widths[h], "left") for h in headers))
     for row in rows:
         print(
             "  ".join(
                 [
-                    _pad_display(row["심볼"], col_widths["심볼"], "left"),
+                    _pad_display(row["종목코드"], col_widths["종목코드"], "left"),
                     _pad_display(row["종목명"], col_widths["종목명"], "left"),
                     _pad_display(row["권고"], col_widths["권고"], "left"),
-                    _pad_display(row["방향정확도"], col_widths["방향정확도"], "right"),
-                    _pad_display(row["신뢰도"], col_widths["신뢰도"], "right"),
-                    _pad_display(row["예상 수익률(%)"], col_widths["예상 수익률(%)"], "right"),
-                    _pad_display(row["내일 예측 종가"], col_widths["내일 예측 종가"], "right"),
+                    _pad_display(row["내일 예상 종가"], col_widths["내일 예상 종가"], "right"),
+                    _pad_display(row["내일 예상 수익률(%)"], col_widths["내일 예상 수익률(%)"], "right"),
+                    _pad_display(row["예측 신뢰도"], col_widths["예측 신뢰도"], "right"),
+                    _pad_display(row["예측 이유"], col_widths["예측 이유"], "left"),
                 ]
             )
         )
@@ -817,13 +804,8 @@ def run_pipeline(
     if report_json:
         report_path = resolve_output_path(report_json)
         report_path.write_text(json.dumps(_round_floats(report, 3), indent=2, ensure_ascii=False))
-        print(f"Saved report to {report_path}")
 
-    print("[안내] 시각자료는 전체 집계 그래프와 종목별(OOF) 전체기간/최근1개월 실제·예측 비교 그래프를 함께 제공합니다.")
-    _print_backtest_console_summary(backtest)
     _print_prediction_console_summary(pred_df)
-    print(f"Saved result_detail to {detail_path}")
-    print(f"Saved result_simple to {simple_path}")
 
 
 def main():
@@ -873,15 +855,9 @@ def main():
                 print(f"[경고] universe CSV 로드 실패: {exc}")
 
         if not symbols:
-            print("[안내] 자동 KRX 유니버스 생성은 비활성화되어 있습니다. --real-symbols/--universe-csv 또는 input Symbol을 사용합니다.")
             symbols = _fallback_symbols_from_input_or_default(input_csv)
-            if symbols == DEFAULT_REAL_SYMBOLS:
-                print(f"[안내] input Symbol이 없어 내장 데모 유니버스를 사용합니다: {len(symbols)}")
-            else:
-                print(f"Fallback symbols from input: {len(symbols)}")
 
         save_real_ohlcv_csv(input_csv, symbols=symbols, start=args.real_start)
-        print(f"Fetched real market data to {input_csv}")
 
     run_pipeline(
         args.input,
