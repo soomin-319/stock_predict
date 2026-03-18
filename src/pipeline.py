@@ -280,41 +280,70 @@ def _position_size_hint(confidence_score: float | int | None, risk_flag: str) ->
 def _prediction_reason(row: pd.Series) -> str:
     reasons: list[str] = []
 
-    if float(row.get("foreign_net_buy", 0) or 0) > 0 and float(row.get("institution_net_buy", 0) or 0) > 0:
-        reasons.append("외국인·기관 동반 순매수")
-    elif float(row.get("individual_net_buy", 0) or 0) > 0 and float(row.get("retail_chase_signal", 0) or 0) > 0:
-        reasons.append("개인 매수 쏠림으로 단기 추격 수급 발생")
+    foreign_net_buy = float(row.get("foreign_net_buy", 0) or 0)
+    institution_net_buy = float(row.get("institution_net_buy", 0) or 0)
+    individual_net_buy = float(row.get("individual_net_buy", 0) or 0)
+    retail_chase_signal = float(row.get("retail_chase_signal", 0) or 0)
+    disclosure_score = float(row.get("disclosure_score", 0) or 0)
+    news_positive_signal = float(row.get("news_positive_signal", 0) or 0)
+    news_negative_signal = float(row.get("news_negative_signal", 0) or 0)
+    breakout_52w_flag = float(row.get("breakout_52w_flag", 0) or 0)
+    near_52w_high_flag = float(row.get("near_52w_high_flag", 0) or 0)
+    buyback_flag = float(row.get("buyback_flag", 0) or 0)
+    share_cancellation_flag = float(row.get("share_cancellation_flag", 0) or 0)
+    value_up_disclosure_flag = float(row.get("value_up_disclosure_flag", 0) or 0)
+    warning_level = float(row.get("warning_level", 0) or 0)
+    short_term_overheat_flag = float(row.get("short_term_overheat_flag", 0) or 0)
+    short_sell_overheat_flag = float(row.get("short_sell_overheat_flag", 0) or 0)
+    short_sell_ratio = float(row.get("short_sell_ratio", 0) or 0)
+    vi_flag = float(row.get("vi_flag", 0) or 0)
+    limit_event_flag = float(row.get("limit_event_flag", 0) or 0)
 
-    if float(row.get("disclosure_score", 0) or 0) >= 0.5:
-        reasons.append("공시 이벤트 영향 반영")
+    if foreign_net_buy > 0 and institution_net_buy > 0:
+        reasons.append(
+            f"외국인 순매수 {foreign_net_buy:,.0f}, 기관 순매수 {institution_net_buy:,.0f}로 동반 수급 유입이 확인됐습니다"
+        )
+    elif individual_net_buy > 0 and retail_chase_signal > 0:
+        reasons.append(
+            f"개인 순매수 {individual_net_buy:,.0f}와 추격 신호 {retail_chase_signal:.2f}가 함께 나타나 단기 수급 쏠림이 포착됐습니다"
+        )
 
-    if float(row.get("news_positive_signal", 0) or 0) >= 0.15:
-        reasons.append("가격 영향 가능성이 있는 긍정 뉴스")
-    elif float(row.get("news_negative_signal", 0) or 0) >= 0.15:
-        reasons.append("가격 영향 가능성이 있는 부정 뉴스")
+    if disclosure_score >= 0.5:
+        reasons.append(f"공시 이벤트 점수 {disclosure_score:.2f}로 공시 재료가 가격에 반영될 가능성이 높습니다")
 
-    if float(row.get("breakout_52w_flag", 0) or 0) > 0:
-        reasons.append("52주 고점 돌파 신호")
-    elif float(row.get("near_52w_high_flag", 0) or 0) > 0:
-        reasons.append("52주 고점 근처의 강한 추세")
+    if news_positive_signal >= 0.15:
+        reasons.append(f"긍정 뉴스 신호 {news_positive_signal:.2f}가 기준치를 넘어 투자심리 개선 요인으로 작용했습니다")
+    elif news_negative_signal >= 0.15:
+        reasons.append(f"부정 뉴스 신호 {news_negative_signal:.2f}가 감지돼 단기 변동성 확대 가능성을 함께 반영했습니다")
 
-    if float(row.get("buyback_flag", 0) or 0) > 0 or float(row.get("share_cancellation_flag", 0) or 0) > 0:
-        reasons.append("자사주/소각 등 주주환원 신호")
-    elif float(row.get("value_up_disclosure_flag", 0) or 0) > 0:
-        reasons.append("밸류업 공시 기대 반영")
+    if breakout_52w_flag > 0:
+        reasons.append("52주 고점 돌파 플래그가 켜져 추세 강화 구간으로 해석했습니다")
+    elif near_52w_high_flag > 0:
+        reasons.append("52주 고점 인접 플래그가 켜져 강한 상대 강도 흐름을 반영했습니다")
+
+    if buyback_flag > 0 or share_cancellation_flag > 0:
+        reasons.append(
+            f"자사주 매입 플래그 {buyback_flag:.0f}, 소각 플래그 {share_cancellation_flag:.0f}로 주주환원 기대를 반영했습니다"
+        )
+    elif value_up_disclosure_flag > 0:
+        reasons.append(f"밸류업 공시 플래그 {value_up_disclosure_flag:.0f}가 있어 기업가치 제고 기대를 반영했습니다")
 
     risk_reasons: list[str] = []
-    if float(row.get("warning_level", 0) or 0) >= 2 or float(row.get("short_term_overheat_flag", 0) or 0) > 0:
-        risk_reasons.append("시장경보·과열 리스크")
-    if float(row.get("short_sell_overheat_flag", 0) or 0) > 0 or float(row.get("short_sell_ratio", 0) or 0) > 0.03:
-        risk_reasons.append("공매도 부담")
-    if float(row.get("vi_flag", 0) or 0) > 0 or float(row.get("limit_event_flag", 0) or 0) > 0:
-        risk_reasons.append("가격 급변 이벤트 이력")
+    if warning_level >= 2 or short_term_overheat_flag > 0:
+        risk_reasons.append(
+            f"시장경보 레벨 {warning_level:.0f}, 단기과열 플래그 {short_term_overheat_flag:.0f}로 과열 리스크도 함께 존재합니다"
+        )
+    if short_sell_overheat_flag > 0 or short_sell_ratio > 0.03:
+        risk_reasons.append(
+            f"공매도 과열 플래그 {short_sell_overheat_flag:.0f}, 공매도 비중 {short_sell_ratio:.3f}로 수급 부담을 함께 감안했습니다"
+        )
+    if vi_flag > 0 or limit_event_flag > 0:
+        risk_reasons.append(f"VI 플래그 {vi_flag:.0f}, 상·하한가 이벤트 플래그 {limit_event_flag:.0f}로 급변 이력도 존재합니다")
 
     reasons.extend(risk_reasons[:1])
 
     if not reasons:
-        reasons.append("가격·수급·이벤트 피처를 종합 반영한 결과")
+        reasons.append("가격, 수급, 이벤트 관련 피처 전반이 중립권이어서 종합 점수 기반의 기본 예측을 사용했습니다")
     return " / ".join(reasons[:3])
 
 
@@ -383,11 +412,10 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame):
                 "내일 예상 종가": "-" if pd.isna(r.get("내일 예상 종가")) else f"{float(r['내일 예상 종가']):,.0f}",
                 "내일 예상 수익률(%)": "-" if pd.isna(r.get("내일 예상 수익률(%)")) else f"{float(r['내일 예상 수익률(%)']):,.3f}",
                 "예측 신뢰도": "-" if pd.isna(r.get("예측 신뢰도")) else f"{float(r['예측 신뢰도']):.3f}",
-                "예측 이유": str(r.get("예측 이유", "")),
             }
         )
 
-    headers = ["종목코드", "종목명", "권고", "내일 예상 종가", "내일 예상 수익률(%)", "예측 신뢰도", "예측 이유"]
+    headers = ["종목코드", "종목명", "권고", "내일 예상 종가", "내일 예상 수익률(%)", "예측 신뢰도"]
     col_widths = {h: max(_display_width(h), *(_display_width(row[h]) for row in rows)) for h in headers}
 
     print("\n=== Prediction ===")
@@ -402,7 +430,6 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame):
                     _pad_display(row["내일 예상 종가"], col_widths["내일 예상 종가"], "right"),
                     _pad_display(row["내일 예상 수익률(%)"], col_widths["내일 예상 수익률(%)"], "right"),
                     _pad_display(row["예측 신뢰도"], col_widths["예측 신뢰도"], "right"),
-                    _pad_display(row["예측 이유"], col_widths["예측 이유"], "left"),
                 ]
             )
         )
