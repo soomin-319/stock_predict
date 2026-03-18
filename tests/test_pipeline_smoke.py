@@ -137,6 +137,39 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "예측 이유" in simple_df.columns
 
 
+def test_run_pipeline_promotes_investor_context_to_separate_progress_step(tmp_path, monkeypatch, capsys):
+    inp = Path("data/sample_ohlcv.csv")
+    out = tmp_path / "predictions.csv"
+    rep = tmp_path / "report.json"
+    fig = tmp_path / "figures"
+
+    def _fake_add_context(data, config):
+        coverage = {
+            "enabled": True,
+            "flow": {"requested": 1, "successful": 1, "failed": 0},
+            "disclosure": {"requested": 1, "successful": 1, "failed": 0},
+            "news": {"requested": 1, "successful": 1, "failed": 0},
+        }
+        return data.copy(), coverage
+
+    monkeypatch.setattr("src.pipeline.add_investor_context_with_coverage", _fake_add_context)
+
+    run_pipeline(
+        str(inp),
+        str(out),
+        universe_csv=None,
+        report_json=str(rep),
+        figure_dir=str(fig),
+        use_external=False,
+        use_investor_context=True,
+    )
+
+    out_text = capsys.readouterr().out
+    assert "[4/13] Adding investor context" in out_text
+    assert "[5/13] Building price features" in out_text
+    assert "[6/13] Adding external market features" in out_text
+
+
 def test_external_features_fail_gracefully_without_noise(monkeypatch):
     from src.features.external_features import add_external_market_features
 

@@ -648,7 +648,7 @@ def run_pipeline(
     dart_api_key: str | None = None,
     dart_corp_map_csv: str | None = None,
 ):
-    total_steps = 12
+    total_steps = 13
     _print_progress(1, total_steps, "Loading app configuration")
     cfg = AppConfig()
 
@@ -667,7 +667,7 @@ def run_pipeline(
         requested_universe_symbols = sorted(cleaned["Symbol"].astype(str).unique().tolist())
         data = cleaned.copy()
 
-    _print_progress(4, total_steps, "Building price features")
+    _print_progress(4, total_steps, "Adding investor context")
     investor_context_coverage = {
         "enabled": False,
         "flow": {"requested": 0, "successful": 0, "failed": 0},
@@ -684,8 +684,9 @@ def run_pipeline(
             ),
         )
 
+    _print_progress(5, total_steps, "Building price features")
     feat = build_features(data, cfg.feature)
-    _print_progress(5, total_steps, "Adding external market features")
+    _print_progress(6, total_steps, "Adding external market features")
     external_coverage = {"requested": 0, "successful": 0, "failed": 0, "fallback_used": 0, "details": []}
     if cfg.external.enabled and use_external:
         feat, external_coverage = add_external_market_features_with_coverage(feat, cfg.external.market_symbols)
@@ -693,7 +694,7 @@ def run_pipeline(
     feat = feat.dropna(subset=["target_log_return"]).copy()
     feature_columns = _feature_columns(feat)
 
-    _print_progress(6, total_steps, "Running walk-forward validation")
+    _print_progress(7, total_steps, "Running walk-forward validation")
     folds = walk_forward_validate(feat, feature_columns, cfg.training)
     effective_cfg = cfg.training
     if not folds:
@@ -702,10 +703,10 @@ def run_pipeline(
 
     wf_summary = pd.DataFrame([f.metrics for f in folds]).mean().to_dict() if folds else {}
 
-    _print_progress(7, total_steps, "Evaluating baselines")
+    _print_progress(8, total_steps, "Evaluating baselines")
     baseline_summary = evaluate_baselines(feat)
 
-    _print_progress(8, total_steps, "Generating OOF predictions")
+    _print_progress(9, total_steps, "Generating OOF predictions")
     oof = walk_forward_oof_predictions(feat, feature_columns, effective_cfg)
     if oof.empty:
         raise RuntimeError("OOF predictions are empty. Increase data length or adjust training window.")
@@ -719,7 +720,7 @@ def run_pipeline(
 
     tune_df, eval_df = _split_oof_for_tuning_and_eval(scored_oof, tune_ratio=0.7)
 
-    _print_progress(9, total_steps, "Tuning signal weights (train split)")
+    _print_progress(10, total_steps, "Tuning signal weights (train split)")
     tuned = tune_signal_weights(tune_df)
     cfg.signal.return_weight = tuned["return_weight"]
     cfg.signal.up_prob_weight = tuned["up_prob_weight"]
@@ -731,7 +732,7 @@ def run_pipeline(
     if "vol_ratio_20" in oof.columns:
         scored_oof["vol_ratio_20"] = oof["vol_ratio_20"].values
 
-    _print_progress(10, total_steps, "Running backtest on holdout split and creating figures")
+    _print_progress(11, total_steps, "Running backtest on holdout split and creating figures")
     backtest_input = eval_df if not eval_df.empty else scored_oof
     backtest = run_long_only_topk_backtest(backtest_input, cfg.backtest)
     backtest_series = pd.DataFrame(backtest.get("series", []))
@@ -743,7 +744,7 @@ def run_pipeline(
     diagnostic_figs = save_diagnostic_figures(scored_oof, str(figure_dir_path))
     symbol_level_figs = save_symbol_level_comparison_figures(scored_oof, str(figure_dir_path))
 
-    _print_progress(11, total_steps, "Training final model and creating latest predictions")
+    _print_progress(12, total_steps, "Training final model and creating latest predictions")
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
     model = MultiHeadStockModel(random_state=cfg.training.random_state)
     model.fit(train_df, feature_columns, cfg.training.quantiles)
@@ -778,7 +779,7 @@ def run_pipeline(
     symbol_summary_artifacts = save_symbol_summary_artifacts(pred_df, scored_oof, str(figure_dir_path))
     oof_diagnostics = _compute_oof_diagnostics(scored_oof)
 
-    _print_progress(12, total_steps, "Saving artifacts")
+    _print_progress(13, total_steps, "Saving artifacts")
     detail_df = latest.merge(pred_df.drop(columns=["Close"], errors="ignore"), on=["Date", "Symbol"], how="left")
     detail_numeric_cols = detail_df.select_dtypes(include=["number"]).columns
     detail_df.loc[:, detail_numeric_cols] = detail_df.loc[:, detail_numeric_cols].round(3)
