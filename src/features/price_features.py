@@ -125,6 +125,9 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
         "program_trading_flow": ["program_trading_flow", "프로그램순매수", "ProgramTradingFlow"],
         "disclosure_score": ["disclosure_score", "공시점수", "DisclosureScore"],
         "news_sentiment": ["news_sentiment", "뉴스점수", "NewsSentiment"],
+        "news_relevance_score": ["news_relevance_score", "뉴스관련도", "NewsRelevanceScore"],
+        "news_impact_score": ["news_impact_score", "뉴스영향점수", "NewsImpactScore"],
+        "news_article_count": ["news_article_count", "뉴스건수", "NewsArticleCount"],
         "short_sell_balance": ["short_sell_balance", "공매도잔고", "ShortSellBalance"],
         "short_sell_ratio": ["short_sell_ratio", "공매도비중", "ShortSellRatio"],
         "vi_count": ["vi_count", "VI횟수", "VICount"],
@@ -261,6 +264,12 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out["retail_chase_signal"] = (
         (out["individual_net_buy"] > 0) & (out["foreign_net_buy"] < 0) & (out["institution_net_buy"] < 0)
     ).astype(float)
+    out["news_positive_signal"] = (
+        out["news_relevance_score"] * (out["news_sentiment"] - 0.5).clip(lower=0.0) * 2.0
+    )
+    out["news_negative_signal"] = (
+        out["news_relevance_score"] * (0.5 - out["news_sentiment"]).clip(lower=0.0) * 2.0
+    )
 
     rolling_high_252 = grouped["Close"].transform(lambda x: x.rolling(252, min_periods=20).max())
     prev_rolling_high_252 = grouped["Close"].transform(lambda x: x.shift(1).rolling(252, min_periods=20).max())
@@ -271,7 +280,7 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out["investor_event_score"] = (
         0.35 * out["is_top_turnover_10"]
         + 0.20 * out["disclosure_score"]
-        + 0.20 * out["news_sentiment"]
+        + 0.20 * out["news_positive_signal"]
         + 0.15 * out["smart_money_buy_signal"]
         + 0.10 * out["near_52w_high_flag"]
     )
@@ -291,6 +300,7 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
         + 0.3 * out["value_up_disclosure_flag"]
     )
 
+    out = out.copy()
     out["target_log_return"] = grouped["Close"].transform(lambda x: np.log(x.shift(-1) / x))
     out["target_up"] = (out["target_log_return"] > 0).astype(int)
     out["target_close"] = out["Close"] * np.exp(out["target_log_return"])

@@ -18,7 +18,7 @@ python -m pip install -r requirements.txt
 ## 빠른 실행
 ### 1) 샘플 데이터 스모크
 ```powershell
-python src/pipeline.py --input data/sample_ohlcv.csv --disable-external --output predictions_smoke.csv --report-json pipeline_report_smoke.json --figure-dir figures_smoke
+python src/pipeline.py --input data/sample_ohlcv.csv --disable-external --report-json pipeline_report_smoke.json --figure-dir figures_smoke
 ```
 
 ### 2) 실제 데이터(fetch + 외부 시장 feature)
@@ -38,7 +38,6 @@ python src/pipeline.py `
   --dart-api-key "YOUR_DART_API_KEY" `
   --dart-corp-map-csv data/dart_corp_map.csv `
   --input data/real_ohlcv.csv `
-  --output predictions_with_context.csv `
   --report-json pipeline_report_with_context.json `
   --figure-dir figures_with_context
 ```
@@ -51,14 +50,13 @@ python src/pipeline.py \
   --dart-api-key "YOUR_DART_API_KEY" \
   --dart-corp-map-csv data/dart_corp_map.csv \
   --input data/real_ohlcv.csv \
-  --output predictions_with_context.csv \
   --report-json pipeline_report_with_context.json \
   --figure-dir figures_with_context
 ```
 
 ## CLI 옵션 요약
 - `--input`: 입력 OHLCV CSV 경로
-- `--output`: 예측 CSV 경로(파일명 기준으로 `result/` 하위 저장)
+- `--output`: 레거시 옵션(실제 CSV는 항상 `result/result_detail.csv`, `result/result_simple.csv`로 저장)
 - `--universe-csv`: 유니버스 CSV(`Symbol` 컬럼 필요)
 - `--report-json`: 파이프라인 리포트 JSON 경로
 - `--figure-dir`: 그래프 저장 디렉토리
@@ -86,6 +84,19 @@ python src/pipeline.py \
 - 프로그램 매매: `program_trading_flow` / `프로그램순매수` / `ProgramTradingFlow`
 - 공시 점수: `disclosure_score` / `공시점수` / `DisclosureScore`
 - 뉴스 감성: `news_sentiment` / `뉴스점수` / `NewsSentiment`
+- 뉴스 관련도/영향/건수: `news_relevance_score` / `뉴스관련도` / `NewsRelevanceScore`, `news_impact_score` / `뉴스영향점수` / `NewsImpactScore`, `news_article_count` / `뉴스건수` / `NewsArticleCount`
+
+### 한국 시장 구조/이벤트 선택 입력(있을 때만 사용)
+- 시장구분: `market_type` / `시장구분` / `MarketType` (`KOSPI`, `KOSDAQ`, `KONEX`)
+- 거래소: `venue` / `거래소` / `Venue` (`KRX`, `NXT`)
+- 세션: `session` / `세션` / `Session` (`정규장`, `프리마켓`, `애프터마켓`, `시간외`)
+- 상장일/상장후일수: `listing_date` / `상장일` / `ListingDate`, `days_since_listing` / `상장후일수` / `DaysSinceListing`
+- 시장경보: `warning_level` / `시장경보` / `투자경보단계` / `WarningLevel`
+- 거래정지: `halt_flag` / `거래정지` / `HaltFlag`
+- VI: `vi_flag` / `VI발동` / `VIFlag`, `vi_count` / `VI횟수` / `VICount`
+- 단기과열: `short_term_overheat_flag` / `단기과열종목` / `ShortTermOverheatFlag`
+- 공매도: `short_sell_flag` / `공매도가능` / `ShortSellFlag`, `short_sell_balance` / `공매도잔고` / `ShortSellBalance`, `short_sell_ratio` / `공매도비중` / `ShortSellRatio`, `short_sell_overheat_flag` / `공매도과열종목` / `ShortSellOverheatFlag`
+- 가치/주주환원: `pbr` / `PBR`, `per` / `PER`, `roe` / `ROE`, `dividend_yield` / `배당수익률` / `DividendYield`, `buyback_flag` / `자사주취득` / `BuybackFlag`, `share_cancellation_flag` / `자사주소각` / `ShareCancellationFlag`, `value_up_disclosure_flag` / `밸류업공시` / `ValueUpDisclosureFlag`
 
 ### 한국 시장 구조/이벤트 선택 입력(있을 때만 사용)
 - 시장구분: `market_type` / `시장구분` / `MarketType` (`KOSPI`, `KOSDAQ`, `KONEX`)
@@ -102,8 +113,8 @@ python src/pipeline.py \
 ## 주요 산출물
 모든 출력은 **프로젝트 `result/` 폴더**에 저장됩니다.
 
-- 예측 CSV (`--output` 파일명 기준)
-- OOF 예측 CSV: `result/oof_predictions.csv`
+- 상세 CSV: `result/result_detail.csv` (예측값 + 최신 feature 값 전체)
+- 사용자용 요약 CSV: `result/result_simple.csv` (종목코드/이름/권고/예상 종가/예상 수익률/신뢰도/예측 이유)
 - 리포트 JSON (`--report-json` 파일명 기준)
 - 그래프 PNG (`--figure-dir` 디렉토리명 기준)
 

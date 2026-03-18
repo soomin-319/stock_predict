@@ -21,6 +21,24 @@ NEGATIVE_NEWS_KEYWORDS = {
     "miss", "drop", "downgrade", "lawsuit", "delay", "fraud", "decline",
     "악재", "소송", "지연", "하향", "감소", "적자",
 }
+STRONG_POSITIVE_NEWS_KEYWORDS = {
+    "흑자전환", "어닝서프라이즈", "대규모", "공급계약", "수주", "자사주", "소각", "승인", "record", "beat",
+}
+STRONG_NEGATIVE_NEWS_KEYWORDS = {
+    "유상증자", "전환사채", "bw", "cb", "감사의견", "거절", "횡령", "배임", "하한가", "lawsuit", "fraud",
+}
+PRICE_IMPACT_NEWS_KEYWORDS = {
+    "실적", "가이던스", "수주", "공급계약", "계약", "승인", "허가", "합병", "인수", "매각",
+    "유상증자", "무상증자", "전환사채", "bw", "cb", "배당", "자사주", "소각", "최대주주",
+    "소송", "횡령", "배임", "감사의견", "거래정지", "단기과열", "투자경고", "투자위험",
+    "earnings", "guidance", "contract", "approval", "acquisition", "lawsuit",
+}
+LOW_SIGNAL_NEWS_KEYWORDS = {
+    "market wrap", "preview", "opinion", "column", "브리핑", "장마감", "장전시황", "시황", "리포트 요약",
+}
+UNCERTAINTY_NEWS_KEYWORDS = {
+    "검토", "추진", "가능성", "예정", "설", "rumor", "reportedly", "may", "could",
+}
 
 
 @dataclass
@@ -41,7 +59,15 @@ def _symbol_to_ticker(symbol: str) -> str | None:
 
 def _empty_context(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     out = df.copy()
-    for c in ["foreign_net_buy", "institution_net_buy", "disclosure_score", "news_sentiment"]:
+    for c in [
+        "foreign_net_buy",
+        "institution_net_buy",
+        "disclosure_score",
+        "news_sentiment",
+        "news_relevance_score",
+        "news_impact_score",
+        "news_article_count",
+    ]:
         if c not in out.columns:
             out[c] = 0.0
     return out, {
@@ -171,8 +197,29 @@ def _headline_sentiment(text: str) -> float:
     t = str(text).lower()
     pos = sum(1 for k in POSITIVE_NEWS_KEYWORDS if k in t)
     neg = sum(1 for k in NEGATIVE_NEWS_KEYWORDS if k in t)
-    score = 0.5 + 0.2 * (pos - neg)
+    strong_pos = sum(1 for k in STRONG_POSITIVE_NEWS_KEYWORDS if k in t)
+    strong_neg = sum(1 for k in STRONG_NEGATIVE_NEWS_KEYWORDS if k in t)
+    uncertainty = sum(1 for k in UNCERTAINTY_NEWS_KEYWORDS if k in t)
+    score = 0.5 + 0.12 * (pos - neg) + 0.18 * (strong_pos - strong_neg) - 0.05 * uncertainty
     return max(0.0, min(1.0, score))
+
+
+def _headline_relevance(text: str) -> float:
+    t = str(text).lower()
+    impact_hits = sum(1 for k in PRICE_IMPACT_NEWS_KEYWORDS if k in t)
+    low_signal_hits = sum(1 for k in LOW_SIGNAL_NEWS_KEYWORDS if k in t)
+    uncertainty_hits = sum(1 for k in UNCERTAINTY_NEWS_KEYWORDS if k in t)
+
+    score = 0.25 + 0.25 * min(impact_hits, 2) - 0.15 * low_signal_hits - 0.05 * uncertainty_hits
+    return max(0.0, min(1.0, score))
+
+
+def _headline_news_features(text: str) -> tuple[float, float, float]:
+    sentiment = _headline_sentiment(text)
+    relevance = _headline_relevance(text)
+    weighted_sentiment = 0.5 + (sentiment - 0.5) * relevance
+    impact = (weighted_sentiment - 0.5) * 2.0
+    return weighted_sentiment, relevance, impact
 
 
 def _fetch_news_sentiment(symbols: list[str], start: str, end: str):
@@ -195,11 +242,26 @@ def _fetch_news_sentiment(symbols: list[str], start: str, end: str):
                 dt = pd.to_datetime(ts, unit="s", utc=True).tz_localize(None).normalize()
                 if dt < start_dt or dt > end_dt:
                     continue
-                recs.append((dt, _headline_sentiment(title)))
+                sentiment, relevance, impact = _headline_news_features(title)
+                recs.append((dt, sentiment, relevance, impact, 1))
             if not recs:
                 coverage["failed"] += 1
                 continue
-            part = pd.DataFrame(recs, columns=["Date", "news_sentiment"]).groupby("Date", as_index=False).mean()
+            part = (
+                pd.DataFrame(
+                    recs,
+                    columns=["Date", "news_sentiment", "news_relevance_score", "news_impact_score", "news_article_count"],
+                )
+                .groupby("Date", as_index=False)
+                .agg(
+                    {
+                        "news_sentiment": "mean",
+                        "news_relevance_score": "mean",
+                        "news_impact_score": "mean",
+                        "news_article_count": "sum",
+                    }
+                )
+            )
             part["Symbol"] = symbol
             rows.append(part)
             coverage["successful"] += 1
@@ -207,7 +269,9 @@ def _fetch_news_sentiment(symbols: list[str], start: str, end: str):
             coverage["failed"] += 1
 
     if not rows:
-        return pd.DataFrame(columns=["Date", "Symbol", "news_sentiment"]), coverage
+        return pd.DataFrame(
+            columns=["Date", "Symbol", "news_sentiment", "news_relevance_score", "news_impact_score", "news_article_count"]
+        ), coverage
     return pd.concat(rows, ignore_index=True), coverage
 
 
@@ -246,7 +310,15 @@ def add_investor_context_with_coverage(df: pd.DataFrame, cfg: InvestorContextCon
         if not news_df.empty:
             out = out.merge(news_df, on=["Date", "Symbol"], how="left")
 
-    for c in ["foreign_net_buy", "institution_net_buy", "disclosure_score", "news_sentiment"]:
+    for c in [
+        "foreign_net_buy",
+        "institution_net_buy",
+        "disclosure_score",
+        "news_sentiment",
+        "news_relevance_score",
+        "news_impact_score",
+        "news_article_count",
+    ]:
         if c not in out.columns:
             out[c] = 0.0
         out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0.0)
