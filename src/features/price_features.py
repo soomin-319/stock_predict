@@ -116,6 +116,57 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out = df.copy()
     grouped = out.groupby("Symbol", group_keys=False)
 
+    # Backward-compatible defaults for legacy low-priority fields that may
+    # still be referenced in older local copies or partially-updated branches.
+    # They are dropped again before returning so the final feature set remains
+    # limited to the requested key catalyst signals.
+    legacy_removed_default_map = {
+        "individual_net_buy": 0.0,
+        "foreign_ownership_ratio": 0.0,
+        "program_trading_flow": 0.0,
+        "market_type_kospi": 0.0,
+        "market_type_kosdaq": 0.0,
+        "market_type_konex": 0.0,
+        "venue_krx": 0.0,
+        "venue_nxt": 0.0,
+        "session_regular": 0.0,
+        "session_premarket": 0.0,
+        "session_aftermarket": 0.0,
+        "session_offhours": 0.0,
+        "days_since_listing": 9999.0,
+        "is_newly_listed": 0.0,
+        "is_newly_listed_60d": 0.0,
+        "warning_level": 0.0,
+        "market_warning_flag": 0.0,
+        "halt_flag": 0.0,
+        "vi_flag": 0.0,
+        "vi_count": 0.0,
+        "short_term_overheat_flag": 0.0,
+        "short_sell_flag": 0.0,
+        "short_sell_balance": 0.0,
+        "short_sell_ratio": 0.0,
+        "short_sell_overheat_flag": 0.0,
+        "individual_buy_signal": 0.0,
+        "retail_chase_signal": 0.0,
+        "limit_hit_up_flag": 0.0,
+        "limit_hit_down_flag": 0.0,
+        "limit_event_flag": 0.0,
+        "vi_after_return": 0.0,
+        "vi_after_volume_spike": 0.0,
+        "pbr": 0.0,
+        "per": 0.0,
+        "roe": 0.0,
+        "dividend_yield": 0.0,
+        "buyback_flag": 0.0,
+        "share_cancellation_flag": 0.0,
+        "value_up_disclosure_flag": 0.0,
+        "shareholder_return_score": 0.0,
+        "short_sell_event_score": 0.0,
+    }
+    for column, default in legacy_removed_default_map.items():
+        if column not in out.columns:
+            out[column] = default
+
     # Keep only the high-priority investor/event inputs that drive the
     # requested selection buckets: top-turnover disclosures, favorable news,
     # foreign/institution buying, and 52-week-high trend strength.
@@ -279,6 +330,7 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
         "ValueUpDisclosureFlag",
     ]
     out = out.drop(columns=[c for c in drop_source_cols if c in out.columns], errors="ignore")
+    out = out.drop(columns=list(legacy_removed_default_map.keys()), errors="ignore")
 
     out = out.copy()
     out["target_log_return"] = grouped["Close"].transform(lambda x: np.log(x.shift(-1) / x))
