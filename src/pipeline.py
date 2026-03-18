@@ -132,17 +132,58 @@ def _feature_columns(df: pd.DataFrame) -> list[str]:
         "value_traded",
         "turnover_rank_daily",
         "is_top_turnover_10",
+        "market_type_kospi",
+        "market_type_kosdaq",
+        "market_type_konex",
+        "venue_krx",
+        "venue_nxt",
+        "session_regular",
+        "session_premarket",
+        "session_aftermarket",
+        "session_offhours",
+        "days_since_listing",
+        "is_newly_listed",
+        "is_newly_listed_60d",
+        "individual_net_buy",
         "foreign_net_buy",
         "institution_net_buy",
+        "foreign_ownership_ratio",
+        "program_trading_flow",
         "disclosure_score",
         "news_sentiment",
+        "warning_level",
+        "market_warning_flag",
+        "halt_flag",
+        "vi_flag",
+        "vi_count",
+        "vi_after_return",
+        "vi_after_volume_spike",
+        "short_term_overheat_flag",
+        "short_sell_flag",
+        "short_sell_balance",
+        "short_sell_ratio",
+        "short_sell_overheat_flag",
+        "individual_buy_signal",
         "foreign_buy_signal",
         "institution_buy_signal",
         "smart_money_buy_signal",
+        "retail_chase_signal",
         "close_to_52w_high",
         "near_52w_high_flag",
         "breakout_52w_flag",
         "investor_event_score",
+        "limit_hit_up_flag",
+        "limit_hit_down_flag",
+        "limit_event_flag",
+        "pbr",
+        "per",
+        "roe",
+        "dividend_yield",
+        "buyback_flag",
+        "share_cancellation_flag",
+        "value_up_disclosure_flag",
+        "shareholder_return_score",
+        "short_sell_event_score",
     }
     return [
         c
@@ -529,7 +570,7 @@ def run_pipeline(
     _print_progress(3, total_steps, "Applying data cleaning and universe filter")
     requested_universe_symbols = None
     if universe_csv:
-        universe = load_universe_symbols(universe_csv, cfg.universe)
+        universe = load_universe_symbols(universe_csv)
         requested_universe_symbols = list(universe)
         data = filter_by_universe(cleaned, universe)
     else:
