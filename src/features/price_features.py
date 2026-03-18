@@ -122,6 +122,8 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     numeric_alias_map = {
         "foreign_net_buy": ["foreign_net_buy", "외국인순매수", "ForeignNetBuy"],
         "institution_net_buy": ["institution_net_buy", "기관순매수", "InstitutionNetBuy"],
+        "foreign_ownership_ratio": ["foreign_ownership_ratio", "외국인보유비중", "ForeignOwnershipRatio"],
+        "program_trading_flow": ["program_trading_flow", "프로그램순매수", "ProgramTradingFlow"],
         "disclosure_score": ["disclosure_score", "공시점수", "DisclosureScore"],
         "news_sentiment": ["news_sentiment", "뉴스점수", "NewsSentiment"],
         "news_relevance_score": ["news_relevance_score", "뉴스관련도", "NewsRelevanceScore"],
@@ -211,6 +213,21 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
         + 0.20 * out["news_positive_signal"]
         + 0.15 * out["smart_money_buy_signal"]
         + 0.10 * out["near_52w_high_flag"]
+    )
+    out["limit_hit_up_flag"] = (out["daily_return"] >= 0.295).astype(float)
+    out["limit_hit_down_flag"] = (out["daily_return"] <= -0.295).astype(float)
+    out["limit_event_flag"] = ((out["limit_hit_up_flag"] + out["limit_hit_down_flag"]) > 0).astype(float)
+    out["vi_after_return"] = out["daily_return"].fillna(0.0) * out["vi_flag"]
+    out["vi_after_volume_spike"] = out["vol_ratio_20"].replace([np.inf, -np.inf], np.nan).fillna(0.0) * out["vi_flag"]
+    out["short_sell_event_score"] = (
+        0.5 * out["short_sell_overheat_flag"]
+        + 0.3 * out["short_sell_flag"]
+        + 0.2 * (out["short_sell_ratio"] > 0).astype(float)
+    )
+    out["shareholder_return_score"] = (
+        0.4 * out["buyback_flag"]
+        + 0.3 * out["share_cancellation_flag"]
+        + 0.3 * out["value_up_disclosure_flag"]
     )
 
     drop_source_cols = [
