@@ -60,7 +60,7 @@ DEFAULT_REAL_SYMBOLS: list[str] = [
 
 
 def _fallback_symbols_from_input_or_default(input_csv: str) -> list[str]:
-    """Return fallback symbols when auto KRX universe build fails."""
+    """Return fallback symbols from input CSV, otherwise a small built-in demo list."""
     try:
         base_df = load_ohlcv_csv(input_csv)
         if "Symbol" in base_df.columns:
@@ -136,9 +136,14 @@ def _feature_columns(df: pd.DataFrame) -> list[str]:
         "institution_net_buy",
         "disclosure_score",
         "news_sentiment",
+        "news_relevance_score",
+        "news_impact_score",
+        "news_article_count",
         "foreign_buy_signal",
         "institution_buy_signal",
         "smart_money_buy_signal",
+        "news_positive_signal",
+        "news_negative_signal",
         "close_to_52w_high",
         "near_52w_high_flag",
         "breakout_52w_flag",
@@ -203,6 +208,12 @@ def _confidence_label(confidence_score: float | int | None) -> str:
     return "신뢰도 낮음"
 
 
+def _combined_confidence_score(row: pd.Series) -> float:
+    confidence = float(row.get("confidence_score", 0.5) or 0.5)
+    history_acc = float(row.get("history_direction_accuracy", 0.5) or 0.5)
+    return max(0.0, min(1.0, 0.5 * confidence + 0.5 * history_acc))
+
+
 def _risk_flag(row: pd.Series) -> str:
     flags = []
     if float(row.get("uncertainty_score", 0) or 0) >= 0.75:
@@ -223,6 +234,67 @@ def _position_size_hint(confidence_score: float | int | None, risk_flag: str) ->
     if c >= 0.5:
         return "소액"
     return "관망"
+
+
+def _prediction_reason(row: pd.Series) -> str:
+    reasons: list[str] = []
+
+    foreign_net_buy = float(row.get("foreign_net_buy", 0) or 0)
+    institution_net_buy = float(row.get("institution_net_buy", 0) or 0)
+    disclosure_score = float(row.get("disclosure_score", 0) or 0)
+    news_positive_signal = float(row.get("news_positive_signal", 0) or 0)
+    news_negative_signal = float(row.get("news_negative_signal", 0) or 0)
+    breakout_52w_flag = float(row.get("breakout_52w_flag", 0) or 0)
+    near_52w_high_flag = float(row.get("near_52w_high_flag", 0) or 0)
+    is_top_turnover_10 = float(row.get("is_top_turnover_10", 0) or 0)
+
+    if foreign_net_buy > 0 and institution_net_buy > 0:
+        reasons.append(
+            f"외국인 순매수 {foreign_net_buy:,.0f}, 기관 순매수 {institution_net_buy:,.0f}로 동반 수급 유입이 확인됐습니다"
+        )
+
+    if is_top_turnover_10 > 0 and disclosure_score >= 0.5:
+        reasons.append(f"거래대금 상위 10개 종목이면서 공시 점수 {disclosure_score:.2f}로 이벤트 강도가 높습니다")
+    elif disclosure_score >= 0.5:
+        reasons.append(f"공시 이벤트 점수 {disclosure_score:.2f}로 공시 재료가 가격에 반영될 가능성이 높습니다")
+
+    if news_positive_signal >= 0.15:
+        reasons.append(f"긍정 뉴스 신호 {news_positive_signal:.2f}가 기준치를 넘어 투자심리 개선 요인으로 작용했습니다")
+    elif news_negative_signal >= 0.15:
+        reasons.append(f"부정 뉴스 신호 {news_negative_signal:.2f}가 감지돼 단기 변동성 확대 가능성을 함께 반영했습니다")
+
+    if breakout_52w_flag > 0:
+        reasons.append("52주 고점 돌파 플래그가 켜져 추세 강화 구간으로 해석했습니다")
+    elif near_52w_high_flag > 0:
+        reasons.append("52주 고점 인접 플래그가 켜져 강한 상대 강도 흐름을 반영했습니다")
+
+    if not reasons:
+        reasons.append("거래대금, 공시, 뉴스, 수급, 52주 신고가 관련 핵심 피처가 중립권이어서 종합 점수 기반의 기본 예측을 사용했습니다")
+    return " / ".join(reasons[:3])
+
+
+def _build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
+    out = pred_df.copy()
+    out["종목코드"] = out["Symbol"].astype(str).str.replace(r"\..*$", "", regex=True)
+    out["종목명"] = out["symbol_name"].astype(str)
+    out["권고"] = out.apply(
+        lambda row: _recommendation_from_signal(row.get("signal_score"), row.get("predicted_return")),
+        axis=1,
+    )
+    out["예측 신뢰도"] = out.apply(_combined_confidence_score, axis=1)
+    out["예측 이유"] = out.apply(_prediction_reason, axis=1)
+
+    simple = out[
+        ["종목코드", "종목명", "권고", "predicted_close", "predicted_return", "예측 신뢰도", "예측 이유"]
+    ].rename(
+        columns={
+            "predicted_close": "내일 예상 종가",
+            "predicted_return": "내일 예상 수익률(%)",
+        }
+    )
+    numeric_cols = simple.select_dtypes(include=["number"]).columns
+    simple.loc[:, numeric_cols] = simple.loc[:, numeric_cols].round(3)
+    return simple.sort_values(["예측 신뢰도", "내일 예상 수익률(%)"], ascending=[False, False]).reset_index(drop=True)
 
 
 def _backtest_summary_fields(backtest: dict) -> dict[str, float]:
@@ -247,58 +319,43 @@ def _print_backtest_console_summary(backtest: dict):
 
 def _print_prediction_console_summary(pred_df: pd.DataFrame):
     if pred_df.empty:
-        print("\n=== Predictions (Top10 by direction accuracy) ===")
+        print("\n=== Prediction ===")
         print("(no rows)")
         return
 
     out = pred_df.copy()
-    if "symbol_name" not in out.columns:
-        out["symbol_name"] = out["Symbol"]
-
-    out["confidence_score"] = (1 - out["uncertainty_score"].fillna(1)).clip(lower=0, upper=1)
     if "history_direction_accuracy" not in out.columns:
         out["history_direction_accuracy"] = 0.5
-    out["recommendation"] = out.apply(
-        lambda r: _recommendation_from_signal(r.get("signal_score"), r.get("predicted_return")), axis=1
-    )
-    out["confidence_label"] = out["confidence_score"].map(_confidence_label)
-    out["predicted_close_int"] = out["predicted_close"].abs().round(0).astype("Int64")
     out = out.sort_values(["history_direction_accuracy", "signal_score"], ascending=[False, False]).head(10).copy()
-
+    out = _build_result_simple(out)
     rows = []
     for _, r in out.iterrows():
-        ret_text = "-" if pd.isna(r.get("predicted_return")) else f"{float(r['predicted_return']):,.3f}"
-        pred_close_text = "-" if pd.isna(r.get("predicted_close_int")) else f"{int(r['predicted_close_int']):,}"
-        conf_text = "-" if pd.isna(r.get("confidence_score")) else f"{float(r['confidence_score']):.3f}"
-        dir_acc_text = "-" if pd.isna(r.get("history_direction_accuracy")) else f"{float(r['history_direction_accuracy']):.3f}"
         rows.append(
             {
-                "심볼": str(r.get("Symbol", "")),
-                "종목명": str(r["symbol_name"]),
-                "권고": str(r["recommendation"]),
-                "방향정확도": dir_acc_text,
-                "신뢰도": conf_text,
-                "예상 수익률(%)": ret_text,
-                "내일 예측 종가": pred_close_text,
+                "종목코드": str(r.get("종목코드", "")),
+                "종목명": str(r.get("종목명", "")),
+                "권고": str(r.get("권고", "")),
+                "내일 예상 종가": "-" if pd.isna(r.get("내일 예상 종가")) else f"{float(r['내일 예상 종가']):,.0f}",
+                "내일 예상 수익률(%)": "-" if pd.isna(r.get("내일 예상 수익률(%)")) else f"{float(r['내일 예상 수익률(%)']):,.3f}",
+                "예측 신뢰도": "-" if pd.isna(r.get("예측 신뢰도")) else f"{float(r['예측 신뢰도']):.3f}",
             }
         )
 
-    headers = ["심볼", "종목명", "권고", "방향정확도", "신뢰도", "예상 수익률(%)", "내일 예측 종가"]
+    headers = ["종목코드", "종목명", "권고", "내일 예상 종가", "내일 예상 수익률(%)", "예측 신뢰도"]
     col_widths = {h: max(_display_width(h), *(_display_width(row[h]) for row in rows)) for h in headers}
 
-    print("\n=== Predictions (Top10 by direction accuracy) ===")
+    print("\n=== Prediction ===")
     print("  ".join(_pad_display(h, col_widths[h], "left") for h in headers))
     for row in rows:
         print(
             "  ".join(
                 [
-                    _pad_display(row["심볼"], col_widths["심볼"], "left"),
+                    _pad_display(row["종목코드"], col_widths["종목코드"], "left"),
                     _pad_display(row["종목명"], col_widths["종목명"], "left"),
                     _pad_display(row["권고"], col_widths["권고"], "left"),
-                    _pad_display(row["방향정확도"], col_widths["방향정확도"], "right"),
-                    _pad_display(row["신뢰도"], col_widths["신뢰도"], "right"),
-                    _pad_display(row["예상 수익률(%)"], col_widths["예상 수익률(%)"], "right"),
-                    _pad_display(row["내일 예측 종가"], col_widths["내일 예측 종가"], "right"),
+                    _pad_display(row["내일 예상 종가"], col_widths["내일 예상 종가"], "right"),
+                    _pad_display(row["내일 예상 수익률(%)"], col_widths["내일 예상 수익률(%)"], "right"),
+                    _pad_display(row["예측 신뢰도"], col_widths["예측 신뢰도"], "right"),
                 ]
             )
         )
@@ -517,7 +574,7 @@ def run_pipeline(
     dart_api_key: str | None = None,
     dart_corp_map_csv: str | None = None,
 ):
-    total_steps = 12
+    total_steps = 13
     _print_progress(1, total_steps, "Loading app configuration")
     cfg = AppConfig()
 
@@ -529,14 +586,14 @@ def run_pipeline(
     _print_progress(3, total_steps, "Applying data cleaning and universe filter")
     requested_universe_symbols = None
     if universe_csv:
-        universe = load_universe_symbols(universe_csv, cfg.universe)
+        universe = load_universe_symbols(universe_csv)
         requested_universe_symbols = list(universe)
         data = filter_by_universe(cleaned, universe)
     else:
         requested_universe_symbols = sorted(cleaned["Symbol"].astype(str).unique().tolist())
         data = cleaned.copy()
 
-    _print_progress(4, total_steps, "Building price features")
+    _print_progress(4, total_steps, "Adding investor context")
     investor_context_coverage = {
         "enabled": False,
         "flow": {"requested": 0, "successful": 0, "failed": 0},
@@ -553,8 +610,9 @@ def run_pipeline(
             ),
         )
 
+    _print_progress(5, total_steps, "Building price features")
     feat = build_features(data, cfg.feature)
-    _print_progress(5, total_steps, "Adding external market features")
+    _print_progress(6, total_steps, "Adding external market features")
     external_coverage = {"requested": 0, "successful": 0, "failed": 0, "fallback_used": 0, "details": []}
     if cfg.external.enabled and use_external:
         feat, external_coverage = add_external_market_features_with_coverage(feat, cfg.external.market_symbols)
@@ -562,7 +620,7 @@ def run_pipeline(
     feat = feat.dropna(subset=["target_log_return"]).copy()
     feature_columns = _feature_columns(feat)
 
-    _print_progress(6, total_steps, "Running walk-forward validation")
+    _print_progress(7, total_steps, "Running walk-forward validation")
     folds = walk_forward_validate(feat, feature_columns, cfg.training)
     effective_cfg = cfg.training
     if not folds:
@@ -571,10 +629,10 @@ def run_pipeline(
 
     wf_summary = pd.DataFrame([f.metrics for f in folds]).mean().to_dict() if folds else {}
 
-    _print_progress(7, total_steps, "Evaluating baselines")
+    _print_progress(8, total_steps, "Evaluating baselines")
     baseline_summary = evaluate_baselines(feat)
 
-    _print_progress(8, total_steps, "Generating OOF predictions")
+    _print_progress(9, total_steps, "Generating OOF predictions")
     oof = walk_forward_oof_predictions(feat, feature_columns, effective_cfg)
     if oof.empty:
         raise RuntimeError("OOF predictions are empty. Increase data length or adjust training window.")
@@ -588,7 +646,7 @@ def run_pipeline(
 
     tune_df, eval_df = _split_oof_for_tuning_and_eval(scored_oof, tune_ratio=0.7)
 
-    _print_progress(9, total_steps, "Tuning signal weights (train split)")
+    _print_progress(10, total_steps, "Tuning signal weights (train split)")
     tuned = tune_signal_weights(tune_df)
     cfg.signal.return_weight = tuned["return_weight"]
     cfg.signal.up_prob_weight = tuned["up_prob_weight"]
@@ -600,7 +658,7 @@ def run_pipeline(
     if "vol_ratio_20" in oof.columns:
         scored_oof["vol_ratio_20"] = oof["vol_ratio_20"].values
 
-    _print_progress(10, total_steps, "Running backtest on holdout split and creating figures")
+    _print_progress(11, total_steps, "Running backtest on holdout split and creating figures")
     backtest_input = eval_df if not eval_df.empty else scored_oof
     backtest = run_long_only_topk_backtest(backtest_input, cfg.backtest)
     backtest_series = pd.DataFrame(backtest.get("series", []))
@@ -612,7 +670,7 @@ def run_pipeline(
     diagnostic_figs = save_diagnostic_figures(scored_oof, str(figure_dir_path))
     symbol_level_figs = save_symbol_level_comparison_figures(scored_oof, str(figure_dir_path))
 
-    _print_progress(11, total_steps, "Training final model and creating latest predictions")
+    _print_progress(12, total_steps, "Training final model and creating latest predictions")
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
     model = MultiHeadStockModel(random_state=cfg.training.random_state)
     model.fit(train_df, feature_columns, cfg.training.quantiles)
@@ -647,17 +705,17 @@ def run_pipeline(
     symbol_summary_artifacts = save_symbol_summary_artifacts(pred_df, scored_oof, str(figure_dir_path))
     oof_diagnostics = _compute_oof_diagnostics(scored_oof)
 
-    _print_progress(12, total_steps, "Saving artifacts")
-    pred_numeric_cols = pred_df.select_dtypes(include=["number"]).columns
-    pred_df.loc[:, pred_numeric_cols] = pred_df.loc[:, pred_numeric_cols].round(3)
-    oof_numeric_cols = scored_oof.select_dtypes(include=["number"]).columns
-    scored_oof.loc[:, oof_numeric_cols] = scored_oof.loc[:, oof_numeric_cols].round(3)
+    _print_progress(13, total_steps, "Saving artifacts")
+    detail_df = latest.merge(pred_df.drop(columns=["Close"], errors="ignore"), on=["Date", "Symbol"], how="left")
+    detail_numeric_cols = detail_df.select_dtypes(include=["number"]).columns
+    detail_df.loc[:, detail_numeric_cols] = detail_df.loc[:, detail_numeric_cols].round(3)
+    simple_df = _build_result_simple(detail_df)
 
-    output_path = resolve_output_path(output_csv)
-    output_path = _safe_to_csv(pred_df, output_path)
+    detail_path = resolve_output_path("result_detail.csv")
+    detail_path = _safe_to_csv(detail_df, detail_path)
 
-    oof_path = resolve_output_path("oof_predictions.csv")
-    oof_path = _safe_to_csv(scored_oof, oof_path)
+    simple_path = resolve_output_path("result_simple.csv")
+    simple_path = _safe_to_csv(simple_df, simple_path)
 
     report = {
         "universe_name": cfg.universe.name,
@@ -684,8 +742,8 @@ def run_pipeline(
         },
         "visualization_note": "시각화는 전체 집계 + 종목별 + 종목별 최근1개월 비교 그래프(OOF 기준)를 제공합니다.",
         "artifacts": {
-            "predictions_csv": str(output_path),
-            "oof_predictions_csv": str(oof_path),
+            "result_detail_csv": str(detail_path),
+            "result_simple_csv": str(simple_path),
             "figure_dir": str(figure_dir_path),
             **fig_paths,
             "signal_hist": signal_hist,
@@ -700,18 +758,18 @@ def run_pipeline(
     if report_json:
         report_path = resolve_output_path(report_json)
         report_path.write_text(json.dumps(_round_floats(report, 3), indent=2, ensure_ascii=False))
-        print(f"Saved report to {report_path}")
 
-    print("[안내] 시각자료는 전체 집계 그래프와 종목별(OOF) 전체기간/최근1개월 실제·예측 비교 그래프를 함께 제공합니다.")
-    _print_backtest_console_summary(backtest)
     _print_prediction_console_summary(pred_df)
-    print(f"Saved inference output to {output_path}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Stock next-day prediction pipeline")
     parser.add_argument("--input", required=False, default="data/real_ohlcv.csv", help="OHLCV CSV path")
-    parser.add_argument("--output", default=r"C:\Users\카운\Desktop\result\predictions_direct.csv", help="Output CSV path")
+    parser.add_argument(
+        "--output",
+        default=r"C:\Users\카운\Desktop\result\predictions_direct.csv",
+        help="Legacy option (CSV outputs are always saved as result_detail.csv and result_simple.csv under result/)",
+    )
     parser.add_argument("--universe-csv", default=None, help="Optional universe CSV with Symbol column")
     parser.add_argument("--report-json", default=r"C:\Users\카운\Desktop\result\pipeline_report.json", help="Pipeline summary JSON")
     parser.add_argument("--figure-dir", default=r"C:\Users\카운\Desktop\result\figures", help="Directory for generated charts")
@@ -751,15 +809,9 @@ def main():
                 print(f"[경고] universe CSV 로드 실패: {exc}")
 
         if not symbols:
-            print("[안내] 자동 KRX 유니버스 생성은 비활성화되어 있습니다. --real-symbols/--universe-csv 또는 input Symbol을 사용합니다.")
             symbols = _fallback_symbols_from_input_or_default(input_csv)
-            if symbols == DEFAULT_REAL_SYMBOLS:
-                print(f"Fallback symbols from built-in default universe: {len(symbols)}")
-            else:
-                print(f"Fallback symbols from input: {len(symbols)}")
 
         save_real_ohlcv_csv(input_csv, symbols=symbols, start=args.real_start)
-        print(f"Fetched real market data to {input_csv}")
 
     run_pipeline(
         args.input,
