@@ -18,7 +18,7 @@ python -m pip install -r requirements.txt
 ## 빠른 실행
 ### 1) 샘플 데이터 스모크
 ```powershell
-python src/pipeline.py --input data/sample_ohlcv.csv --disable-external --output predictions_smoke.csv --report-json pipeline_report_smoke.json --figure-dir figures_smoke
+python src/pipeline.py --input data/sample_ohlcv.csv --disable-external --report-json pipeline_report_smoke.json --figure-dir figures_smoke
 ```
 
 ### 2) 실제 데이터(fetch + 외부 시장 feature)
@@ -38,7 +38,6 @@ python src/pipeline.py `
   --dart-api-key "YOUR_DART_API_KEY" `
   --dart-corp-map-csv data/dart_corp_map.csv `
   --input data/real_ohlcv.csv `
-  --output predictions_with_context.csv `
   --report-json pipeline_report_with_context.json `
   --figure-dir figures_with_context
 ```
@@ -51,14 +50,13 @@ python src/pipeline.py \
   --dart-api-key "YOUR_DART_API_KEY" \
   --dart-corp-map-csv data/dart_corp_map.csv \
   --input data/real_ohlcv.csv \
-  --output predictions_with_context.csv \
   --report-json pipeline_report_with_context.json \
   --figure-dir figures_with_context
 ```
 
 ## CLI 옵션 요약
 - `--input`: 입력 OHLCV CSV 경로
-- `--output`: 예측 CSV 경로(파일명 기준으로 `result/` 하위 저장)
+- `--output`: 레거시 옵션(실제 CSV는 항상 `result/result_detail.csv`, `result/result_simple.csv`로 저장)
 - `--universe-csv`: 유니버스 CSV(`Symbol` 컬럼 필요)
 - `--report-json`: 파이프라인 리포트 JSON 경로
 - `--figure-dir`: 그래프 저장 디렉토리
@@ -103,8 +101,8 @@ python src/pipeline.py \
 ## 주요 산출물
 모든 출력은 **프로젝트 `result/` 폴더**에 저장됩니다.
 
-- 예측 CSV (`--output` 파일명 기준)
-- OOF 예측 CSV: `result/oof_predictions.csv`
+- 상세 CSV: `result/result_detail.csv` (예측값 + 최신 feature 값 전체)
+- 사용자용 요약 CSV: `result/result_simple.csv` (종목코드/이름/권고/예상 종가/예상 수익률/신뢰도/예측 이유)
 - 리포트 JSON (`--report-json` 파일명 기준)
 - 그래프 PNG (`--figure-dir` 디렉토리명 기준)
 
