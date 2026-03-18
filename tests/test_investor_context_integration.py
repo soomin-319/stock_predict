@@ -36,3 +36,14 @@ def test_investor_context_enabled_graceful_without_sources(monkeypatch):
     assert cov["flow"]["failed"] == 1
     assert len(out) == 2
     assert out["foreign_net_buy"].fillna(0).sum() == 0
+
+
+def test_fetch_flow_pykrx_uses_shared_import_helper(monkeypatch):
+    import src.data.investor_context as ic
+
+    monkeypatch.setattr(ic, "import_pykrx_stock", lambda: None)
+
+    out, cov = ic._fetch_flow_pykrx(["005930.KS"], "2024-01-01", "2024-01-31")
+
+    assert out.empty
+    assert cov == {"requested": 1, "successful": 0, "failed": 1}
