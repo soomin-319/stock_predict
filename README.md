@@ -27,7 +27,8 @@ python src/pipeline.py --fetch-real --input data/real_ohlcv.csv
 ```
 
 > 참고: 자동 KRX 유니버스 생성은 비활성화되었습니다.  
-> `--fetch-real` 사용 시 `--real-symbols` 또는 `--universe-csv`를 우선 사용하며, 둘 다 없으면 `--input`의 `Symbol` 컬럼(없으면 내장 기본 유니버스)으로 진행합니다.
+> `--fetch-real` 사용 시 `--real-symbols` 또는 `--universe-csv`를 우선 사용하며, 둘 다 없으면 `--input`의 `Symbol` 컬럼으로 진행합니다.  
+> `Symbol` 컬럼도 없을 때만 **소규모 내장 데모 유니버스(10종목)** 로 동작합니다. 실전용 기본 유니버스가 아니라 빠른 실행 확인용 fallback입니다.
 
 ### 3) 투자자 컨텍스트 연동(fetch-investor-context)
 ```powershell
@@ -80,8 +81,24 @@ python src/pipeline.py \
 ### 투자자 컨텍스트 선택 입력(수동 제공 시 자동 반영)
 - 외국인 순매수: `foreign_net_buy` / `외국인순매수` / `ForeignNetBuy`
 - 기관 순매수: `institution_net_buy` / `기관순매수` / `InstitutionNetBuy`
+- 개인 순매수: `individual_net_buy` / `개인순매수` / `PersonalNetBuy`
+- 외국인 보유비중: `foreign_ownership_ratio` / `외국인보유비중` / `ForeignOwnershipRatio`
+- 프로그램 매매: `program_trading_flow` / `프로그램순매수` / `ProgramTradingFlow`
 - 공시 점수: `disclosure_score` / `공시점수` / `DisclosureScore`
 - 뉴스 감성: `news_sentiment` / `뉴스점수` / `NewsSentiment`
+- 뉴스 관련도/영향/건수: `news_relevance_score` / `뉴스관련도` / `NewsRelevanceScore`, `news_impact_score` / `뉴스영향점수` / `NewsImpactScore`, `news_article_count` / `뉴스건수` / `NewsArticleCount`
+
+### 한국 시장 구조/이벤트 선택 입력(있을 때만 사용)
+- 시장구분: `market_type` / `시장구분` / `MarketType` (`KOSPI`, `KOSDAQ`, `KONEX`)
+- 거래소: `venue` / `거래소` / `Venue` (`KRX`, `NXT`)
+- 세션: `session` / `세션` / `Session` (`정규장`, `프리마켓`, `애프터마켓`, `시간외`)
+- 상장일/상장후일수: `listing_date` / `상장일` / `ListingDate`, `days_since_listing` / `상장후일수` / `DaysSinceListing`
+- 시장경보: `warning_level` / `시장경보` / `투자경보단계` / `WarningLevel`
+- 거래정지: `halt_flag` / `거래정지` / `HaltFlag`
+- VI: `vi_flag` / `VI발동` / `VIFlag`, `vi_count` / `VI횟수` / `VICount`
+- 단기과열: `short_term_overheat_flag` / `단기과열종목` / `ShortTermOverheatFlag`
+- 공매도: `short_sell_flag` / `공매도가능` / `ShortSellFlag`, `short_sell_balance` / `공매도잔고` / `ShortSellBalance`, `short_sell_ratio` / `공매도비중` / `ShortSellRatio`, `short_sell_overheat_flag` / `공매도과열종목` / `ShortSellOverheatFlag`
+- 가치/주주환원: `pbr` / `PBR`, `per` / `PER`, `roe` / `ROE`, `dividend_yield` / `배당수익률` / `DividendYield`, `buyback_flag` / `자사주취득` / `BuybackFlag`, `share_cancellation_flag` / `자사주소각` / `ShareCancellationFlag`, `value_up_disclosure_flag` / `밸류업공시` / `ValueUpDisclosureFlag`
 
 ## 주요 산출물
 모든 출력은 **프로젝트 `result/` 폴더**에 저장됩니다.
