@@ -10,6 +10,8 @@ from urllib.request import urlopen
 import pandas as pd
 import yfinance as yf
 
+from src.data.pykrx_support import import_pykrx_stock
+
 
 POSITIVE_NEWS_KEYWORDS = {
     "beat", "surge", "record", "upgrade", "partnership", "contract", "approval", "growth",
@@ -52,9 +54,8 @@ def _empty_context(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
 def _fetch_flow_pykrx(symbols: list[str], start: str, end: str) -> tuple[pd.DataFrame, dict]:
     coverage = {"requested": len(symbols), "successful": 0, "failed": 0}
-    try:
-        from pykrx import stock
-    except Exception:
+    stock = import_pykrx_stock()
+    if stock is None:
         coverage["failed"] = len(symbols)
         return pd.DataFrame(columns=["Date", "Symbol", "foreign_net_buy", "institution_net_buy"]), coverage
 

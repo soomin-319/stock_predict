@@ -60,7 +60,7 @@ DEFAULT_REAL_SYMBOLS: list[str] = [
 
 
 def _fallback_symbols_from_input_or_default(input_csv: str) -> list[str]:
-    """Return fallback symbols when auto KRX universe build fails."""
+    """Return fallback symbols from input CSV, otherwise a small built-in demo list."""
     try:
         base_df = load_ohlcv_csv(input_csv)
         if "Symbol" in base_df.columns:
@@ -795,7 +795,7 @@ def main():
             print("[안내] 자동 KRX 유니버스 생성은 비활성화되어 있습니다. --real-symbols/--universe-csv 또는 input Symbol을 사용합니다.")
             symbols = _fallback_symbols_from_input_or_default(input_csv)
             if symbols == DEFAULT_REAL_SYMBOLS:
-                print(f"Fallback symbols from built-in default universe: {len(symbols)}")
+                print(f"[안내] input Symbol이 없어 내장 데모 유니버스를 사용합니다: {len(symbols)}")
             else:
                 print(f"Fallback symbols from input: {len(symbols)}")
 
