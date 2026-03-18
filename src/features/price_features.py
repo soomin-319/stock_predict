@@ -6,6 +6,65 @@ import pandas as pd
 from src.config.settings import FeatureConfig
 
 
+WARNING_LEVEL_MAP = {
+    "none": 0.0,
+    "normal": 0.0,
+    "투자주의": 1.0,
+    "주의": 1.0,
+    "investment_caution": 1.0,
+    "투자경고": 2.0,
+    "경고": 2.0,
+    "investment_warning": 2.0,
+    "투자위험": 3.0,
+    "위험": 3.0,
+    "investment_risk": 3.0,
+}
+
+
+def _coerce_numeric_series(df: pd.DataFrame, aliases: list[str], default: float = 0.0) -> pd.Series:
+    src = next((c for c in aliases if c in df.columns), None)
+    if src is None:
+        return pd.Series(default, index=df.index, dtype=float)
+    return pd.to_numeric(df[src], errors="coerce").fillna(default)
+
+
+def _coerce_flag_series(df: pd.DataFrame, aliases: list[str], truthy: set[str] | None = None) -> pd.Series:
+    src = next((c for c in aliases if c in df.columns), None)
+    if src is None:
+        return pd.Series(0.0, index=df.index, dtype=float)
+
+    values = df[src]
+    if pd.api.types.is_bool_dtype(values):
+        return values.astype(float)
+    if pd.api.types.is_numeric_dtype(values):
+        return pd.to_numeric(values, errors="coerce").fillna(0.0).gt(0).astype(float)
+
+    valid = truthy or {"1", "y", "yes", "true", "t", "on", "발동", "지정", "해당", "krx", "nxt"}
+    normalized = values.astype(str).str.strip().str.lower()
+    return normalized.isin(valid).astype(float)
+
+
+def _coerce_category_series(df: pd.DataFrame, aliases: list[str], default: str) -> pd.Series:
+    src = next((c for c in aliases if c in df.columns), None)
+    if src is None:
+        return pd.Series(default, index=df.index, dtype="object")
+    return df[src].astype(str).str.strip().replace({"": default}).fillna(default)
+
+
+def _warning_level_series(df: pd.DataFrame) -> pd.Series:
+    src = next((c for c in ["warning_level", "시장경보", "투자경보단계", "WarningLevel"] if c in df.columns), None)
+    if src is None:
+        return pd.Series(0.0, index=df.index, dtype=float)
+
+    values = df[src]
+    if pd.api.types.is_numeric_dtype(values):
+        return pd.to_numeric(values, errors="coerce").fillna(0.0)
+
+    normalized = values.astype(str).str.strip().str.lower()
+    mapped = normalized.map(WARNING_LEVEL_MAP)
+    return mapped.fillna(0.0).astype(float)
+
+
 def _compute_rsi(close: pd.Series, period: int) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0)
@@ -57,19 +116,20 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out = df.copy()
     grouped = out.groupby("Symbol", group_keys=False)
 
-    # Optional investor-context columns (if provided by upstream data pipeline)
-    alias_map = {
+    # Keep only the high-priority investor/event inputs that drive the
+    # requested selection buckets: top-turnover disclosures, favorable news,
+    # foreign/institution buying, and 52-week-high trend strength.
+    numeric_alias_map = {
         "foreign_net_buy": ["foreign_net_buy", "외국인순매수", "ForeignNetBuy"],
         "institution_net_buy": ["institution_net_buy", "기관순매수", "InstitutionNetBuy"],
         "disclosure_score": ["disclosure_score", "공시점수", "DisclosureScore"],
         "news_sentiment": ["news_sentiment", "뉴스점수", "NewsSentiment"],
+        "news_relevance_score": ["news_relevance_score", "뉴스관련도", "NewsRelevanceScore"],
+        "news_impact_score": ["news_impact_score", "뉴스영향점수", "NewsImpactScore"],
+        "news_article_count": ["news_article_count", "뉴스건수", "NewsArticleCount"],
     }
-    for canonical, aliases in alias_map.items():
-        src = next((c for c in aliases if c in out.columns), None)
-        if src is None:
-            out[canonical] = 0.0
-        else:
-            out[canonical] = pd.to_numeric(out[src], errors="coerce").fillna(0.0)
+    for canonical, aliases in numeric_alias_map.items():
+        out[canonical] = _coerce_numeric_series(out, aliases)
 
     out["log_return"] = grouped["Close"].transform(lambda x: np.log(x / x.shift(1)))
     out["daily_return"] = grouped["Close"].transform(lambda x: x.pct_change())
@@ -132,6 +192,12 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out["foreign_buy_signal"] = (out["foreign_net_buy"] > 0).astype(float)
     out["institution_buy_signal"] = (out["institution_net_buy"] > 0).astype(float)
     out["smart_money_buy_signal"] = ((out["foreign_net_buy"] + out["institution_net_buy"]) > 0).astype(float)
+    out["news_positive_signal"] = (
+        out["news_relevance_score"] * (out["news_sentiment"] - 0.5).clip(lower=0.0) * 2.0
+    )
+    out["news_negative_signal"] = (
+        out["news_relevance_score"] * (0.5 - out["news_sentiment"]).clip(lower=0.0) * 2.0
+    )
 
     rolling_high_252 = grouped["Close"].transform(lambda x: x.rolling(252, min_periods=20).max())
     prev_rolling_high_252 = grouped["Close"].transform(lambda x: x.shift(1).rolling(252, min_periods=20).max())
@@ -142,11 +208,62 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out["investor_event_score"] = (
         0.35 * out["is_top_turnover_10"]
         + 0.20 * out["disclosure_score"]
-        + 0.20 * out["news_sentiment"]
+        + 0.20 * out["news_positive_signal"]
         + 0.15 * out["smart_money_buy_signal"]
         + 0.10 * out["near_52w_high_flag"]
     )
 
+    drop_source_cols = [
+        "개인순매수",
+        "PersonalNetBuy",
+        "외국인보유비중",
+        "ForeignOwnershipRatio",
+        "프로그램순매수",
+        "ProgramTradingFlow",
+        "시장구분",
+        "MarketType",
+        "거래소",
+        "Venue",
+        "세션",
+        "Session",
+        "상장일",
+        "ListingDate",
+        "상장후일수",
+        "DaysSinceListing",
+        "투자경보단계",
+        "WarningLevel",
+        "시장경보",
+        "거래정지",
+        "HaltFlag",
+        "VI발동",
+        "VIFlag",
+        "VI횟수",
+        "VICount",
+        "단기과열종목",
+        "ShortTermOverheatFlag",
+        "공매도가능",
+        "ShortSellFlag",
+        "공매도잔고",
+        "ShortSellBalance",
+        "공매도비중",
+        "ShortSellRatio",
+        "공매도과열종목",
+        "ShortSellOverheatFlag",
+        "PBR",
+        "PER",
+        "ROE",
+        "배당수익률",
+        "DividendYield",
+        "자사주취득",
+        "BuybackFlag",
+        "자사주소각",
+        "ShareCancellationFlag",
+        "밸류업공시",
+        "ValueUpDisclosureFlag",
+    ]
+    out = out.drop(columns=[c for c in drop_source_cols if c in out.columns], errors="ignore")
+
+    out = out.copy()
     out["target_log_return"] = grouped["Close"].transform(lambda x: np.log(x.shift(-1) / x))
     out["target_up"] = (out["target_log_return"] > 0).astype(int)
     out["target_close"] = out["Close"] * np.exp(out["target_log_return"])
