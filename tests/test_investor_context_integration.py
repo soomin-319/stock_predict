@@ -1,6 +1,11 @@
 import pandas as pd
 
-from src.data.investor_context import InvestorContextConfig, add_investor_context_with_coverage
+from src.data.investor_context import (
+    InvestorContextConfig,
+    _fetch_news_sentiment,
+    _headline_news_features,
+    add_investor_context_with_coverage,
+)
 
 
 def _sample_df():
@@ -36,3 +41,51 @@ def test_investor_context_enabled_graceful_without_sources(monkeypatch):
     assert cov["flow"]["failed"] == 1
     assert len(out) == 2
     assert out["foreign_net_buy"].fillna(0).sum() == 0
+
+
+def test_fetch_flow_pykrx_uses_shared_import_helper(monkeypatch):
+    import src.data.investor_context as ic
+
+    monkeypatch.setattr(ic, "import_pykrx_stock", lambda: None)
+
+    out, cov = ic._fetch_flow_pykrx(["005930.KS"], "2024-01-01", "2024-01-31")
+
+    assert out.empty
+    assert cov == {"requested": 1, "successful": 0, "failed": 1}
+
+
+def test_headline_news_features_prioritize_price_relevant_titles():
+    strong = "삼성전자 대규모 공급계약 체결, 실적 개선 기대"
+    weak = "오늘 장마감 시황 브리핑"
+
+    strong_sentiment, strong_relevance, strong_impact = _headline_news_features(strong)
+    weak_sentiment, weak_relevance, weak_impact = _headline_news_features(weak)
+
+    assert strong_sentiment > 0.5
+    assert strong_relevance > weak_relevance
+    assert strong_impact > weak_impact
+
+
+def test_fetch_news_sentiment_returns_relevance_and_article_count(monkeypatch):
+    import src.data.investor_context as ic
+
+    class _Ticker:
+        news = [
+            {
+                "providerPublishTime": 1704153600,  # 2024-01-02 UTC
+                "title": "삼성전자 대규모 공급계약 체결",
+            },
+            {
+                "providerPublishTime": 1704153600,
+                "title": "삼성전자 장마감 시황 브리핑",
+            },
+        ]
+
+    monkeypatch.setattr(ic.yf, "Ticker", lambda symbol: _Ticker())
+
+    out, cov = _fetch_news_sentiment(["005930.KS"], "2024-01-01", "2024-01-03")
+
+    assert cov["successful"] == 1
+    assert out.loc[0, "news_article_count"] == 2
+    assert out.loc[0, "news_relevance_score"] > 0
+    assert out.loc[0, "news_sentiment"] != 0
