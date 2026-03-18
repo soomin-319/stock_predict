@@ -529,7 +529,7 @@ def run_pipeline(
     _print_progress(3, total_steps, "Applying data cleaning and universe filter")
     requested_universe_symbols = None
     if universe_csv:
-        universe = load_universe_symbols(universe_csv, cfg.universe)
+        universe = load_universe_symbols(universe_csv)
         requested_universe_symbols = list(universe)
         data = filter_by_universe(cleaned, universe)
     else:
