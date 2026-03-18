@@ -90,9 +90,11 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
 
     result_dir = Path("result")
     assert result_dir.exists()
-    pred_path = result_dir / out.name
+    detail_path = result_dir / "result_detail.csv"
+    simple_path = result_dir / "result_simple.csv"
     report_path = result_dir / rep.name
-    assert pred_path.exists()
+    assert detail_path.exists()
+    assert simple_path.exists()
     assert report_path.exists()
     payload = json.loads(report_path.read_text())
     assert "walk_forward" in payload
@@ -108,7 +110,8 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "backtest_samples" in payload
     assert "avg_turnover" in payload["backtest"]
     assert "avg_selected_count" in payload["backtest"]
-    assert Path(payload["artifacts"]["oof_predictions_csv"]).exists()
+    assert Path(payload["artifacts"]["result_detail_csv"]).exists()
+    assert Path(payload["artifacts"]["result_simple_csv"]).exists()
     assert Path(payload["artifacts"]["actual_vs_predicted"]).exists()
     assert Path(payload["artifacts"]["actual_vs_predicted_price"]).exists()
     assert Path(payload["artifacts"]["symbol_summary_png"]).exists()
@@ -116,14 +119,22 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert payload["artifacts"]["symbol_level_figure_count"] > 0
     assert Path(payload["artifacts"]["symbol_level_recent_month_dir"]).exists()
     assert payload["artifacts"]["symbol_level_recent_month_figure_count"] > 0
-    pred_df = pd.read_csv(pred_path)
-    assert "signal_label" in pred_df.columns
-    assert pred_df["signal_label"].astype(str).str.contains("신뢰도").all()
-    assert "history_direction_accuracy" in pred_df.columns
-    assert "risk_flag" in pred_df.columns
-    assert "position_size_hint" in pred_df.columns
-    assert "backtest_cum_return" in pred_df.columns
-    assert "backtest_sharpe" in pred_df.columns
+    detail_df = pd.read_csv(detail_path)
+    simple_df = pd.read_csv(simple_path)
+    assert "signal_label" in detail_df.columns
+    assert detail_df["signal_label"].astype(str).str.contains("신뢰도").all()
+    assert "history_direction_accuracy" in detail_df.columns
+    assert "risk_flag" in detail_df.columns
+    assert "position_size_hint" in detail_df.columns
+    assert "backtest_cum_return" in detail_df.columns
+    assert "backtest_sharpe" in detail_df.columns
+    assert "종목코드" in simple_df.columns
+    assert "종목명" in simple_df.columns
+    assert "권고" in simple_df.columns
+    assert "내일 예상 종가" in simple_df.columns
+    assert "내일 예상 수익률(%)" in simple_df.columns
+    assert "예측 신뢰도" in simple_df.columns
+    assert "예측 이유" in simple_df.columns
 
 
 def test_external_features_fail_gracefully_without_noise(monkeypatch):
