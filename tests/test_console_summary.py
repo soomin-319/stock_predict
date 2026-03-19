@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.pipeline import _print_prediction_console_summary
+from src.pipeline import _print_prediction_console_summary, _recommendation_from_signal
 
 
 def test_console_summary_uses_direction_accuracy_top10(capsys):
@@ -27,3 +27,9 @@ def test_console_summary_uses_direction_accuracy_top10(capsys):
     assert "S00" not in out and "S01" not in out
     assert "예측 신뢰도" in out
     assert "예측 이유" not in out
+
+
+def test_recommendation_requires_more_than_one_percent_return():
+    assert _recommendation_from_signal(0.3, 1.2) == "매수"
+    assert _recommendation_from_signal(-0.3, -1.2) == "매도"
+    assert _recommendation_from_signal(-1.0, 1.0) == "관망"

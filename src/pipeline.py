@@ -46,16 +46,18 @@ from src.validation.metrics import probability_calibration_metrics
 
 
 DEFAULT_REAL_SYMBOLS: list[str] = [
-    "005930.KS",  # Samsung Electronics
-    "000660.KS",  # SK Hynix
-    "035420.KS",  # Naver
-    "005380.KS",  # Hyundai Motor
-    "051910.KS",  # LG Chem
-    "068270.KS",  # Celltrion
-    "105560.KS",  # KB Financial
-    "055550.KS",  # Shinhan Financial
-    "012330.KS",  # Hyundai Mobis
-    "034730.KS",  # SK
+    "207940",
+    "034020",
+    "035420",
+    "272210",
+    "042660",
+    "000660",
+    "042700",
+    "006400",
+    "015760",
+    "051910",
+    "005380",
+    "005930",
 ]
 
 
@@ -69,7 +71,7 @@ def _fallback_symbols_from_input_or_default(input_csv: str) -> list[str]:
                 return symbols
     except Exception:
         pass
-    return list(DEFAULT_REAL_SYMBOLS)
+    return normalize_user_symbols(DEFAULT_REAL_SYMBOLS)
 
 
 def _project_result_dir() -> Path:
@@ -217,9 +219,9 @@ def _recommendation_from_signal(signal_score: float | int | None, predicted_retu
     ret = float(predicted_return)
     score = float(signal_score)
 
-    if score >= 0 and ret > 0:
+    if score >= 0 and ret > 1.0:
         return "매수"
-    if score < 0 and ret < 0:
+    if score < 0 and ret < -1.0:
         return "매도"
     return "관망"
 

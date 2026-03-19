@@ -24,7 +24,7 @@ def test_fallback_symbols_uses_default_when_input_unavailable(monkeypatch):
 
     symbols = pipeline._fallback_symbols_from_input_or_default("dummy.csv")
 
-    assert symbols == pipeline.DEFAULT_REAL_SYMBOLS
+    assert symbols == ["207940.KS", "034020.KS", "035420.KS", "272210.KS", "042660.KS", "000660.KS", "042700.KS", "006400.KS", "015760.KS", "051910.KS", "005380.KS", "005930.KS"]
 
 
 def test_save_real_ohlcv_csv_preserves_existing_optional_columns(tmp_path, monkeypatch):
