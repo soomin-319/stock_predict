@@ -11,20 +11,10 @@ import warnings
 import pandas as pd
 import yfinance as yf
 
+from src.data.pykrx_support import import_pykrx_stock
 
-def _import_pykrx_stock():
-    try:
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message=r"pkg_resources is deprecated as an API.*",
-                category=UserWarning,
-            )
-            from pykrx import stock
 
-        return stock
-    except Exception:
-        return None
+_import_pykrx_stock = import_pykrx_stock
 
 
 def _to_yfinance_symbol(user_input: str) -> str:
@@ -159,10 +149,30 @@ def fetch_real_ohlcv(symbols: Iterable[str], start: str = "2020-01-01", end: str
     return all_df
 
 
+def _preserve_existing_optional_columns(fetched_df: pd.DataFrame, existing_df: pd.DataFrame | None) -> pd.DataFrame:
+    if existing_df is None or existing_df.empty:
+        return fetched_df
+
+    keys = ["Date", "Symbol"]
+    existing = existing_df.copy()
+    if "Date" in existing.columns:
+        existing["Date"] = pd.to_datetime(existing["Date"], errors="coerce")
+
+    extra_cols = [c for c in existing.columns if c not in {"Date", "Symbol", "Open", "High", "Low", "Close", "Volume"}]
+    if not extra_cols:
+        return fetched_df
+
+    preserved = existing[keys + extra_cols].drop_duplicates(subset=keys, keep="last")
+    return fetched_df.merge(preserved, on=keys, how="left")
+
+
 def save_real_ohlcv_csv(path: str | Path, symbols: Iterable[str], start: str = "2020-01-01", end: str | None = None) -> Path:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     df = fetch_real_ohlcv(symbols=symbols, start=start, end=end)
+    if p.exists():
+        base = pd.read_csv(p)
+        df = _preserve_existing_optional_columns(df, base)
     df.to_csv(p, index=False)
     return p
 
@@ -180,6 +190,7 @@ def append_real_ohlcv_csv(path: str | Path, symbols: Iterable[str], start: str =
         base = pd.read_csv(p)
         if "Date" in base.columns:
             base["Date"] = pd.to_datetime(base["Date"])
+        new_df = _preserve_existing_optional_columns(new_df, base)
         merged = pd.concat([base, new_df], axis=0, ignore_index=True)
     else:
         merged = new_df
