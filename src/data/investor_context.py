@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -10,6 +11,8 @@ from urllib.request import urlopen
 import pandas as pd
 import yfinance as yf
 
+from src.data.pykrx_support import import_pykrx_stock
+
 
 POSITIVE_NEWS_KEYWORDS = {
     "beat", "surge", "record", "upgrade", "partnership", "contract", "approval", "growth",
@@ -18,6 +21,24 @@ POSITIVE_NEWS_KEYWORDS = {
 NEGATIVE_NEWS_KEYWORDS = {
     "miss", "drop", "downgrade", "lawsuit", "delay", "fraud", "decline",
     "악재", "소송", "지연", "하향", "감소", "적자",
+}
+STRONG_POSITIVE_NEWS_KEYWORDS = {
+    "흑자전환", "어닝서프라이즈", "대규모", "공급계약", "수주", "자사주", "소각", "승인", "record", "beat",
+}
+STRONG_NEGATIVE_NEWS_KEYWORDS = {
+    "유상증자", "전환사채", "bw", "cb", "감사의견", "거절", "횡령", "배임", "하한가", "lawsuit", "fraud",
+}
+PRICE_IMPACT_NEWS_KEYWORDS = {
+    "실적", "가이던스", "수주", "공급계약", "계약", "승인", "허가", "합병", "인수", "매각",
+    "유상증자", "무상증자", "전환사채", "bw", "cb", "배당", "자사주", "소각", "최대주주",
+    "소송", "횡령", "배임", "감사의견", "거래정지", "단기과열", "투자경고", "투자위험",
+    "earnings", "guidance", "contract", "approval", "acquisition", "lawsuit",
+}
+LOW_SIGNAL_NEWS_KEYWORDS = {
+    "market wrap", "preview", "opinion", "column", "브리핑", "장마감", "장전시황", "시황", "리포트 요약",
+}
+UNCERTAINTY_NEWS_KEYWORDS = {
+    "검토", "추진", "가능성", "예정", "설", "rumor", "reportedly", "may", "could",
 }
 
 
@@ -29,6 +50,9 @@ class InvestorContextConfig:
     enable_flow: bool = True
     dart_api_key: str | None = None
     dart_corp_map_csv: str | None = None
+    news_scoring_mode: str = "auto"
+    openai_api_key: str | None = None
+    openai_model: str | None = None
 
 
 def _symbol_to_ticker(symbol: str) -> str | None:
@@ -39,7 +63,15 @@ def _symbol_to_ticker(symbol: str) -> str | None:
 
 def _empty_context(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     out = df.copy()
-    for c in ["foreign_net_buy", "institution_net_buy", "disclosure_score", "news_sentiment"]:
+    for c in [
+        "foreign_net_buy",
+        "institution_net_buy",
+        "disclosure_score",
+        "news_sentiment",
+        "news_relevance_score",
+        "news_impact_score",
+        "news_article_count",
+    ]:
         if c not in out.columns:
             out[c] = 0.0
     return out, {
@@ -52,9 +84,8 @@ def _empty_context(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
 def _fetch_flow_pykrx(symbols: list[str], start: str, end: str) -> tuple[pd.DataFrame, dict]:
     coverage = {"requested": len(symbols), "successful": 0, "failed": 0}
-    try:
-        from pykrx import stock
-    except Exception:
+    stock = import_pykrx_stock()
+    if stock is None:
         coverage["failed"] = len(symbols)
         return pd.DataFrame(columns=["Date", "Symbol", "foreign_net_buy", "institution_net_buy"]), coverage
 
@@ -170,11 +201,100 @@ def _headline_sentiment(text: str) -> float:
     t = str(text).lower()
     pos = sum(1 for k in POSITIVE_NEWS_KEYWORDS if k in t)
     neg = sum(1 for k in NEGATIVE_NEWS_KEYWORDS if k in t)
-    score = 0.5 + 0.2 * (pos - neg)
+    strong_pos = sum(1 for k in STRONG_POSITIVE_NEWS_KEYWORDS if k in t)
+    strong_neg = sum(1 for k in STRONG_NEGATIVE_NEWS_KEYWORDS if k in t)
+    uncertainty = sum(1 for k in UNCERTAINTY_NEWS_KEYWORDS if k in t)
+    score = 0.5 + 0.12 * (pos - neg) + 0.18 * (strong_pos - strong_neg) - 0.05 * uncertainty
     return max(0.0, min(1.0, score))
 
 
-def _fetch_news_sentiment(symbols: list[str], start: str, end: str):
+def _headline_relevance(text: str) -> float:
+    t = str(text).lower()
+    impact_hits = sum(1 for k in PRICE_IMPACT_NEWS_KEYWORDS if k in t)
+    low_signal_hits = sum(1 for k in LOW_SIGNAL_NEWS_KEYWORDS if k in t)
+    uncertainty_hits = sum(1 for k in UNCERTAINTY_NEWS_KEYWORDS if k in t)
+
+    score = 0.25 + 0.25 * min(impact_hits, 2) - 0.15 * low_signal_hits - 0.05 * uncertainty_hits
+    return max(0.0, min(1.0, score))
+
+
+def _headline_news_features_rule_based(text: str) -> tuple[float, float, float]:
+    sentiment = _headline_sentiment(text)
+    relevance = _headline_relevance(text)
+    weighted_sentiment = 0.5 + (sentiment - 0.5) * relevance
+    impact = (weighted_sentiment - 0.5) * 2.0
+    return weighted_sentiment, relevance, impact
+
+
+def _normalize_news_title(title: str) -> str:
+    return re.sub(r"\s+", " ", str(title).strip()).lower()
+
+
+def _resolve_news_ai_settings(cfg: InvestorContextConfig | None) -> tuple[str, str | None, str | None]:
+    if cfg is None:
+        mode = os.getenv("NEWS_SCORING_MODE", "auto")
+        api_key = os.getenv("OPENAI_API_KEY")
+        model = os.getenv("OPENAI_MODEL")
+        return mode.lower(), api_key, model
+
+    mode = str(cfg.news_scoring_mode or os.getenv("NEWS_SCORING_MODE", "auto")).lower()
+    api_key = cfg.openai_api_key if cfg.openai_api_key is not None else os.getenv("OPENAI_API_KEY")
+    model = cfg.openai_model if cfg.openai_model is not None else os.getenv("OPENAI_MODEL")
+    return mode, api_key, model
+
+
+def _score_headline_with_openai(title: str, api_key: str | None, model: str | None) -> tuple[float, float, float] | None:
+    if not api_key or not model or not str(title).strip():
+        return None
+
+    try:
+        from openai import OpenAI
+    except Exception:
+        return None
+
+    prompt = (
+        "You are a financial news analyst. Read the stock-news headline and score its likely short-term price impact "
+        "(1-5 trading days) for the referenced company. Return JSON only with these numeric keys: "
+        "sentiment_score, relevance_score, impact_score. "
+        "sentiment_score must be between 0 and 1 where 0 is strongly bearish, 0.5 is neutral, and 1 is strongly bullish. "
+        "relevance_score must be between 0 and 1 and represent how directly the headline should affect the company's stock price. "
+        "impact_score must be between -1 and 1 and represent the expected stock-price impact direction and magnitude. "
+        "If the headline is ambiguous, lower relevance_score and keep sentiment_score near 0.5."
+    )
+
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.responses.create(
+            model=model,
+            input=[
+                {"role": "system", "content": [{"type": "input_text", "text": prompt}]},
+                {"role": "user", "content": [{"type": "input_text", "text": str(title)}]},
+            ],
+        )
+        raw = getattr(response, "output_text", "") or ""
+        payload = json.loads(raw)
+        sentiment = float(payload["sentiment_score"])
+        relevance = float(payload["relevance_score"])
+        impact = float(payload["impact_score"])
+    except Exception:
+        return None
+
+    sentiment = max(0.0, min(1.0, sentiment))
+    relevance = max(0.0, min(1.0, relevance))
+    impact = max(-1.0, min(1.0, impact))
+    return sentiment, relevance, impact
+
+
+def _headline_news_features(text: str, cfg: InvestorContextConfig | None = None) -> tuple[float, float, float]:
+    mode, api_key, model = _resolve_news_ai_settings(cfg)
+    if mode in {"auto", "ai"}:
+        ai_result = _score_headline_with_openai(text, api_key=api_key, model=model)
+        if ai_result is not None:
+            return ai_result
+    return _headline_news_features_rule_based(text)
+
+
+def _fetch_news_sentiment(symbols: list[str], start: str, end: str, cfg: InvestorContextConfig | None = None):
     coverage = {"requested": len(symbols), "successful": 0, "failed": 0}
     start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
     rows = []
@@ -186,6 +306,7 @@ def _fetch_news_sentiment(symbols: list[str], start: str, end: str):
                 coverage["failed"] += 1
                 continue
             recs = []
+            seen_titles: set[tuple[pd.Timestamp, str]] = set()
             for it in items:
                 ts = it.get("providerPublishTime")
                 title = it.get("title", "")
@@ -194,11 +315,33 @@ def _fetch_news_sentiment(symbols: list[str], start: str, end: str):
                 dt = pd.to_datetime(ts, unit="s", utc=True).tz_localize(None).normalize()
                 if dt < start_dt or dt > end_dt:
                     continue
-                recs.append((dt, _headline_sentiment(title)))
+                normalized_title = _normalize_news_title(title)
+                if not normalized_title:
+                    continue
+                dedupe_key = (dt, normalized_title)
+                if dedupe_key in seen_titles:
+                    continue
+                seen_titles.add(dedupe_key)
+                sentiment, relevance, impact = _headline_news_features(title, cfg=cfg)
+                recs.append((dt, sentiment, relevance, impact, 1))
             if not recs:
                 coverage["failed"] += 1
                 continue
-            part = pd.DataFrame(recs, columns=["Date", "news_sentiment"]).groupby("Date", as_index=False).mean()
+            part = (
+                pd.DataFrame(
+                    recs,
+                    columns=["Date", "news_sentiment", "news_relevance_score", "news_impact_score", "news_article_count"],
+                )
+                .groupby("Date", as_index=False)
+                .agg(
+                    {
+                        "news_sentiment": "mean",
+                        "news_relevance_score": "mean",
+                        "news_impact_score": "mean",
+                        "news_article_count": "sum",
+                    }
+                )
+            )
             part["Symbol"] = symbol
             rows.append(part)
             coverage["successful"] += 1
@@ -206,7 +349,9 @@ def _fetch_news_sentiment(symbols: list[str], start: str, end: str):
             coverage["failed"] += 1
 
     if not rows:
-        return pd.DataFrame(columns=["Date", "Symbol", "news_sentiment"]), coverage
+        return pd.DataFrame(
+            columns=["Date", "Symbol", "news_sentiment", "news_relevance_score", "news_impact_score", "news_article_count"]
+        ), coverage
     return pd.concat(rows, ignore_index=True), coverage
 
 
@@ -240,12 +385,20 @@ def add_investor_context_with_coverage(df: pd.DataFrame, cfg: InvestorContextCon
             out = out.merge(disc_df, on=["Date", "Symbol"], how="left")
 
     if cfg.enable_news:
-        news_df, news_cov = _fetch_news_sentiment(symbols, start, end)
+        news_df, news_cov = _fetch_news_sentiment(symbols, start, end, cfg=cfg)
         coverage["news"] = news_cov
         if not news_df.empty:
             out = out.merge(news_df, on=["Date", "Symbol"], how="left")
 
-    for c in ["foreign_net_buy", "institution_net_buy", "disclosure_score", "news_sentiment"]:
+    for c in [
+        "foreign_net_buy",
+        "institution_net_buy",
+        "disclosure_score",
+        "news_sentiment",
+        "news_relevance_score",
+        "news_impact_score",
+        "news_article_count",
+    ]:
         if c not in out.columns:
             out[c] = 0.0
         out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0.0)
