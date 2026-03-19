@@ -78,6 +78,9 @@ python src/pipeline.py `
   --figure-dir figures_with_context
 ```
 
+> 참고: 뉴스 점수화는 기본적으로 규칙 기반 fallback을 유지하면서, `OPENAI_API_KEY`와 `OPENAI_MODEL` 환경변수가 있으면 AI 기반 제목 점수화를 우선 시도합니다.  
+> 예: `NEWS_SCORING_MODE=ai` 또는 `NEWS_SCORING_MODE=auto`
+
 ### (참고) bash/zsh에서 줄바꿈 실행
 ```bash
 python src/pipeline.py \

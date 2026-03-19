@@ -79,6 +79,10 @@ def test_fetch_news_sentiment_returns_relevance_and_article_count(monkeypatch):
                 "providerPublishTime": 1704153600,
                 "title": "삼성전자 장마감 시황 브리핑",
             },
+            {
+                "providerPublishTime": 1704153600,
+                "title": "  삼성전자   대규모   공급계약 체결  ",
+            },
         ]
 
     monkeypatch.setattr(ic.yf, "Ticker", lambda symbol: _Ticker())
@@ -89,3 +93,16 @@ def test_fetch_news_sentiment_returns_relevance_and_article_count(monkeypatch):
     assert out.loc[0, "news_article_count"] == 2
     assert out.loc[0, "news_relevance_score"] > 0
     assert out.loc[0, "news_sentiment"] != 0
+
+
+def test_headline_news_features_uses_ai_when_available(monkeypatch):
+    import src.data.investor_context as ic
+
+    monkeypatch.setattr(ic, "_score_headline_with_openai", lambda *a, **k: (0.9, 0.8, 0.7))
+
+    sentiment, relevance, impact = _headline_news_features(
+        "삼성전자 대규모 공급계약 체결",
+        InvestorContextConfig(enabled=True, news_scoring_mode="ai", openai_api_key="test", openai_model="demo-model"),
+    )
+
+    assert (sentiment, relevance, impact) == (0.9, 0.8, 0.7)
