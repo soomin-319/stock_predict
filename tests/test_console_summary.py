@@ -29,7 +29,10 @@ def test_console_summary_uses_direction_accuracy_top10(capsys):
     assert "예측 이유" not in out
 
 
-def test_recommendation_requires_more_than_one_percent_return():
+def test_recommendation_uses_hold_between_minus_one_and_plus_one_percent():
     assert _recommendation_from_signal(0.3, 1.2) == "매수"
     assert _recommendation_from_signal(-0.3, -1.2) == "매도"
-    assert _recommendation_from_signal(-1.0, 1.0) == "관망"
+    assert _recommendation_from_signal(0.3, 1.0) == "관망"
+    assert _recommendation_from_signal(-0.3, -1.0) == "매도"
+    assert _recommendation_from_signal(0.3, 0.8) == "관망"
+    assert _recommendation_from_signal(-0.3, -0.8) == "관망"

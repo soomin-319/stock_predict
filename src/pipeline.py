@@ -221,7 +221,7 @@ def _recommendation_from_signal(signal_score: float | int | None, predicted_retu
 
     if score >= 0 and ret > 1.0:
         return "매수"
-    if score < 0 and ret < -1.0:
+    if score < 0 and ret <= -1.0:
         return "매도"
     return "관망"
 
