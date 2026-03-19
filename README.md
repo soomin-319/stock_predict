@@ -30,6 +30,42 @@ python src/pipeline.py --fetch-real --input data/real_ohlcv.csv
 > `--fetch-real` 사용 시 `--real-symbols` 또는 `--universe-csv`를 우선 사용하며, 둘 다 없으면 `--input`의 `Symbol` 컬럼으로 진행합니다.  
 > `Symbol` 컬럼도 없을 때만 **소규모 내장 데모 유니버스(10종목)** 로 동작합니다. 실전용 기본 유니버스가 아니라 빠른 실행 확인용 fallback입니다.
 
+### 2-1) 기존 입력 CSV에 종목 추가 수집(`--add-symbols`)
+이미 가지고 있는 `data/real_ohlcv.csv`에 특정 종목만 더 붙이고 싶으면 `--add-symbols`를 사용합니다.  
+이 옵션은 **기존 CSV를 유지한 채**, 입력한 종목들의 OHLCV만 추가로 수집해서 `Date` + `Symbol` 기준으로 병합합니다.
+
+```powershell
+python src/pipeline.py `
+  --input data/real_ohlcv.csv `
+  --add-symbols 005930 000660.KS 035420 `
+  --real-start 2024-01-01
+```
+
+- `005930`처럼 6자리 숫자만 넣으면 내부에서 `.KS` / `.KQ` 심볼 형태로 정규화하려고 시도합니다.
+- 쉼표로도 입력할 수 있어서 `--add-symbols 005930,000660,035420` 형태도 가능합니다.
+- 추가 수집만 하고 바로 파이프라인까지 돌리려면 `--add-symbols`와 다른 실행 옵션(`--fetch-investor-context`, `--report-json` 등)을 함께 주면 됩니다.
+
+### 2-2) 종목 추가 + 투자자 컨텍스트까지 한 번에 실행
+```powershell
+python src/pipeline.py `
+  --input data/real_ohlcv.csv `
+  --add-symbols 005930 000660 `
+  --real-start 2024-01-01 `
+  --fetch-investor-context `
+  --dart-api-key "YOUR_DART_API_KEY" `
+  --dart-corp-map-csv data/dart_corp_map.csv `
+  --report-json pipeline_report_added_symbols.json `
+  --figure-dir figures_added_symbols
+```
+
+### (참고) bash/zsh에서 종목 추가 실행
+```bash
+python src/pipeline.py \
+  --input data/real_ohlcv.csv \
+  --add-symbols 005930 000660.KS 035420 \
+  --real-start 2024-01-01
+```
+
 ### 3) 투자자 컨텍스트 연동(fetch-investor-context)
 ```powershell
 python src/pipeline.py `
