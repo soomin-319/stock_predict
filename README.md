@@ -82,15 +82,15 @@ python src/pipeline.py `
 > 예: `NEWS_SCORING_MODE=ai` 또는 `NEWS_SCORING_MODE=auto`
 
 ### 3-1) 투자자 컨텍스트는 유지하고 뉴스만 끄기
-```bash
-python src/pipeline.py \
-  --fetch-real \
-  --fetch-investor-context \
-  --disable-news-context \
-  --dart-api-key "YOUR_DART_API_KEY" \
-  --dart-corp-map-csv data/dart_corp_map.csv \
-  --input data/real_ohlcv.csv \
-  --report-json pipeline_report_without_news.json \
+```powershell
+python src/pipeline.py `
+  --fetch-real `
+  --fetch-investor-context `
+  --disable-news-context `
+  --dart-api-key "YOUR_DART_API_KEY" `
+  --dart-corp-map-csv data/dart_corp_map.csv `
+  --input data/real_ohlcv.csv `
+  --report-json pipeline_report_without_news.json `
   --figure-dir figures_without_news
 ```
 
