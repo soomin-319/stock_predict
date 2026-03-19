@@ -6,3 +6,4 @@ yfinance
 matplotlib
 lightgbm
 pykrx
+openai
