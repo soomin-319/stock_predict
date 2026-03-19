@@ -600,6 +600,7 @@ def run_pipeline(
     figure_dir: str = "reports/figures",
     use_external: bool = True,
     use_investor_context: bool = False,
+    use_news_context: bool = True,
     dart_api_key: str | None = None,
     dart_corp_map_csv: str | None = None,
 ):
@@ -634,6 +635,7 @@ def run_pipeline(
             data,
             InvestorContextConfig(
                 enabled=True,
+                enable_news=use_news_context,
                 dart_api_key=dart_api_key,
                 dart_corp_map_csv=dart_corp_map_csv,
             ),
@@ -805,6 +807,7 @@ def main():
     parser.add_argument("--fetch-real", action="store_true", help="Fetch real OHLCV from yfinance before running")
     parser.add_argument("--disable-external", action="store_true", help="Disable external market feature download")
     parser.add_argument("--fetch-investor-context", action="store_true", help="Fetch investor/disclosure/news context features")
+    parser.add_argument("--disable-news-context", action="store_true", help="Disable only the news portion of investor context")
     parser.add_argument("--dart-api-key", default=None, help="OpenDART API key for disclosure fetch")
     parser.add_argument("--dart-corp-map-csv", default=None, help="CSV path with Symbol,corp_code for OpenDART")
     parser.add_argument(
@@ -850,6 +853,7 @@ def main():
         args.figure_dir,
         use_external=not args.disable_external,
         use_investor_context=args.fetch_investor_context,
+        use_news_context=not args.disable_news_context,
         dart_api_key=args.dart_api_key,
         dart_corp_map_csv=args.dart_corp_map_csv,
     )

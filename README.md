@@ -81,6 +81,21 @@ python src/pipeline.py `
 > 참고: 뉴스 점수화는 기본적으로 규칙 기반 fallback을 유지하면서, `OPENAI_API_KEY`와 `OPENAI_MODEL` 환경변수가 있으면 AI 기반 제목 점수화를 우선 시도합니다.  
 > 예: `NEWS_SCORING_MODE=ai` 또는 `NEWS_SCORING_MODE=auto`
 
+### 3-1) 투자자 컨텍스트는 유지하고 뉴스만 끄기
+```bash
+python src/pipeline.py \
+  --fetch-real \
+  --fetch-investor-context \
+  --disable-news-context \
+  --dart-api-key "YOUR_DART_API_KEY" \
+  --dart-corp-map-csv data/dart_corp_map.csv \
+  --input data/real_ohlcv.csv \
+  --report-json pipeline_report_without_news.json \
+  --figure-dir figures_without_news
+```
+
+이 조합은 **수급/공시 컨텍스트는 유지**하면서 **뉴스 수집/뉴스 점수화만 비활성화**합니다.
+
 ### (참고) bash/zsh에서 줄바꿈 실행
 ```bash
 python src/pipeline.py \
@@ -105,6 +120,7 @@ python src/pipeline.py \
 - `--add-symbols`: 기존 입력 CSV에 사용자 심볼 추가 수집
 - `--disable-external`: 외부 시장 지표 feature 비활성화
 - `--fetch-investor-context`: 투자자 컨텍스트(수급/공시/뉴스) 연동 활성화
+- `--disable-news-context`: 투자자 컨텍스트 중 뉴스 수집/점수화만 비활성화
 - `--dart-api-key`: OpenDART API Key
 - `--dart-corp-map-csv`: `Symbol,corp_code` 매핑 CSV
 
