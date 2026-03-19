@@ -62,15 +62,7 @@ DEFAULT_REAL_SYMBOLS: list[str] = [
 
 
 def _fallback_symbols_from_input_or_default(input_csv: str) -> list[str]:
-    """Return fallback symbols from input CSV, otherwise a small built-in demo list."""
-    try:
-        base_df = load_ohlcv_csv(input_csv)
-        if "Symbol" in base_df.columns:
-            symbols = sorted(base_df["Symbol"].dropna().astype(str).unique().tolist())
-            if symbols:
-                return symbols
-    except Exception:
-        pass
+    """Return the built-in demo universe used when no explicit fetch universe is provided."""
     return normalize_user_symbols(DEFAULT_REAL_SYMBOLS)
 
 
@@ -213,15 +205,14 @@ def _pad_display(text: str, width: int, align: str = "left") -> str:
 
 
 def _recommendation_from_signal(signal_score: float | int | None, predicted_return: float | int | None) -> str:
-    if pd.isna(predicted_return) or pd.isna(signal_score):
+    if pd.isna(predicted_return):
         return "관망"
 
     ret = float(predicted_return)
-    score = float(signal_score)
 
-    if score >= 0 and ret > 1.0:
+    if ret > 1.0:
         return "매수"
-    if score < 0 and ret <= -1.0:
+    if ret <= -1.0:
         return "매도"
     return "관망"
 

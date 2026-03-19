@@ -27,8 +27,8 @@ python src/pipeline.py --fetch-real --input data/real_ohlcv.csv
 ```
 
 > 참고: 자동 KRX 유니버스 생성은 비활성화되었습니다.  
-> `--fetch-real` 사용 시 `--real-symbols` 또는 `--universe-csv`를 우선 사용하며, 둘 다 없으면 `--input`의 `Symbol` 컬럼으로 진행합니다.  
-> `Symbol` 컬럼도 없을 때만 **소규모 내장 데모 유니버스(12종목)** 로 동작합니다. 실전용 기본 유니버스가 아니라 빠른 실행 확인용 fallback입니다.
+> `--fetch-real` 사용 시 `--real-symbols` 또는 `--universe-csv`를 우선 사용합니다.  
+> 둘 다 없으면 요청하신 **기본 심볼 12종목(207940, 034020, 035420, 272210, 042660, 000660, 042700, 006400, 015760, 051910, 005380, 005930)** 으로 자동 수집을 진행합니다.
 
 ### 2-1) 기존 입력 CSV에 종목 추가 수집(`--add-symbols`)
 이미 가지고 있는 `data/real_ohlcv.csv`에 특정 종목만 더 붙이고 싶으면 `--add-symbols`를 사용합니다.  

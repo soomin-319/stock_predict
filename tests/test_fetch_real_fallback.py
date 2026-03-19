@@ -4,24 +4,13 @@ from src import pipeline
 from src.data import fetch_real_data
 
 
-def test_fallback_symbols_uses_input_symbols(monkeypatch):
-    monkeypatch.setattr(
-        pipeline,
-        "load_ohlcv_csv",
-        lambda _path: pd.DataFrame({"Symbol": ["005930.KS", "000660.KS", "005930.KS"]}),
-    )
-
+def test_fallback_symbols_always_uses_default_demo_universe():
     symbols = pipeline._fallback_symbols_from_input_or_default("dummy.csv")
 
-    assert symbols == ["000660.KS", "005930.KS"]
+    assert symbols == ["207940.KS", "034020.KS", "035420.KS", "272210.KS", "042660.KS", "000660.KS", "042700.KS", "006400.KS", "015760.KS", "051910.KS", "005380.KS", "005930.KS"]
 
 
 def test_fallback_symbols_uses_default_when_input_unavailable(monkeypatch):
-    def _raise(_path):
-        raise FileNotFoundError("missing")
-
-    monkeypatch.setattr(pipeline, "load_ohlcv_csv", _raise)
-
     symbols = pipeline._fallback_symbols_from_input_or_default("dummy.csv")
 
     assert symbols == ["207940.KS", "034020.KS", "035420.KS", "272210.KS", "042660.KS", "000660.KS", "042700.KS", "006400.KS", "015760.KS", "051910.KS", "005380.KS", "005930.KS"]
