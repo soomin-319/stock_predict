@@ -13,6 +13,8 @@ dependencies = [
   "scikit-learn",
   "yfinance",
   "matplotlib",
+  "flask",
+  "pyngrok",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +22,7 @@ dev = ["pytest"]
 
 [project.scripts]
 stock-predict = "src.pipeline:main"
+stock-predict-kakao = "src.chatbot.kakao_colab_bot:main"
 
 [tool.setuptools]
-packages = ["src", "src.config", "src.data", "src.features", "src.models", "src.validation", "src.inference", "src.reports"]
+packages = ["src", "src.chatbot", "src.config", "src.data", "src.features", "src.models", "src.validation", "src.inference", "src.reports"]
