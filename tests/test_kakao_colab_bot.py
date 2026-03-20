@@ -27,8 +27,8 @@ class RecordingRunner:
     def __init__(self):
         self.calls = []
 
-    def __call__(self, command, cwd, stdout, stderr, text):
-        self.calls.append({"command": command, "cwd": cwd, "stderr": stderr, "text": text})
+    def __call__(self, command, cwd, stdout, stderr, text, **kwargs):
+        self.calls.append({"command": command, "cwd": cwd, "stderr": stderr, "text": text, **kwargs})
         return FakeProcess(return_code=None)
 
 
@@ -36,8 +36,8 @@ class ImmediateSuccessRunner:
     def __init__(self):
         self.calls = []
 
-    def __call__(self, command, cwd, stdout, stderr, text):
-        self.calls.append({"command": command, "cwd": cwd})
+    def __call__(self, command, cwd, stdout, stderr, text, **kwargs):
+        self.calls.append({"command": command, "cwd": cwd, **kwargs})
         return FakeProcess(return_code=0)
 
 
@@ -117,6 +117,24 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     session_path = tmp_path / "result" / "chatbot_sessions.json"
     assert session_path.exists()
     assert "user-77" in session_path.read_text(encoding="utf-8")
+
+
+def test_start_job_prints_console_progress_hint(tmp_path: Path, capsys):
+    runner = RecordingRunner()
+    bot = make_bot(tmp_path, runner=runner)
+
+    bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "005930",
+                "user": {"id": "user-progress"},
+            }
+        }
+    )
+
+    captured = capsys.readouterr()
+    assert "예측 작업 시작" in captured.out
+    assert "005930" in captured.out
 
 
 def test_status_request_uses_previous_user_symbol(tmp_path: Path):

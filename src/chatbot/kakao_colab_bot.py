@@ -313,23 +313,55 @@ class KakaoColabPredictionBot:
             label = "낮음"
         return f"{float(numeric):.3f} ({label})"
 
+    def _console_log(self, message: str):
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        print(f"[KAKAO BOT {timestamp}] {message}", flush=True)
+
+    def _stream_process_output(self, symbol: str, process: Any, log_handle):
+        stdout = getattr(process, "stdout", None)
+        if stdout is None:
+            return
+
+        display_code = self._display_code(symbol)
+        for raw_line in stdout:
+            line = raw_line.rstrip()
+            if not line:
+                continue
+            log_handle.write(raw_line)
+            log_handle.flush()
+            self._console_log(f"[{display_code}] {line}")
+
     def _start_prediction_job(self, symbol: str):
         command = self.runtime_config.build_command(symbol)
+        display_code = self._display_code(symbol)
         submitted_at = datetime.now(timezone.utc).isoformat()
-        log_path = self.log_dir / f"{self._display_code(symbol)}_{submitted_at.replace(':', '').replace('+00:00', 'Z')}.log"
+        log_path = self.log_dir / f"{display_code}_{submitted_at.replace(':', '').replace('+00:00', 'Z')}.log"
         log_handle = log_path.open("w", encoding="utf-8")
+        self._console_log(f"{display_code} 예측 작업 시작: {' '.join(command)}")
         process = self.process_runner(
             command,
             cwd=self.project_root,
-            stdout=log_handle,
+            stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            bufsize=1,
         )
-        self._active_processes[symbol] = {"process": process, "log_handle": log_handle}
+        log_thread = None
+        if getattr(process, "stdout", None) is not None:
+            log_thread = threading.Thread(
+                target=self._stream_process_output,
+                args=(symbol, process, log_handle),
+                daemon=True,
+            )
+            log_thread.start()
+        else:
+            self._console_log(f"{display_code} 로그 스트림을 사용할 수 없어 파일 로그만 남깁니다: {log_path}")
+
+        self._active_processes[symbol] = {"process": process, "log_handle": log_handle, "log_thread": log_thread}
         self._job_registry[symbol] = asdict(
             PredictionJobState(
                 symbol=symbol,
-                display_code=self._display_code(symbol),
+                display_code=display_code,
                 command=command,
                 log_path=str(log_path.relative_to(self.project_root)),
                 submitted_at=submitted_at,
@@ -345,6 +377,9 @@ class KakaoColabPredictionBot:
             exit_code = process.poll()
             if exit_code is None:
                 continue
+            log_thread = runtime.get("log_thread")
+            if log_thread is not None:
+                log_thread.join(timeout=1.0)
             runtime["log_handle"].close()
             status = "completed" if exit_code == 0 else "failed"
             job_state = self._job_registry.get(symbol, {})
@@ -356,6 +391,10 @@ class KakaoColabPredictionBot:
                 }
             )
             self._job_registry[symbol] = job_state
+            self._console_log(
+                f"{self._display_code(symbol)} 예측 작업 {status} (exit_code={int(exit_code)}). "
+                f"결과 확인은 카카오톡에서 '결과'를 입력하세요."
+            )
             del self._active_processes[symbol]
         self._save_registry(self.state_path, self._job_registry)
 
