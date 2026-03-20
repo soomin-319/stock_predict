@@ -16,6 +16,9 @@ from src.data.fetch_real_data import normalize_user_symbols
 
 
 _STOCK_CODE_PATTERN = re.compile(r"\b\d{6}(?:\.(?:KS|KQ))?\b", re.IGNORECASE)
+_HELP_KEYWORDS = {"도움말", "help", "사용법", "시작", "안내"}
+_STATUS_KEYWORDS = {"결과", "상태", "진행상황", "조회", "확인"}
+_REFRESH_KEYWORDS = {"최신화", "새로고침", "재실행", "다시예측", "다시 예측"}
 
 
 @dataclass(slots=True)
@@ -29,6 +32,15 @@ class PredictionJobState:
     pid: int | None = None
     exit_code: int | None = None
     completed_at: str | None = None
+
+
+@dataclass(slots=True)
+class UserSessionState:
+    user_id: str
+    last_symbol: str | None = None
+    last_display_code: str | None = None
+    last_intent: str = "idle"
+    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 @dataclass(slots=True)
@@ -75,52 +87,134 @@ class KakaoColabPredictionBot:
         runtime_config: PipelineRuntimeConfig | None = None,
         result_simple_path: str | Path | None = None,
         state_path: str | Path | None = None,
+        session_path: str | Path | None = None,
         process_runner: Callable[..., Any] | None = None,
     ):
         self.runtime_config = runtime_config or PipelineRuntimeConfig()
         self.project_root = Path(self.runtime_config.project_root)
         self.result_simple_path = self.project_root / (result_simple_path or "result/result_simple.csv")
         self.state_path = self.project_root / (state_path or "result/chatbot_jobs.json")
+        self.session_path = self.project_root / (session_path or "result/chatbot_sessions.json")
         self.log_dir = self.project_root / "result" / "chatbot_logs"
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.session_path.parent.mkdir(parents=True, exist_ok=True)
         self.process_runner = process_runner or subprocess.Popen
         self._active_processes: dict[str, Any] = {}
-        self._job_registry = self._load_job_registry()
+        self._job_registry = self._load_registry(self.state_path)
+        self._session_registry = self._load_registry(self.session_path)
 
-    def handle_utterance(self, utterance: str) -> dict[str, Any]:
-        symbol_input = self._extract_stock_code(utterance)
+    def handle_kakao_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        utterance = ((payload.get("userRequest") or {}).get("utterance") or "").strip()
+        user_id = self._extract_user_id(payload)
+        return self.handle_utterance(utterance, user_id=user_id)
+
+    def handle_utterance(self, utterance: str, user_id: str | None = None) -> dict[str, Any]:
+        text = str(utterance or "").strip()
+        self._refresh_job_states()
+
+        if not text or self._is_help_request(text):
+            return self._guide_response()
+
+        if self._is_status_request(text):
+            symbol = self._symbol_from_session(user_id)
+            if not symbol:
+                return self._guide_response("먼저 종목코드를 입력해주세요. 예: 005930")
+            return self._handle_symbol_request(symbol, user_id=user_id, force_refresh=False, from_session=True)
+
+        if self._is_refresh_request(text):
+            symbol = self._symbol_from_session(user_id)
+            if not symbol:
+                return self._guide_response("최신화할 종목이 없습니다. 먼저 종목코드를 입력해주세요.")
+            return self._handle_symbol_request(symbol, user_id=user_id, force_refresh=True, from_session=True)
+
+        symbol_input = self._extract_stock_code(text)
         if not symbol_input:
-            return self._simple_text_response(
-                "종목코드를 찾지 못했습니다. 예: 005930 또는 000660.KS 형태로 입력해주세요."
-            )
+            return self._guide_response("종목코드를 찾지 못했습니다. 예: 005930 또는 000660.KS 형태로 입력해주세요.")
 
         symbol = self._normalize_symbol(symbol_input)
         if not symbol:
-            return self._simple_text_response("입력한 종목코드를 해석하지 못했습니다. 다시 확인해주세요.")
+            return self._guide_response("입력한 종목코드를 해석하지 못했습니다. 다시 확인해주세요.")
 
-        self._refresh_job_states()
+        return self._handle_symbol_request(symbol, user_id=user_id, force_refresh=False, from_session=False)
 
-        cached_row = self._find_cached_prediction(symbol)
-        if cached_row is not None:
-            return self._simple_text_response(self._format_prediction_message(cached_row))
+    def _handle_symbol_request(
+        self,
+        symbol: str,
+        user_id: str | None,
+        force_refresh: bool,
+        from_session: bool,
+    ) -> dict[str, Any]:
+        display_code = self._display_code(symbol)
+        self._update_session(user_id, symbol=symbol, intent="tracking")
 
         job_state = self._job_registry.get(symbol)
         if job_state and job_state.get("status") == "running":
-            display_code = job_state.get("display_code", self._display_code(symbol))
-            return self._simple_text_response(
-                f"{display_code} 예측이 아직 진행 중입니다. 잠시 후 같은 종목코드를 다시 입력해주세요."
+            return self._build_response(
+                f"{display_code} 예측이 현재 진행 중입니다. 잠시 후 '결과' 또는 '{display_code}'를 다시 입력해주세요.",
+                quick_replies=[
+                    ("결과 확인", "결과"),
+                    ("최신화", "최신화"),
+                    ("도움말", "도움말"),
+                ],
+            )
+
+        cached_row = None if force_refresh else self._find_cached_prediction(symbol)
+        if cached_row is not None:
+            return self._build_response(
+                self._format_prediction_message(cached_row),
+                quick_replies=[
+                    ("최신화", "최신화"),
+                    ("결과 확인", "결과"),
+                    ("다른 종목", "다른 종목 코드를 입력하세요"),
+                ],
             )
 
         if job_state and job_state.get("status") == "failed":
-            self._start_prediction_job(symbol)
-            return self._simple_text_response(
-                f"{self._display_code(symbol)} 예측을 재시도합니다. 완료 후 같은 종목코드를 다시 입력하면 최신 예측 결과를 안내해드릴게요."
-            )
+            return self._start_job_response(symbol, retry=True)
 
+        if force_refresh and from_session:
+            return self._start_job_response(symbol, retry=True)
+
+        return self._start_job_response(symbol, retry=False)
+
+    def _start_job_response(self, symbol: str, retry: bool) -> dict[str, Any]:
         self._start_prediction_job(symbol)
-        return self._simple_text_response(
-            f"{self._display_code(symbol)} 예측을 시작합니다. 완료 후 같은 종목코드를 다시 입력하면 최신 예측 결과를 안내해드릴게요."
+        display_code = self._display_code(symbol)
+        if retry:
+            text = (
+                f"{display_code} 최신 예측을 다시 시작합니다. 잠시 후 '결과'를 입력하면 완료 여부를 확인할 수 있어요."
+            )
+        else:
+            text = f"{display_code} 예측을 시작합니다. 잠시 후 '결과'를 입력하면 최신 예측 결과를 안내해드릴게요."
+        return self._build_response(
+            text,
+            quick_replies=[
+                ("결과 확인", "결과"),
+                ("최신화", "최신화"),
+                ("도움말", "도움말"),
+            ],
+        )
+
+    def _guide_response(self, prefix: str | None = None) -> dict[str, Any]:
+        lines = []
+        if prefix:
+            lines.append(prefix)
+        lines.extend(
+            [
+                "사용 방법:",
+                "1) 종목코드 입력: 005930",
+                "2) 예측 진행 중이면 '결과' 입력",
+                "3) 최신값으로 다시 돌리고 싶으면 '최신화' 입력",
+            ]
+        )
+        return self._build_response(
+            "\n".join(lines),
+            quick_replies=[
+                ("예시 005930", "005930"),
+                ("결과 확인", "결과"),
+                ("최신화", "최신화"),
+            ],
         )
 
     def _extract_stock_code(self, utterance: str) -> str | None:
@@ -141,6 +235,16 @@ class KakaoColabPredictionBot:
 
     def _display_code(self, symbol: str) -> str:
         return str(symbol).split(".")[0]
+
+    def _extract_user_id(self, payload: dict[str, Any]) -> str:
+        user_request = payload.get("userRequest") or {}
+        user = user_request.get("user") or {}
+        return str(
+            user.get("id")
+            or user.get("userKey")
+            or (user.get("properties") or {}).get("plusfriendUserKey")
+            or "anonymous"
+        )
 
     def _find_cached_prediction(self, symbol: str) -> pd.Series | None:
         if not self.result_simple_path.exists():
@@ -224,7 +328,7 @@ class KakaoColabPredictionBot:
                 pid=getattr(process, "pid", None),
             )
         )
-        self._save_job_registry()
+        self._save_registry(self.state_path, self._job_registry)
 
     def _refresh_job_states(self):
         for symbol, runtime in list(self._active_processes.items()):
@@ -244,24 +348,53 @@ class KakaoColabPredictionBot:
             )
             self._job_registry[symbol] = job_state
             del self._active_processes[symbol]
-        self._save_job_registry()
+        self._save_registry(self.state_path, self._job_registry)
 
-    def _load_job_registry(self) -> dict[str, dict[str, Any]]:
-        if not self.state_path.exists():
+    def _update_session(self, user_id: str | None, symbol: str | None, intent: str):
+        if not user_id:
+            return
+        self._session_registry[user_id] = asdict(
+            UserSessionState(
+                user_id=user_id,
+                last_symbol=symbol,
+                last_display_code=self._display_code(symbol) if symbol else None,
+                last_intent=intent,
+            )
+        )
+        self._save_registry(self.session_path, self._session_registry)
+
+    def _symbol_from_session(self, user_id: str | None) -> str | None:
+        if not user_id:
+            return None
+        session = self._session_registry.get(user_id, {})
+        symbol = session.get("last_symbol")
+        return str(symbol) if symbol else None
+
+    def _is_help_request(self, text: str) -> bool:
+        return text.strip().lower() in _HELP_KEYWORDS
+
+    def _is_status_request(self, text: str) -> bool:
+        return text.strip().lower() in _STATUS_KEYWORDS
+
+    def _is_refresh_request(self, text: str) -> bool:
+        return text.strip().lower() in _REFRESH_KEYWORDS
+
+    def _load_registry(self, path: Path) -> dict[str, dict[str, Any]]:
+        if not path.exists():
             return {}
         try:
-            data = json.loads(self.state_path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return {}
         if not isinstance(data, dict):
             return {}
         return {str(k): v for k, v in data.items() if isinstance(v, dict)}
 
-    def _save_job_registry(self):
-        self.state_path.write_text(json.dumps(self._job_registry, ensure_ascii=False, indent=2), encoding="utf-8")
+    def _save_registry(self, path: Path, data: dict[str, dict[str, Any]]):
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def _simple_text_response(self, text: str) -> dict[str, Any]:
-        return {
+    def _build_response(self, text: str, quick_replies: list[tuple[str, str]] | None = None) -> dict[str, Any]:
+        response = {
             "version": "2.0",
             "template": {
                 "outputs": [
@@ -273,6 +406,16 @@ class KakaoColabPredictionBot:
                 ]
             },
         }
+        if quick_replies:
+            response["template"]["quickReplies"] = [
+                {
+                    "action": "message",
+                    "label": label,
+                    "messageText": message_text,
+                }
+                for label, message_text in quick_replies
+            ]
+        return response
 
 
 def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: PipelineRuntimeConfig | None = None):
@@ -288,8 +431,7 @@ def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: Pipel
     @app.post("/kakao/webhook")
     def kakao_webhook():
         payload = request.get_json(silent=True) or {}
-        utterance = ((payload.get("userRequest") or {}).get("utterance") or "").strip()
-        return jsonify(service.handle_utterance(utterance))
+        return jsonify(service.handle_kakao_payload(payload))
 
     return app
 
