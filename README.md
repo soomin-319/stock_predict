@@ -228,6 +228,7 @@ python src/pipeline.py \
 
 ```python
 import os
+from pyngrok import ngrok
 from src.chatbot.kakao_colab_bot import (
     PipelineRuntimeConfig,
     PyngrokTunnelConfig,
@@ -251,6 +252,7 @@ tunnel = launch_colab_kakao_bot(
 
 print(tunnel["public_url"])
 print(tunnel["webhook_url"])
+print(ngrok.get_tunnels())
 ```
 
 카카오 오픈빌더 스킬 서버 URL에는 출력된 `webhook_url` 값을 그대로 입력하면 됩니다.

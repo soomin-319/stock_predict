@@ -446,6 +446,8 @@ def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: Pipel
 
 
 def start_pyngrok_tunnel(tunnel_config: PyngrokTunnelConfig | None = None) -> str:
+    # pyngrok is imported here so the rest of the chatbot module can still be
+    # imported without opening a tunnel until the Colab launcher is actually used.
     from pyngrok import ngrok
 
     config = tunnel_config or PyngrokTunnelConfig()
