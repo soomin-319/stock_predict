@@ -183,6 +183,64 @@ python src/pipeline.py \
 - `uncertainty_vs_error.png`
 - `symbol_level/*.png`, `symbol_level/recent_month/*.png`
 
+
+## 카카오톡 챗봇 + 코랩 연동
+`src/chatbot/kakao_colab_bot.py`는 **카카오톡 챗봇 웹훅**에서 바로 사용할 수 있는 Flask 엔드포인트와, 종목코드별 예측 캐시/비동기 실행 로직을 제공합니다.
+
+### 동작 방식
+1. 사용자가 `005930` 같은 종목코드를 챗봇에 입력합니다.
+2. `result/result_simple.csv`에 해당 종목의 예측 결과가 이미 있으면, 챗봇이 바로 아래 항목을 응답합니다.
+   - 종목명
+   - 권고
+   - 내일 예측 수익률
+   - 내일 예측 종가
+   - 신뢰도
+   - 사유
+3. 아직 예측 결과가 없으면, 챗봇이 먼저 `005930 예측을 시작합니다` 메시지를 반환합니다.
+4. 서버는 백그라운드에서 아래 형태의 파이프라인 명령을 실행합니다.
+
+```bash
+python src/pipeline.py \
+  --input data/real_ohlcv.csv \
+  --add-symbols 005930 \
+  --fetch-investor-context \
+  --dart-api-key "YOUR_DART_API_KEY" \
+  --dart-corp-map-csv data/dart_corp_map.csv \
+  --report-json pipeline_report_with_context.json \
+  --figure-dir figures_with_context
+```
+
+> 기존 예시 명령은 `--fetch-real` 중심이었는데, 챗봇 입력 기반 단일 종목 추가 시에는 기존 CSV를 유지하면서 대상 종목만 붙일 수 있도록 `--add-symbols` 기반으로 구현했습니다.
+
+### 코랩에서 웹훅 서버 실행
+```python
+import os
+from src.chatbot.kakao_colab_bot import PipelineRuntimeConfig, create_app
+
+runtime_config = PipelineRuntimeConfig(
+    dart_api_key=os.environ["DART_API_KEY"],
+    input_csv="data/real_ohlcv.csv",
+    report_json="pipeline_report_with_context.json",
+    figure_dir="figures_with_context",
+)
+
+app = create_app(runtime_config=runtime_config)
+app.run(host="0.0.0.0", port=8000)
+```
+
+카카오 오픈빌더 스킬 서버의 URL은 `POST /kakao/webhook` 엔드포인트에 연결하면 됩니다. 헬스체크는 `GET /health`입니다.
+
+### 직접 실행
+```bash
+python -m src.chatbot.kakao_colab_bot \
+  --dart-api-key "YOUR_DART_API_KEY" \
+  --input data/real_ohlcv.csv \
+  --report-json pipeline_report_with_context.json \
+  --figure-dir figures_with_context
+```
+
+백그라운드 실행 상태는 `result/chatbot_jobs.json`, 파이프라인 로그는 `result/chatbot_logs/` 아래에 저장됩니다.
+
 ## 테스트
 ```bash
 pytest -q
