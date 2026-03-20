@@ -5,6 +5,7 @@ import json
 import re
 import subprocess
 import sys
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -79,6 +80,14 @@ class PipelineRuntimeConfig:
             cmd.extend(["--figure-dir", self.figure_dir])
         cmd.extend(self.extra_args)
         return [str(part) for part in cmd]
+
+
+@dataclass(slots=True)
+class PyngrokTunnelConfig:
+    port: int = 8000
+    auth_token: str | None = None
+    domain: str | None = None
+    bind_tls: bool = True
 
 
 class KakaoColabPredictionBot:
@@ -436,6 +445,49 @@ def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: Pipel
     return app
 
 
+def start_pyngrok_tunnel(tunnel_config: PyngrokTunnelConfig | None = None) -> str:
+    from pyngrok import ngrok
+
+    config = tunnel_config or PyngrokTunnelConfig()
+    if config.auth_token:
+        ngrok.set_auth_token(config.auth_token)
+
+    connect_kwargs: dict[str, Any] = {
+        "addr": config.port,
+        "proto": "http",
+        "bind_tls": config.bind_tls,
+    }
+    if config.domain:
+        connect_kwargs["domain"] = config.domain
+
+    listener = ngrok.connect(**connect_kwargs)
+    return str(listener.public_url).rstrip("/")
+
+
+def launch_colab_kakao_bot(
+    runtime_config: PipelineRuntimeConfig | None = None,
+    tunnel_config: PyngrokTunnelConfig | None = None,
+    host: str = "0.0.0.0",
+):
+    app = create_app(runtime_config=runtime_config)
+    port = (tunnel_config or PyngrokTunnelConfig()).port
+
+    server_thread = threading.Thread(
+        target=lambda: app.run(host=host, port=port, debug=False, use_reloader=False),
+        daemon=True,
+    )
+    server_thread.start()
+
+    public_url = start_pyngrok_tunnel(tunnel_config)
+    return {
+        "app": app,
+        "server_thread": server_thread,
+        "public_url": public_url,
+        "webhook_url": f"{public_url}/kakao/webhook",
+        "health_url": f"{public_url}/health",
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="KakaoTalk chatbot webhook for the stock prediction pipeline")
     parser.add_argument("--host", default="0.0.0.0")
@@ -446,6 +498,9 @@ def main():
     parser.add_argument("--dart-api-key", default=None)
     parser.add_argument("--dart-corp-map-csv", default="data/dart_corp_map.csv")
     parser.add_argument("--disable-news-context", action="store_true")
+    parser.add_argument("--use-pyngrok", action="store_true")
+    parser.add_argument("--ngrok-auth-token", default=None)
+    parser.add_argument("--ngrok-domain", default=None)
     args = parser.parse_args()
 
     runtime_config = PipelineRuntimeConfig(
@@ -456,6 +511,21 @@ def main():
         dart_corp_map_csv=args.dart_corp_map_csv,
         disable_news_context=args.disable_news_context,
     )
+    if args.use_pyngrok:
+        launched = launch_colab_kakao_bot(
+            runtime_config=runtime_config,
+            tunnel_config=PyngrokTunnelConfig(
+                port=args.port,
+                auth_token=args.ngrok_auth_token,
+                domain=args.ngrok_domain,
+            ),
+            host=args.host,
+        )
+        print(f"Public URL: {launched['public_url']}")
+        print(f"Webhook URL: {launched['webhook_url']}")
+        launched["server_thread"].join()
+        return
+
     app = create_app(runtime_config=runtime_config)
     app.run(host=args.host, port=args.port)
 

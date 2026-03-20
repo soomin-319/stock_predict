@@ -14,6 +14,7 @@ dependencies = [
   "yfinance",
   "matplotlib",
   "flask",
+  "pyngrok",
 ]
 
 [project.optional-dependencies]

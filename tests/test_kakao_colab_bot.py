@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from types import ModuleType
 
 import pandas as pd
 
-from src.chatbot.kakao_colab_bot import KakaoColabPredictionBot, PipelineRuntimeConfig
+from src.chatbot.kakao_colab_bot import (
+    KakaoColabPredictionBot,
+    PipelineRuntimeConfig,
+    PyngrokTunnelConfig,
+    start_pyngrok_tunnel,
+)
 
 
 class FakeProcess:
@@ -151,3 +158,34 @@ def test_status_request_uses_previous_user_symbol(tmp_path: Path):
 
     assert "삼성전자" in text
     assert "내일 예측 수익률" in text
+
+
+def test_start_pyngrok_tunnel_returns_public_url(monkeypatch):
+    calls = {}
+
+    class FakeListener:
+        public_url = "https://demo.ngrok-free.app/"
+
+    class FakeNgrok:
+        def set_auth_token(self, token):
+            calls["auth_token"] = token
+
+        def connect(self, **kwargs):
+            calls["kwargs"] = kwargs
+            return FakeListener()
+
+    fake_module = ModuleType("pyngrok")
+    fake_module.ngrok = FakeNgrok()
+    monkeypatch.setitem(sys.modules, "pyngrok", fake_module)
+
+    public_url = start_pyngrok_tunnel(
+        PyngrokTunnelConfig(
+            port=9000,
+            auth_token="token-123",
+        )
+    )
+
+    assert public_url == "https://demo.ngrok-free.app"
+    assert calls["auth_token"] == "token-123"
+    assert calls["kwargs"]["addr"] == 9000
+    assert calls["kwargs"]["proto"] == "http"

@@ -223,6 +223,38 @@ python src/pipeline.py \
 - 사용자: `최신화`
 - 챗봇: 같은 종목으로 최신 예측 재실행
 
+### pyngrok으로 코랩 공개 HTTPS URL 열기
+코랩에서는 `launch_colab_kakao_bot(...)`를 사용하면 Flask 서버 스레드 실행 + pyngrok 공개 HTTPS URL 생성까지 한 번에 처리할 수 있습니다.
+
+```python
+import os
+from src.chatbot.kakao_colab_bot import (
+    PipelineRuntimeConfig,
+    PyngrokTunnelConfig,
+    launch_colab_kakao_bot,
+)
+
+runtime_config = PipelineRuntimeConfig(
+    dart_api_key=os.environ["DART_API_KEY"],
+    input_csv="data/real_ohlcv.csv",
+    report_json="pipeline_report_with_context.json",
+    figure_dir="figures_with_context",
+)
+
+tunnel = launch_colab_kakao_bot(
+    runtime_config=runtime_config,
+    tunnel_config=PyngrokTunnelConfig(
+        port=8000,
+        auth_token=os.environ.get("NGROK_AUTHTOKEN"),
+    ),
+)
+
+print(tunnel["public_url"])
+print(tunnel["webhook_url"])
+```
+
+카카오 오픈빌더 스킬 서버 URL에는 출력된 `webhook_url` 값을 그대로 입력하면 됩니다.
+
 ### 코랩에서 웹훅 서버 실행
 ```python
 import os
