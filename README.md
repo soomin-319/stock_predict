@@ -183,6 +183,110 @@ python src/pipeline.py \
 - `uncertainty_vs_error.png`
 - `symbol_level/*.png`, `symbol_level/recent_month/*.png`
 
+
+## 카카오톡 챗봇 + 코랩 연동
+`src/chatbot/kakao_colab_bot.py`는 **카카오톡 챗봇 웹훅**에서 바로 사용할 수 있는 Flask 엔드포인트와, 종목코드별 예측 캐시/비동기 실행 로직을 제공합니다.
+
+### 동작 방식
+1. 사용자가 카카오톡 챗봇에 `005930` 같은 종목코드를 보냅니다.
+2. 웹훅은 카카오 payload의 `userRequest.user.id`를 읽어 사용자별 마지막 조회 종목을 기억합니다.
+3. `result/result_simple.csv`에 해당 종목의 예측 결과가 있으면, 챗봇이 아래 항목을 바로 응답합니다.
+   - 종목명
+   - 권고
+   - 내일 예측 수익률
+   - 내일 예측 종가
+   - 신뢰도
+   - 사유
+4. 아직 예측 결과가 없으면, 챗봇은 `005930 예측을 시작합니다` 메시지와 함께 `결과 확인`, `최신화`, `도움말` quick reply를 보여줍니다.
+5. 사용자가 이어서 `결과`를 보내면 방금 요청한 종목의 진행상태/완료결과를 확인하고, `최신화`를 보내면 같은 종목으로 재예측을 시작합니다.
+6. 서버는 백그라운드에서 아래 형태의 파이프라인 명령을 실행합니다.
+
+```bash
+python src/pipeline.py \
+  --input data/real_ohlcv.csv \
+  --add-symbols 005930 \
+  --fetch-investor-context \
+  --dart-api-key "YOUR_DART_API_KEY" \
+  --dart-corp-map-csv data/dart_corp_map.csv \
+  --report-json pipeline_report_with_context.json \
+  --figure-dir figures_with_context
+```
+
+> 기존 예시 명령은 `--fetch-real` 중심이었는데, 챗봇 입력 기반 단일 종목 추가 시에는 기존 CSV를 유지하면서 대상 종목만 붙일 수 있도록 `--add-symbols` 기반으로 구현했습니다.
+
+
+### 실제 카카오톡 대화 예시
+- 사용자: `005930`
+- 챗봇: `005930 예측을 시작합니다...`
+- 사용자: `결과`
+- 챗봇: 진행 중이면 진행 상태를, 완료 후에는 `종목명/권고/내일 예측 수익률/내일 예측 종가/신뢰도/사유`를 응답
+- 사용자: `최신화`
+- 챗봇: 같은 종목으로 최신 예측 재실행
+
+### pyngrok으로 코랩 공개 HTTPS URL 열기
+코랩에서는 `launch_colab_kakao_bot(...)`를 사용하면 Flask 서버 스레드 실행 + pyngrok 공개 HTTPS URL 생성까지 한 번에 처리할 수 있습니다.
+
+```python
+import os
+from pyngrok import ngrok
+from src.chatbot.kakao_colab_bot import (
+    PipelineRuntimeConfig,
+    PyngrokTunnelConfig,
+    launch_colab_kakao_bot,
+)
+
+runtime_config = PipelineRuntimeConfig(
+    dart_api_key=os.environ["DART_API_KEY"],
+    input_csv="data/real_ohlcv.csv",
+    report_json="pipeline_report_with_context.json",
+    figure_dir="figures_with_context",
+)
+
+tunnel = launch_colab_kakao_bot(
+    runtime_config=runtime_config,
+    tunnel_config=PyngrokTunnelConfig(
+        port=8000,
+        auth_token=os.environ.get("NGROK_AUTHTOKEN"),
+    ),
+)
+
+print(tunnel["public_url"])
+print(tunnel["webhook_url"])
+print(ngrok.get_tunnels())
+```
+
+카카오 오픈빌더 스킬 서버 URL에는 출력된 `webhook_url` 값을 그대로 입력하면 됩니다.
+예측 작업이 시작되면 코랩 콘솔에는 `[KAKAO BOT ...]` 접두어로 파이프라인 진행 로그와 완료 여부가 계속 출력됩니다.
+
+### 코랩에서 웹훅 서버 실행
+```python
+import os
+from src.chatbot.kakao_colab_bot import PipelineRuntimeConfig, create_app
+
+runtime_config = PipelineRuntimeConfig(
+    dart_api_key=os.environ["DART_API_KEY"],
+    input_csv="data/real_ohlcv.csv",
+    report_json="pipeline_report_with_context.json",
+    figure_dir="figures_with_context",
+)
+
+app = create_app(runtime_config=runtime_config)
+app.run(host="0.0.0.0", port=8000)
+```
+
+카카오 오픈빌더 스킬 서버의 URL은 `POST /kakao/webhook` 엔드포인트에 연결하면 됩니다. 헬스체크는 `GET /health`입니다.
+
+### 직접 실행
+```bash
+python -m src.chatbot.kakao_colab_bot \
+  --dart-api-key "YOUR_DART_API_KEY" \
+  --input data/real_ohlcv.csv \
+  --report-json pipeline_report_with_context.json \
+  --figure-dir figures_with_context
+```
+
+백그라운드 실행 상태는 `result/chatbot_jobs.json`, 파이프라인 로그는 `result/chatbot_logs/` 아래에 저장됩니다.
+
 ## 테스트
 ```bash
 pytest -q
