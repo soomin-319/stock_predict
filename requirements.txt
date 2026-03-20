@@ -7,3 +7,5 @@ matplotlib
 lightgbm
 pykrx
 openai
+flask
+pyngrok
