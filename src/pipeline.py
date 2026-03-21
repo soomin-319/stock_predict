@@ -61,7 +61,9 @@ DEFAULT_REAL_SYMBOLS: list[str] = [
 ]
 
 HIGH_CONVICTION_NET_BUY = 100_000_000_000
-HIGH_CONVICTION_UP_PROBABILITY = 0.75
+TOP_TURNOVER_UP_PROBABILITY = 0.65
+STRONG_DUAL_BUY_UP_PROBABILITY = 0.7
+HIGH_CONVICTION_COMBINED_UP_PROBABILITY = 0.78
 
 
 def _fallback_symbols_from_input_or_default(input_csv: str) -> list[str]:
@@ -259,16 +261,19 @@ def _format_percentage_text(value, digits: int = 1, unit_interval: bool = False)
     return f"{percent_value:.{digits}f}%"
 
 
-def _is_high_conviction_flow(row: pd.Series) -> bool:
+def _has_top_turnover_support(row: pd.Series) -> bool:
     turnover_rank = pd.to_numeric(pd.Series([row.get("turnover_rank_daily")]), errors="coerce").iloc[0]
+    return not pd.isna(turnover_rank) and float(turnover_rank) <= 15.0
+
+
+def _has_strong_dual_buy_support(row: pd.Series) -> bool:
     foreign_net_buy = float(row.get("foreign_net_buy", 0) or 0)
     institution_net_buy = float(row.get("institution_net_buy", 0) or 0)
-    return (
-        not pd.isna(turnover_rank)
-        and float(turnover_rank) <= 15.0
-        and foreign_net_buy >= HIGH_CONVICTION_NET_BUY
-        and institution_net_buy >= HIGH_CONVICTION_NET_BUY
-    )
+    return foreign_net_buy >= HIGH_CONVICTION_NET_BUY and institution_net_buy >= HIGH_CONVICTION_NET_BUY
+
+
+def _is_high_conviction_flow(row: pd.Series) -> bool:
+    return _has_top_turnover_support(row) and _has_strong_dual_buy_support(row)
 
 
 def _apply_probability_overrides(pred_df: pd.DataFrame) -> pd.DataFrame:
@@ -276,9 +281,22 @@ def _apply_probability_overrides(pred_df: pd.DataFrame) -> pd.DataFrame:
         return pred_df
 
     out = pred_df.copy()
-    mask = out.apply(_is_high_conviction_flow, axis=1)
-    if mask.any():
-        out.loc[mask, "up_probability"] = out.loc[mask, "up_probability"].clip(lower=HIGH_CONVICTION_UP_PROBABILITY)
+    top_turnover_mask = out.apply(_has_top_turnover_support, axis=1)
+    dual_buy_mask = out.apply(_has_strong_dual_buy_support, axis=1)
+    combined_mask = top_turnover_mask & dual_buy_mask
+
+    if top_turnover_mask.any():
+        out.loc[top_turnover_mask, "up_probability"] = out.loc[top_turnover_mask, "up_probability"].clip(
+            lower=TOP_TURNOVER_UP_PROBABILITY
+        )
+    if dual_buy_mask.any():
+        out.loc[dual_buy_mask, "up_probability"] = out.loc[dual_buy_mask, "up_probability"].clip(
+            lower=STRONG_DUAL_BUY_UP_PROBABILITY
+        )
+    if combined_mask.any():
+        out.loc[combined_mask, "up_probability"] = out.loc[combined_mask, "up_probability"].clip(
+            lower=HIGH_CONVICTION_COMBINED_UP_PROBABILITY
+        )
     return out
 
 
@@ -295,6 +313,10 @@ def _prediction_reason(row: pd.Series) -> str:
 
     if _is_high_conviction_flow(row):
         reasons.append("수급 강함: 거래대금 15위 이내 + 외국인/기관 각각 1,000억 이상 순매수")
+    elif _has_top_turnover_support(row):
+        reasons.append("거래 활발: 거래대금 15위 이내")
+    elif _has_strong_dual_buy_support(row):
+        reasons.append("수급 강함: 외국인/기관 각각 1,000억 이상 순매수")
     elif foreign_net_buy > 0 and institution_net_buy > 0:
         reasons.append(
             f"수급 유입: 외국인 {foreign_net_buy/100_000_000:.0f}억, 기관 {institution_net_buy/100_000_000:.0f}억 순매수"
