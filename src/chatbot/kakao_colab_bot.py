@@ -294,7 +294,12 @@ class KakaoColabPredictionBot:
         return f"{float(numeric):.3f}%"
 
     def _format_price(self, value: Any) -> str:
-        numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        if isinstance(value, str):
+            cleaned = value.strip().replace(",", "")
+            cleaned = re.sub(r"[^\d.\-]", "", cleaned)
+        else:
+            cleaned = value
+        numeric = pd.to_numeric(pd.Series([cleaned]), errors="coerce").iloc[0]
         if pd.isna(numeric):
             return "-"
         return f"{float(numeric):,.0f}원"

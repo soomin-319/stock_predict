@@ -187,6 +187,38 @@ def test_status_request_uses_previous_user_symbol(tmp_path: Path):
     assert "내일 예측 수익률" in text
 
 
+def test_cached_prediction_message_formats_price_string_from_result_simple_csv(tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "종목코드": "005930",
+                "종목명": "삼성전자",
+                "권고": "매수",
+                "내일 예상 종가": "71,200원",
+                "내일 예상 수익률(%)": "1.234%",
+                "상승확률(%)": "78.9%",
+                "예측 신뢰도": "88.0%",
+                "예측 이유": "테스트 사유",
+            }
+        ]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "005930",
+                "user": {"id": "user-price"},
+            }
+        }
+    )
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "내일 예측 종가: 71,200원" in text
+
+
 def test_start_pyngrok_tunnel_returns_public_url(monkeypatch):
     calls = {}
 
