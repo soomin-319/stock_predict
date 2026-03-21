@@ -149,6 +149,7 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "권고" in simple_df.columns
     assert "내일 예상 종가" in simple_df.columns
     assert "내일 예상 수익률(%)" in simple_df.columns
+    assert "상승확률(%)" in simple_df.columns
     assert "예측 신뢰도" in simple_df.columns
     assert "예측 이유" in simple_df.columns
 
