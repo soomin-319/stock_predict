@@ -330,14 +330,54 @@ class KakaoColabPredictionBot:
         if stdout is None:
             return
 
-        display_code = self._display_code(symbol)
         for raw_line in stdout:
-            line = raw_line.rstrip()
-            if not line:
-                continue
             log_handle.write(raw_line)
             log_handle.flush()
-            self._console_log(f"[{display_code}] {line}")
+
+    def _finalize_process(self, symbol: str, exit_code: int):
+        runtime = self._active_processes.get(symbol)
+        if runtime is None:
+            return
+
+        log_thread = runtime.get("log_thread")
+        if log_thread is not None:
+            log_thread.join(timeout=1.0)
+        runtime["log_handle"].close()
+
+        status = "completed" if exit_code == 0 else "failed"
+        job_state = self._job_registry.get(symbol, {})
+        job_state.update(
+            {
+                "status": status,
+                "exit_code": int(exit_code),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        self._job_registry[symbol] = job_state
+        self._save_registry(self.state_path, self._job_registry)
+
+        display_code = self._display_code(symbol)
+        if status == "completed":
+            cached_row = self._find_cached_prediction(symbol)
+            if cached_row is not None:
+                self._console_log(f"{display_code} 예측 완료\n{self._format_prediction_message(cached_row)}")
+            else:
+                self._console_log(f"{display_code} 예측 작업 completed (exit_code=0). 결과 CSV를 확인해주세요.")
+        else:
+            self._console_log(f"{display_code} 예측 작업 failed (exit_code={int(exit_code)}). 로그를 확인해주세요.")
+
+        del self._active_processes[symbol]
+
+    def _monitor_process_completion(self, symbol: str, process: Any):
+        wait = getattr(process, "wait", None)
+        if wait is None:
+            return
+
+        try:
+            exit_code = wait()
+        except Exception:
+            exit_code = -1
+        self._finalize_process(symbol, int(exit_code))
 
     def _start_prediction_job(self, symbol: str):
         command = self.runtime_config.build_command(symbol)
@@ -365,7 +405,21 @@ class KakaoColabPredictionBot:
         else:
             self._console_log(f"{display_code} 로그 스트림을 사용할 수 없어 파일 로그만 남깁니다: {log_path}")
 
-        self._active_processes[symbol] = {"process": process, "log_handle": log_handle, "log_thread": log_thread}
+        monitor_thread = None
+        if getattr(process, "wait", None) is not None:
+            monitor_thread = threading.Thread(
+                target=self._monitor_process_completion,
+                args=(symbol, process),
+                daemon=True,
+            )
+            monitor_thread.start()
+
+        self._active_processes[symbol] = {
+            "process": process,
+            "log_handle": log_handle,
+            "log_thread": log_thread,
+            "monitor_thread": monitor_thread,
+        }
         self._job_registry[symbol] = asdict(
             PredictionJobState(
                 symbol=symbol,
@@ -385,26 +439,7 @@ class KakaoColabPredictionBot:
             exit_code = process.poll()
             if exit_code is None:
                 continue
-            log_thread = runtime.get("log_thread")
-            if log_thread is not None:
-                log_thread.join(timeout=1.0)
-            runtime["log_handle"].close()
-            status = "completed" if exit_code == 0 else "failed"
-            job_state = self._job_registry.get(symbol, {})
-            job_state.update(
-                {
-                    "status": status,
-                    "exit_code": int(exit_code),
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                }
-            )
-            self._job_registry[symbol] = job_state
-            self._console_log(
-                f"{self._display_code(symbol)} 예측 작업 {status} (exit_code={int(exit_code)}). "
-                f"결과 확인은 카카오톡에서 '결과'를 입력하세요."
-            )
-            del self._active_processes[symbol]
-        self._save_registry(self.state_path, self._job_registry)
+            self._finalize_process(symbol, int(exit_code))
 
     def _update_session(self, user_id: str | None, symbol: str | None, intent: str):
         if not user_id:

@@ -23,6 +23,11 @@ class FakeProcess:
         return self._return_code
 
 
+class WaitableFakeProcess(FakeProcess):
+    def wait(self):
+        return self._return_code if self._return_code is not None else 0
+
+
 class RecordingRunner:
     def __init__(self):
         self.calls = []
@@ -38,7 +43,7 @@ class ImmediateSuccessRunner:
 
     def __call__(self, command, cwd, stdout, stderr, text, **kwargs):
         self.calls.append({"command": command, "cwd": cwd, **kwargs})
-        return FakeProcess(return_code=0)
+        return WaitableFakeProcess(return_code=0)
 
 
 def make_bot(tmp_path: Path, runner=None) -> KakaoColabPredictionBot:
