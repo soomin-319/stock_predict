@@ -60,6 +60,9 @@ DEFAULT_REAL_SYMBOLS: list[str] = [
     "005930",
 ]
 
+HIGH_CONVICTION_NET_BUY = 100_000_000_000
+HIGH_CONVICTION_UP_PROBABILITY = 0.75
+
 
 def _fallback_symbols_from_input_or_default(input_csv: str) -> list[str]:
     """Return the built-in demo universe used when no explicit fetch universe is provided."""
@@ -143,16 +146,9 @@ def _feature_columns(df: pd.DataFrame) -> list[str]:
         "institution_net_buy",
         "foreign_ownership_ratio",
         "program_trading_flow",
-        "disclosure_score",
-        "news_sentiment",
-        "news_relevance_score",
-        "news_impact_score",
-        "news_article_count",
         "foreign_buy_signal",
         "institution_buy_signal",
         "smart_money_buy_signal",
-        "news_positive_signal",
-        "news_negative_signal",
         "close_to_52w_high",
         "near_52w_high_flag",
         "breakout_52w_flag",
@@ -166,7 +162,6 @@ def _feature_columns(df: pd.DataFrame) -> list[str]:
         "dividend_yield",
         "buyback_flag",
         "share_cancellation_flag",
-        "value_up_disclosure_flag",
         "shareholder_return_score",
         "short_sell_event_score",
     }
@@ -256,41 +251,69 @@ def _position_size_hint(confidence_score: float | int | None, risk_flag: str) ->
     return "관망"
 
 
+def _is_high_conviction_flow(row: pd.Series) -> bool:
+    turnover_rank = pd.to_numeric(pd.Series([row.get("turnover_rank_daily")]), errors="coerce").iloc[0]
+    foreign_net_buy = float(row.get("foreign_net_buy", 0) or 0)
+    institution_net_buy = float(row.get("institution_net_buy", 0) or 0)
+    return (
+        not pd.isna(turnover_rank)
+        and float(turnover_rank) <= 15.0
+        and foreign_net_buy >= HIGH_CONVICTION_NET_BUY
+        and institution_net_buy >= HIGH_CONVICTION_NET_BUY
+    )
+
+
+def _apply_probability_overrides(pred_df: pd.DataFrame) -> pd.DataFrame:
+    if pred_df.empty or "up_probability" not in pred_df.columns:
+        return pred_df
+
+    out = pred_df.copy()
+    mask = out.apply(_is_high_conviction_flow, axis=1)
+    if mask.any():
+        out.loc[mask, "up_probability"] = out.loc[mask, "up_probability"].clip(lower=HIGH_CONVICTION_UP_PROBABILITY)
+    return out
+
+
 def _prediction_reason(row: pd.Series) -> str:
     reasons: list[str] = []
 
+    up_probability = float(row.get("up_probability", 0.5) or 0.5)
     foreign_net_buy = float(row.get("foreign_net_buy", 0) or 0)
     institution_net_buy = float(row.get("institution_net_buy", 0) or 0)
-    disclosure_score = float(row.get("disclosure_score", 0) or 0)
-    news_positive_signal = float(row.get("news_positive_signal", 0) or 0)
-    news_negative_signal = float(row.get("news_negative_signal", 0) or 0)
     breakout_52w_flag = float(row.get("breakout_52w_flag", 0) or 0)
     near_52w_high_flag = float(row.get("near_52w_high_flag", 0) or 0)
-    is_top_turnover_10 = float(row.get("is_top_turnover_10", 0) or 0)
+    history_acc = float(row.get("history_direction_accuracy", 0.5) or 0.5)
+    uncertainty_score = float(row.get("uncertainty_score", 0.5) or 0.5)
 
-    if foreign_net_buy > 0 and institution_net_buy > 0:
+    if _is_high_conviction_flow(row):
+        reasons.append("수급 강함: 거래대금 15위 이내 + 외국인/기관 각각 1,000억 이상 순매수")
+    elif foreign_net_buy > 0 and institution_net_buy > 0:
         reasons.append(
-            f"외국인 순매수 {foreign_net_buy:,.0f}, 기관 순매수 {institution_net_buy:,.0f}로 동반 수급 유입이 확인됐습니다"
+            f"수급 유입: 외국인 {foreign_net_buy/100_000_000:.0f}억, 기관 {institution_net_buy/100_000_000:.0f}억 순매수"
         )
 
-    if is_top_turnover_10 > 0 and disclosure_score >= 0.5:
-        reasons.append(f"거래대금 상위 10개 종목이면서 공시 점수 {disclosure_score:.2f}로 이벤트 강도가 높습니다")
-    elif disclosure_score >= 0.5:
-        reasons.append(f"공시 이벤트 점수 {disclosure_score:.2f}로 공시 재료가 가격에 반영될 가능성이 높습니다")
-
-    if news_positive_signal >= 0.15:
-        reasons.append(f"긍정 뉴스 신호 {news_positive_signal:.2f}가 기준치를 넘어 투자심리 개선 요인으로 작용했습니다")
-    elif news_negative_signal >= 0.15:
-        reasons.append(f"부정 뉴스 신호 {news_negative_signal:.2f}가 감지돼 단기 변동성 확대 가능성을 함께 반영했습니다")
+    if up_probability >= 0.7:
+        reasons.append(f"상승확률 높음: {up_probability * 100:.1f}%")
+    elif up_probability >= 0.55:
+        reasons.append(f"상승확률 우세: {up_probability * 100:.1f}%")
+    else:
+        reasons.append(f"확률 중립/약세: {up_probability * 100:.1f}%")
 
     if breakout_52w_flag > 0:
-        reasons.append("52주 고점 돌파 플래그가 켜져 추세 강화 구간으로 해석했습니다")
+        reasons.append("추세 강함: 52주 고점 돌파 흐름")
     elif near_52w_high_flag > 0:
-        reasons.append("52주 고점 인접 플래그가 켜져 강한 상대 강도 흐름을 반영했습니다")
+        reasons.append("추세 양호: 52주 고점 부근")
+
+    if history_acc >= 0.6:
+        reasons.append(f"모델 신뢰: 과거 방향 적중률 {history_acc * 100:.1f}%")
+    elif uncertainty_score >= 0.7:
+        reasons.append("리스크: 변동성 높아 보수적 접근 필요")
+    elif uncertainty_score <= 0.35:
+        reasons.append("리스크: 예측 변동성 낮은 편")
 
     if not reasons:
-        reasons.append("거래대금, 공시, 뉴스, 수급, 52주 신고가 관련 핵심 피처가 중립권이어서 종합 점수 기반의 기본 예측을 사용했습니다")
-    return " / ".join(reasons[:3])
+        reasons.append("핵심 수급/추세 신호가 중립권이라 모델 종합 점수를 기준으로 판단")
+    return " | ".join(reasons[:4])
 
 
 def _build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
@@ -303,9 +326,10 @@ def _build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
     )
     out["예측 신뢰도"] = out.apply(_combined_confidence_score, axis=1)
     out["예측 이유"] = out.apply(_prediction_reason, axis=1)
+    out["상승확률(%)"] = pd.to_numeric(out.get("up_probability"), errors="coerce") * 100.0
 
     simple = out[
-        ["종목코드", "종목명", "권고", "predicted_close", "predicted_return", "예측 신뢰도", "예측 이유"]
+        ["종목코드", "종목명", "권고", "predicted_close", "predicted_return", "상승확률(%)", "예측 신뢰도", "예측 이유"]
     ].rename(
         columns={
             "predicted_close": "내일 예상 종가",
@@ -357,11 +381,12 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame):
                 "권고": str(r.get("권고", "")),
                 "내일 예상 종가": "-" if pd.isna(r.get("내일 예상 종가")) else f"{float(r['내일 예상 종가']):,.0f}",
                 "내일 예상 수익률(%)": "-" if pd.isna(r.get("내일 예상 수익률(%)")) else f"{float(r['내일 예상 수익률(%)']):,.3f}",
+                "상승확률(%)": "-" if pd.isna(r.get("상승확률(%)")) else f"{float(r['상승확률(%)']):.1f}",
                 "예측 신뢰도": "-" if pd.isna(r.get("예측 신뢰도")) else f"{float(r['예측 신뢰도']):.3f}",
             }
         )
 
-    headers = ["종목코드", "종목명", "권고", "내일 예상 종가", "내일 예상 수익률(%)", "예측 신뢰도"]
+    headers = ["종목코드", "종목명", "권고", "내일 예상 종가", "내일 예상 수익률(%)", "상승확률(%)", "예측 신뢰도"]
     col_widths = {h: max(_display_width(h), *(_display_width(row[h]) for row in rows)) for h in headers}
 
     print("\n=== Prediction ===")
@@ -375,6 +400,7 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame):
                     _pad_display(row["권고"], col_widths["권고"], "left"),
                     _pad_display(row["내일 예상 종가"], col_widths["내일 예상 종가"], "right"),
                     _pad_display(row["내일 예상 수익률(%)"], col_widths["내일 예상 수익률(%)"], "right"),
+                    _pad_display(row["상승확률(%)"], col_widths["상승확률(%)"], "right"),
                     _pad_display(row["예측 신뢰도"], col_widths["예측 신뢰도"], "right"),
                 ]
             )
@@ -626,7 +652,8 @@ def run_pipeline(
             data,
             InvestorContextConfig(
                 enabled=True,
-                enable_news=use_news_context,
+                enable_disclosure=False,
+                enable_news=False,
                 dart_api_key=dart_api_key,
                 dart_corp_map_csv=dart_corp_map_csv,
             ),
@@ -701,6 +728,7 @@ def run_pipeline(
     latest_pred = model.predict(latest)
     latest_pred.up_probability = _calibrate_up_probability(scored_oof, latest_pred.up_probability).values
     pred_df = build_prediction_frame(latest, latest_pred, cfg.signal)
+    pred_df = _apply_probability_overrides(pred_df)
     symbol_name_map = get_symbol_name_map(pred_df["Symbol"].dropna().astype(str).tolist())
     pred_df["symbol_name"] = pred_df["Symbol"].astype(str).map(symbol_name_map).fillna(pred_df["Symbol"].astype(str))
     pred_df["confidence_score"] = (1 - pred_df["uncertainty_score"].fillna(1)).clip(lower=0, upper=1)
@@ -797,10 +825,10 @@ def main():
     parser.add_argument("--figure-dir", default=r"C:\Users\카운\Desktop\result\figures", help="Directory for generated charts")
     parser.add_argument("--fetch-real", action="store_true", help="Fetch real OHLCV from yfinance before running")
     parser.add_argument("--disable-external", action="store_true", help="Disable external market feature download")
-    parser.add_argument("--fetch-investor-context", action="store_true", help="Fetch investor/disclosure/news context features")
-    parser.add_argument("--disable-news-context", action="store_true", help="Disable only the news portion of investor context")
-    parser.add_argument("--dart-api-key", default=None, help="OpenDART API key for disclosure fetch")
-    parser.add_argument("--dart-corp-map-csv", default=None, help="CSV path with Symbol,corp_code for OpenDART")
+    parser.add_argument("--fetch-investor-context", action="store_true", help="Fetch investor flow context features (foreign/institution flows)")
+    parser.add_argument("--disable-news-context", action="store_true", help="Deprecated: news/disclosure context is no longer used")
+    parser.add_argument("--dart-api-key", default=None, help="Deprecated: disclosure/news context is no longer used")
+    parser.add_argument("--dart-corp-map-csv", default=None, help="Deprecated: disclosure/news context is no longer used")
     parser.add_argument(
         "--real-symbols",
         nargs="*",

@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.pipeline import _print_prediction_console_summary, _recommendation_from_signal
+from src.pipeline import _build_result_simple, _print_prediction_console_summary, _recommendation_from_signal
 
 
 def test_console_summary_uses_direction_accuracy_top10(capsys):
@@ -37,3 +37,32 @@ def test_recommendation_uses_hold_between_minus_one_and_plus_one_percent():
     assert _recommendation_from_signal(0.3, 0.8) == "관망"
     assert _recommendation_from_signal(0.3, -0.8) == "관망"
     assert _recommendation_from_signal(float("nan"), -2.1) == "매도"
+
+
+def test_build_result_simple_includes_up_probability_and_intuitive_flow_reason():
+    df = pd.DataFrame(
+        [
+            {
+                "Symbol": "005930.KS",
+                "symbol_name": "삼성전자",
+                "signal_score": 0.8,
+                "predicted_close": 70000,
+                "predicted_return": 2.5,
+                "up_probability": 0.8,
+                "confidence_score": 0.8,
+                "history_direction_accuracy": 0.7,
+                "foreign_net_buy": 120_000_000_000,
+                "institution_net_buy": 110_000_000_000,
+                "turnover_rank_daily": 7,
+                "breakout_52w_flag": 1.0,
+                "near_52w_high_flag": 1.0,
+                "uncertainty_score": 0.2,
+            }
+        ]
+    )
+
+    simple = _build_result_simple(df)
+
+    assert "상승확률(%)" in simple.columns
+    assert simple.loc[0, "상승확률(%)"] == 80.0
+    assert "거래대금 15위 이내" in simple.loc[0, "예측 이유"]

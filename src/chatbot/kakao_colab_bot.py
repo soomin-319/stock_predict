@@ -68,12 +68,6 @@ class PipelineRuntimeConfig:
         ]
         if self.fetch_investor_context:
             cmd.append("--fetch-investor-context")
-        if self.disable_news_context:
-            cmd.append("--disable-news-context")
-        if self.dart_api_key:
-            cmd.extend(["--dart-api-key", self.dart_api_key])
-        if self.dart_corp_map_csv:
-            cmd.extend(["--dart-corp-map-csv", self.dart_corp_map_csv])
         if self.report_json:
             cmd.extend(["--report-json", self.report_json])
         if self.figure_dir:
@@ -277,12 +271,14 @@ class KakaoColabPredictionBot:
         name = str(row.get("종목명", "-"))
         recommendation = str(row.get("권고", "-"))
         predicted_return = self._format_percent(row.get("내일 예상 수익률(%)"))
+        up_probability = self._format_percent(row.get("상승확률(%)"))
         predicted_close = self._format_price(row.get("내일 예상 종가"))
         confidence = self._format_confidence(row.get("예측 신뢰도"))
         reason = str(row.get("예측 이유", "예측 이유 정보가 없습니다."))
         return (
             f"[{code} {name}]\n"
             f"권고: {recommendation}\n"
+            f"상승확률: {up_probability}\n"
             f"내일 예측 수익률: {predicted_return}\n"
             f"내일 예측 종가: {predicted_close}\n"
             f"신뢰도: {confidence}\n"
