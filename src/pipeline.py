@@ -251,6 +251,14 @@ def _position_size_hint(confidence_score: float | int | None, risk_flag: str) ->
     return "관망"
 
 
+def _format_percentage_text(value, digits: int = 1, unit_interval: bool = False) -> str:
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(numeric):
+        return "-"
+    percent_value = float(numeric) * 100.0 if unit_interval else float(numeric)
+    return f"{percent_value:.{digits}f}%"
+
+
 def _is_high_conviction_flow(row: pd.Series) -> bool:
     turnover_rank = pd.to_numeric(pd.Series([row.get("turnover_rank_daily")]), errors="coerce").iloc[0]
     foreign_net_buy = float(row.get("foreign_net_buy", 0) or 0)
@@ -326,7 +334,10 @@ def _build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
     )
     out["예측 신뢰도"] = out.apply(_combined_confidence_score, axis=1)
     out["예측 이유"] = out.apply(_prediction_reason, axis=1)
-    out["상승확률(%)"] = pd.to_numeric(out.get("up_probability"), errors="coerce") * 100.0
+    if "up_probability" in out.columns:
+        out["상승확률(%)"] = out["up_probability"].map(lambda v: _format_percentage_text(v, digits=1, unit_interval=True))
+    else:
+        out["상승확률(%)"] = "-"
 
     simple = out[
         ["종목코드", "종목명", "권고", "predicted_close", "predicted_return", "상승확률(%)", "예측 신뢰도", "예측 이유"]
@@ -336,9 +347,15 @@ def _build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
             "predicted_return": "내일 예상 수익률(%)",
         }
     )
-    numeric_cols = simple.select_dtypes(include=["number"]).columns
-    simple.loc[:, numeric_cols] = simple.loc[:, numeric_cols].round(3)
-    return simple.sort_values(["예측 신뢰도", "내일 예상 수익률(%)"], ascending=[False, False]).reset_index(drop=True)
+    simple["내일 예상 종가"] = pd.to_numeric(simple["내일 예상 종가"], errors="coerce").map(
+        lambda v: "-" if pd.isna(v) else f"{float(v):,.0f}원"
+    )
+    simple["내일 예상 수익률(%)"] = out["predicted_return"].map(lambda v: _format_percentage_text(v, digits=3))
+    simple["예측 신뢰도"] = out["예측 신뢰도"].map(lambda v: _format_percentage_text(v, digits=1, unit_interval=True))
+    simple["_sort_confidence"] = pd.to_numeric(out["예측 신뢰도"], errors="coerce").values
+    simple["_sort_return"] = pd.to_numeric(out["predicted_return"], errors="coerce").values
+    simple = simple.sort_values(["_sort_confidence", "_sort_return"], ascending=[False, False]).reset_index(drop=True)
+    return simple.drop(columns=["_sort_confidence", "_sort_return"])
 
 
 def _backtest_summary_fields(backtest: dict) -> dict[str, float]:
@@ -379,10 +396,10 @@ def _print_prediction_console_summary(pred_df: pd.DataFrame):
                 "종목코드": str(r.get("종목코드", "")),
                 "종목명": str(r.get("종목명", "")),
                 "권고": str(r.get("권고", "")),
-                "내일 예상 종가": "-" if pd.isna(r.get("내일 예상 종가")) else f"{float(r['내일 예상 종가']):,.0f}",
-                "내일 예상 수익률(%)": "-" if pd.isna(r.get("내일 예상 수익률(%)")) else f"{float(r['내일 예상 수익률(%)']):,.3f}",
-                "상승확률(%)": "-" if pd.isna(r.get("상승확률(%)")) else f"{float(r['상승확률(%)']):.1f}",
-                "예측 신뢰도": "-" if pd.isna(r.get("예측 신뢰도")) else f"{float(r['예측 신뢰도']):.3f}",
+                "내일 예상 종가": str(r.get("내일 예상 종가", "-")),
+                "내일 예상 수익률(%)": str(r.get("내일 예상 수익률(%)", "-")),
+                "상승확률(%)": str(r.get("상승확률(%)", "-")),
+                "예측 신뢰도": str(r.get("예측 신뢰도", "-")),
             }
         )
 
@@ -520,11 +537,11 @@ def _calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Ind
 
 def _safe_to_csv(df: pd.DataFrame, path: Path) -> Path:
     try:
-        df.to_csv(path, index=False)
+        df.to_csv(path, index=False, encoding="utf-8-sig")
         return path
     except PermissionError:
         fallback = path.with_name(f"{path.stem}_fallback{path.suffix}")
-        df.to_csv(fallback, index=False)
+        df.to_csv(fallback, index=False, encoding="utf-8-sig")
         print(f"[경고] 파일이 열려있어 기본 경로에 저장하지 못했습니다. 대체 경로로 저장: {fallback}")
         return fallback
 
@@ -570,11 +587,11 @@ def _calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Ind
 
 def _safe_to_csv(df: pd.DataFrame, path: Path) -> Path:
     try:
-        df.to_csv(path, index=False)
+        df.to_csv(path, index=False, encoding="utf-8-sig")
         return path
     except PermissionError:
         fallback = path.with_name(f"{path.stem}_fallback{path.suffix}")
-        df.to_csv(fallback, index=False)
+        df.to_csv(fallback, index=False, encoding="utf-8-sig")
         print(f"[경고] 파일이 열려있어 기본 경로에 저장하지 못했습니다. 대체 경로로 저장: {fallback}")
         return fallback
 
@@ -600,11 +617,11 @@ def _calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Ind
 
 def _safe_to_csv(df: pd.DataFrame, path: Path) -> Path:
     try:
-        df.to_csv(path, index=False)
+        df.to_csv(path, index=False, encoding="utf-8-sig")
         return path
     except PermissionError:
         fallback = path.with_name(f"{path.stem}_fallback{path.suffix}")
-        df.to_csv(fallback, index=False)
+        df.to_csv(fallback, index=False, encoding="utf-8-sig")
         print(f"[경고] 파일이 열려있어 기본 경로에 저장하지 못했습니다. 대체 경로로 저장: {fallback}")
         return fallback
 
@@ -759,6 +776,16 @@ def run_pipeline(
     detail_df = latest.merge(pred_df.drop(columns=["Close"], errors="ignore"), on=["Date", "Symbol"], how="left")
     detail_numeric_cols = detail_df.select_dtypes(include=["number"]).columns
     detail_df.loc[:, detail_numeric_cols] = detail_df.loc[:, detail_numeric_cols].round(3)
+    detail_df["predicted_return_display"] = detail_df["predicted_return"].map(lambda v: _format_percentage_text(v, digits=3))
+    detail_df["up_probability_display"] = detail_df["up_probability"].map(
+        lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
+    )
+    detail_df["confidence_score_display"] = detail_df["confidence_score"].map(
+        lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
+    )
+    detail_df["history_direction_accuracy_display"] = detail_df["history_direction_accuracy"].map(
+        lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
+    )
     simple_df = _build_result_simple(detail_df)
 
     detail_path = resolve_output_path("result_detail.csv")

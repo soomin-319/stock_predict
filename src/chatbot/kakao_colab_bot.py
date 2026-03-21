@@ -253,7 +253,7 @@ class KakaoColabPredictionBot:
         if not self.result_simple_path.exists():
             return None
         try:
-            simple_df = pd.read_csv(self.result_simple_path)
+            simple_df = pd.read_csv(self.result_simple_path, dtype={"종목코드": str})
         except Exception:
             return None
 
@@ -286,6 +286,8 @@ class KakaoColabPredictionBot:
         )
 
     def _format_percent(self, value: Any) -> str:
+        if isinstance(value, str) and value.strip().endswith("%"):
+            return value.strip()
         numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
         if pd.isna(numeric):
             return "-"
@@ -298,7 +300,15 @@ class KakaoColabPredictionBot:
         return f"{float(numeric):,.0f}원"
 
     def _format_confidence(self, value: Any) -> str:
-        numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        raw_value = value.strip() if isinstance(value, str) else value
+        if isinstance(raw_value, str) and raw_value.endswith("%"):
+            numeric = pd.to_numeric(pd.Series([raw_value[:-1]]), errors="coerce").iloc[0]
+            display = raw_value
+            if not pd.isna(numeric):
+                numeric = float(numeric) / 100.0
+        else:
+            numeric = pd.to_numeric(pd.Series([raw_value]), errors="coerce").iloc[0]
+            display = None
         if pd.isna(numeric):
             return "-"
         if numeric >= 0.67:
@@ -307,7 +317,9 @@ class KakaoColabPredictionBot:
             label = "보통"
         else:
             label = "낮음"
-        return f"{float(numeric):.3f} ({label})"
+        if display is None:
+            display = f"{float(numeric) * 100.0:.1f}%"
+        return f"{display} ({label})"
 
     def _console_log(self, message: str):
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")

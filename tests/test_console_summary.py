@@ -64,5 +64,6 @@ def test_build_result_simple_includes_up_probability_and_intuitive_flow_reason()
     simple = _build_result_simple(df)
 
     assert "상승확률(%)" in simple.columns
-    assert simple.loc[0, "상승확률(%)"] == 80.0
+    assert simple.loc[0, "상승확률(%)"] == "80.0%"
+    assert simple.loc[0, "예측 신뢰도"] == "75.0%"
     assert "거래대금 15위 이내" in simple.loc[0, "예측 이유"]
