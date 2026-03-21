@@ -71,7 +71,7 @@ def test_build_result_simple_includes_up_probability_and_intuitive_flow_reason()
     assert "상승확률(%)" in simple.columns
     assert simple.loc[0, "상승확률(%)"] == "80.0%"
     assert simple.loc[0, "예측 신뢰도"] == "75.0%"
-    assert "거래대금 15위 이내" in simple.loc[0, "예측 이유"]
+    assert "거래대금 상위 15위" in simple.loc[0, "예측 이유"]
 
 
 def test_build_result_simple_mentions_top_turnover_only_as_probability_tailwind():
@@ -96,7 +96,7 @@ def test_build_result_simple_mentions_top_turnover_only_as_probability_tailwind(
 
     simple = _build_result_simple(df)
 
-    assert "거래 활발: 거래대금 15위 이내" in simple.loc[0, "예측 이유"]
+    assert "거래대금 상위 15위" in simple.loc[0, "예측 이유"]
 
 
 def test_apply_probability_overrides_boosts_top15_or_strong_dual_buy_cases():
@@ -131,3 +131,22 @@ def test_apply_probability_overrides_boosts_top15_or_strong_dual_buy_cases():
     assert out.loc[0, "up_probability"] == 0.65
     assert out.loc[1, "up_probability"] == 0.70
     assert out.loc[2, "up_probability"] == 0.78
+
+
+def test_apply_probability_overrides_reflects_positive_nasdaq_futures():
+    df = pd.DataFrame(
+        [
+            {
+                "Symbol": "NQ",
+                "up_probability": 0.51,
+                "turnover_rank_daily": 50,
+                "foreign_net_buy": 0,
+                "institution_net_buy": 0,
+                "nq_f_ret_1d": 0.012,
+            }
+        ]
+    )
+
+    out = _apply_probability_overrides(df)
+
+    assert out.loc[0, "up_probability"] == 0.55
