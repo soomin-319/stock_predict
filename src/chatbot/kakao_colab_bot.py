@@ -68,12 +68,6 @@ class PipelineRuntimeConfig:
         ]
         if self.fetch_investor_context:
             cmd.append("--fetch-investor-context")
-        if self.disable_news_context:
-            cmd.append("--disable-news-context")
-        if self.dart_api_key:
-            cmd.extend(["--dart-api-key", self.dart_api_key])
-        if self.dart_corp_map_csv:
-            cmd.extend(["--dart-corp-map-csv", self.dart_corp_map_csv])
         if self.report_json:
             cmd.extend(["--report-json", self.report_json])
         if self.figure_dir:
@@ -259,7 +253,7 @@ class KakaoColabPredictionBot:
         if not self.result_simple_path.exists():
             return None
         try:
-            simple_df = pd.read_csv(self.result_simple_path)
+            simple_df = pd.read_csv(self.result_simple_path, dtype={"종목코드": str})
         except Exception:
             return None
 
@@ -277,12 +271,14 @@ class KakaoColabPredictionBot:
         name = str(row.get("종목명", "-"))
         recommendation = str(row.get("권고", "-"))
         predicted_return = self._format_percent(row.get("내일 예상 수익률(%)"))
+        up_probability = self._format_percent(row.get("상승확률(%)"))
         predicted_close = self._format_price(row.get("내일 예상 종가"))
         confidence = self._format_confidence(row.get("예측 신뢰도"))
         reason = str(row.get("예측 이유", "예측 이유 정보가 없습니다."))
         return (
             f"[{code} {name}]\n"
             f"권고: {recommendation}\n"
+            f"상승확률: {up_probability}\n"
             f"내일 예측 수익률: {predicted_return}\n"
             f"내일 예측 종가: {predicted_close}\n"
             f"신뢰도: {confidence}\n"
@@ -290,6 +286,8 @@ class KakaoColabPredictionBot:
         )
 
     def _format_percent(self, value: Any) -> str:
+        if isinstance(value, str) and value.strip().endswith("%"):
+            return value.strip()
         numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
         if pd.isna(numeric):
             return "-"
@@ -302,7 +300,15 @@ class KakaoColabPredictionBot:
         return f"{float(numeric):,.0f}원"
 
     def _format_confidence(self, value: Any) -> str:
-        numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        raw_value = value.strip() if isinstance(value, str) else value
+        if isinstance(raw_value, str) and raw_value.endswith("%"):
+            numeric = pd.to_numeric(pd.Series([raw_value[:-1]]), errors="coerce").iloc[0]
+            display = raw_value
+            if not pd.isna(numeric):
+                numeric = float(numeric) / 100.0
+        else:
+            numeric = pd.to_numeric(pd.Series([raw_value]), errors="coerce").iloc[0]
+            display = None
         if pd.isna(numeric):
             return "-"
         if numeric >= 0.67:
@@ -311,7 +317,9 @@ class KakaoColabPredictionBot:
             label = "보통"
         else:
             label = "낮음"
-        return f"{float(numeric):.3f} ({label})"
+        if display is None:
+            display = f"{float(numeric) * 100.0:.1f}%"
+        return f"{display} ({label})"
 
     def _console_log(self, message: str):
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")

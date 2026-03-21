@@ -6,7 +6,7 @@
 - 워크포워드 기반 OOF 검증/튜닝/백테스트
 - 회귀 + 분류 + 분위수 예측(불확실성 포함)
 - 외부 시장 지표(지수/환율/금리) feature
-- 투자자 컨텍스트 feature(외국인·기관 수급, 공시, 뉴스 감성) 선택 연동
+- 투자자 수급 컨텍스트 feature(외국인·기관 수급) 선택 연동
 - 리포트/그래프/OOF CSV 자동 생성
 - 콘솔 Top10 출력(방향정확도 중심)
 
@@ -66,7 +66,7 @@ python src/pipeline.py \
   --real-start 2024-01-01
 ```
 
-### 3) 투자자 컨텍스트 연동(fetch-investor-context)
+### 3) 투자자 수급 컨텍스트 연동(fetch-investor-context)
 ```powershell
 python src/pipeline.py `
   --fetch-real `
@@ -80,21 +80,6 @@ python src/pipeline.py `
 
 > 참고: 뉴스 점수화는 기본적으로 규칙 기반 fallback을 유지하면서, `OPENAI_API_KEY`와 `OPENAI_MODEL` 환경변수가 있으면 AI 기반 제목 점수화를 우선 시도합니다.  
 > 예: `NEWS_SCORING_MODE=ai` 또는 `NEWS_SCORING_MODE=auto`
-
-### 3-1) 투자자 컨텍스트는 유지하고 뉴스만 끄기
-```powershell
-python src/pipeline.py `
-  --fetch-real `
-  --fetch-investor-context `
-  --disable-news-context `
-  --dart-api-key "YOUR_DART_API_KEY" `
-  --dart-corp-map-csv data/dart_corp_map.csv `
-  --input data/real_ohlcv.csv `
-  --report-json pipeline_report_without_news.json `
-  --figure-dir figures_without_news
-```
-
-이 조합은 **수급/공시 컨텍스트는 유지**하면서 **뉴스 수집/뉴스 점수화만 비활성화**합니다.
 
 ### (참고) bash/zsh에서 줄바꿈 실행
 ```bash
@@ -119,10 +104,10 @@ python src/pipeline.py \
 - `--real-start`: 실제 데이터 수집 시작일
 - `--add-symbols`: 기존 입력 CSV에 사용자 심볼 추가 수집
 - `--disable-external`: 외부 시장 지표 feature 비활성화
-- `--fetch-investor-context`: 투자자 컨텍스트(수급/공시/뉴스) 연동 활성화
-- `--disable-news-context`: 투자자 컨텍스트 중 뉴스 수집/점수화만 비활성화
-- `--dart-api-key`: OpenDART API Key
-- `--dart-corp-map-csv`: `Symbol,corp_code` 매핑 CSV
+- `--fetch-investor-context`: 투자자 수급 컨텍스트(외국인/기관 순매수) 연동 활성화
+- `--disable-news-context`: 레거시 옵션(현재 뉴스/공시 기능은 사용하지 않음)
+- `--dart-api-key`: 레거시 옵션(현재 사용하지 않음)
+- `--dart-corp-map-csv`: 레거시 옵션(현재 사용하지 않음)
 
 ## 입력 컬럼
 ### 필수
@@ -137,9 +122,6 @@ python src/pipeline.py \
 - 개인 순매수: `individual_net_buy` / `개인순매수` / `PersonalNetBuy`
 - 외국인 보유비중: `foreign_ownership_ratio` / `외국인보유비중` / `ForeignOwnershipRatio`
 - 프로그램 매매: `program_trading_flow` / `프로그램순매수` / `ProgramTradingFlow`
-- 공시 점수: `disclosure_score` / `공시점수` / `DisclosureScore`
-- 뉴스 감성: `news_sentiment` / `뉴스점수` / `NewsSentiment`
-- 뉴스 관련도/영향/건수: `news_relevance_score` / `뉴스관련도` / `NewsRelevanceScore`, `news_impact_score` / `뉴스영향점수` / `NewsImpactScore`, `news_article_count` / `뉴스건수` / `NewsArticleCount`
 
 ### 한국 시장 구조/이벤트 선택 입력(있을 때만 사용)
 - 시장구분: `market_type` / `시장구분` / `MarketType` (`KOSPI`, `KOSDAQ`, `KONEX`)
@@ -157,7 +139,7 @@ python src/pipeline.py \
 모든 출력은 **프로젝트 `result/` 폴더**에 저장됩니다.
 
 - 상세 CSV: `result/result_detail.csv` (예측값 + 최신 feature 값 전체)
-- 사용자용 요약 CSV: `result/result_simple.csv` (종목코드/이름/권고/예상 종가/예상 수익률/신뢰도/예측 이유)
+- 사용자용 요약 CSV: `result/result_simple.csv` (종목코드/이름/권고/예상 종가/예상 수익률/상승확률/신뢰도/예측 이유)
 - 리포트 JSON (`--report-json` 파일명 기준)
 - 그래프 PNG (`--figure-dir` 디렉토리명 기준)
 

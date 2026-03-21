@@ -70,8 +70,9 @@ def test_returns_cached_prediction_message_from_kakao_payload(tmp_path: Path):
                 "종목명": "삼성전자",
                 "권고": "매수",
                 "내일 예상 종가": 71200,
-                "내일 예상 수익률(%)": 1.234,
-                "예측 신뢰도": 0.88,
+                "내일 예상 수익률(%)": "1.234%",
+                "상승확률(%)": "78.9%",
+                "예측 신뢰도": "88.0%",
                 "예측 이유": "테스트 사유",
             }
         ]
@@ -90,6 +91,8 @@ def test_returns_cached_prediction_message_from_kakao_payload(tmp_path: Path):
 
     assert "삼성전자" in text
     assert "권고: 매수" in text
+    assert "[005930 삼성전자]" in text
+    assert "상승확률: 78.9%" in text
     assert response["template"]["quickReplies"][0]["label"] == "최신화"
 
 
@@ -147,8 +150,9 @@ def test_status_request_uses_previous_user_symbol(tmp_path: Path):
                 "종목명": "삼성전자",
                 "권고": "매수",
                 "내일 예상 종가": 71200,
-                "내일 예상 수익률(%)": 1.234,
-                "예측 신뢰도": 0.88,
+                "내일 예상 수익률(%)": "1.234%",
+                "상승확률(%)": "78.9%",
+                "예측 신뢰도": "88.0%",
                 "예측 이유": "테스트 사유",
             }
         ]
