@@ -22,7 +22,7 @@ from src.data.fetch_real_data import append_real_ohlcv_csv, normalize_user_symbo
 from src.data.krx_universe import get_symbol_name_map
 from src.data.loaders import load_ohlcv_csv
 from src.data.investor_context import InvestorContextConfig, add_investor_context_with_coverage
-from src.data.universe import filter_by_universe, load_universe_symbols
+from src.data.universe import filter_by_universe, load_default_universe_symbols, load_universe_symbols
 from src.features.external_features import add_external_market_features_with_coverage
 from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
@@ -40,33 +40,22 @@ from src.reports.visualize import (
 from src.validation.backtest import run_long_only_topk_backtest
 from src.validation.baselines import evaluate_baselines
 from src.validation.signal_tuning import tune_signal_weights
-from src.validation.walk_forward import walk_forward_oof_predictions, walk_forward_validate
+from src.validation.walk_forward import walk_forward_validate_with_oof
 from src.validation.metrics import probability_calibration_metrics
 
 
 
-DEFAULT_REAL_SYMBOLS: list[str] = [
-    "207940",
-    "034020",
-    "035420",
-    "272210",
-    "042660",
-    "000660",
-    "042700",
-    "006400",
-    "015760",
-    "051910",
-    "005380",
-    "005930",
-]
-
 HIGH_CONVICTION_NET_BUY = 100_000_000_000
-HIGH_CONVICTION_UP_PROBABILITY = 0.75
+TOP_TURNOVER_UP_PROBABILITY = 0.65
+STRONG_DUAL_BUY_UP_PROBABILITY = 0.7
+HIGH_CONVICTION_COMBINED_UP_PROBABILITY = 0.78
+NASDAQ_FUTURES_TAILWIND_UP_PROBABILITY = 0.55
 
 
 def _fallback_symbols_from_input_or_default(input_csv: str) -> list[str]:
-    """Return the built-in demo universe used when no explicit fetch universe is provided."""
-    return normalize_user_symbols(DEFAULT_REAL_SYMBOLS)
+    """Return the repo-managed default fetch universe used when no explicit fetch universe is provided."""
+    _ = input_csv
+    return load_default_universe_symbols()
 
 
 def _project_result_dir() -> Path:
@@ -146,9 +135,16 @@ def _feature_columns(df: pd.DataFrame) -> list[str]:
         "institution_net_buy",
         "foreign_ownership_ratio",
         "program_trading_flow",
+        "disclosure_score",
+        "news_sentiment",
+        "news_relevance_score",
+        "news_impact_score",
+        "news_article_count",
         "foreign_buy_signal",
         "institution_buy_signal",
         "smart_money_buy_signal",
+        "news_positive_signal",
+        "news_negative_signal",
         "close_to_52w_high",
         "near_52w_high_flag",
         "breakout_52w_flag",
@@ -168,7 +164,7 @@ def _feature_columns(df: pd.DataFrame) -> list[str]:
     return [
         c
         for c in df.columns
-        if c.startswith(("ret_", "ma_", "close_to_ma_", "vol_", "ks", "kq", "gspc", "ixic", "sox", "vix", "krw", "tnx"))
+        if c.startswith(("ret_", "ma_", "close_to_ma_", "vol_", "ks", "kq", "gspc", "ixic", "nq_f", "sox", "vix", "krw", "tnx"))
         or c in base
     ]
 
@@ -259,16 +255,31 @@ def _format_percentage_text(value, digits: int = 1, unit_interval: bool = False)
     return f"{percent_value:.{digits}f}%"
 
 
-def _is_high_conviction_flow(row: pd.Series) -> bool:
+def _format_korean_amount(value: float | int | None) -> str:
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(numeric):
+        return "-"
+    return f"{float(numeric) / 100_000_000:,.0f}억"
+
+
+def _has_top_turnover_support(row: pd.Series) -> bool:
     turnover_rank = pd.to_numeric(pd.Series([row.get("turnover_rank_daily")]), errors="coerce").iloc[0]
+    return not pd.isna(turnover_rank) and float(turnover_rank) <= 15.0
+
+
+def _has_strong_dual_buy_support(row: pd.Series) -> bool:
     foreign_net_buy = float(row.get("foreign_net_buy", 0) or 0)
     institution_net_buy = float(row.get("institution_net_buy", 0) or 0)
-    return (
-        not pd.isna(turnover_rank)
-        and float(turnover_rank) <= 15.0
-        and foreign_net_buy >= HIGH_CONVICTION_NET_BUY
-        and institution_net_buy >= HIGH_CONVICTION_NET_BUY
-    )
+    return foreign_net_buy >= HIGH_CONVICTION_NET_BUY and institution_net_buy >= HIGH_CONVICTION_NET_BUY
+
+
+def _is_high_conviction_flow(row: pd.Series) -> bool:
+    return _has_top_turnover_support(row) and _has_strong_dual_buy_support(row)
+
+
+def _has_nasdaq_futures_tailwind(row: pd.Series) -> bool:
+    nq_ret = pd.to_numeric(pd.Series([row.get("nq_f_ret_1d")]), errors="coerce").iloc[0]
+    return not pd.isna(nq_ret) and float(nq_ret) > 0
 
 
 def _apply_probability_overrides(pred_df: pd.DataFrame) -> pd.DataFrame:
@@ -276,9 +287,27 @@ def _apply_probability_overrides(pred_df: pd.DataFrame) -> pd.DataFrame:
         return pred_df
 
     out = pred_df.copy()
-    mask = out.apply(_is_high_conviction_flow, axis=1)
-    if mask.any():
-        out.loc[mask, "up_probability"] = out.loc[mask, "up_probability"].clip(lower=HIGH_CONVICTION_UP_PROBABILITY)
+    top_turnover_mask = out.apply(_has_top_turnover_support, axis=1)
+    dual_buy_mask = out.apply(_has_strong_dual_buy_support, axis=1)
+    combined_mask = top_turnover_mask & dual_buy_mask
+    nasdaq_tailwind_mask = out.apply(_has_nasdaq_futures_tailwind, axis=1)
+
+    if top_turnover_mask.any():
+        out.loc[top_turnover_mask, "up_probability"] = out.loc[top_turnover_mask, "up_probability"].clip(
+            lower=TOP_TURNOVER_UP_PROBABILITY
+        )
+    if dual_buy_mask.any():
+        out.loc[dual_buy_mask, "up_probability"] = out.loc[dual_buy_mask, "up_probability"].clip(
+            lower=STRONG_DUAL_BUY_UP_PROBABILITY
+        )
+    if combined_mask.any():
+        out.loc[combined_mask, "up_probability"] = out.loc[combined_mask, "up_probability"].clip(
+            lower=HIGH_CONVICTION_COMBINED_UP_PROBABILITY
+        )
+    if nasdaq_tailwind_mask.any():
+        out.loc[nasdaq_tailwind_mask, "up_probability"] = out.loc[nasdaq_tailwind_mask, "up_probability"].clip(
+            lower=NASDAQ_FUTURES_TAILWIND_UP_PROBABILITY
+        )
     return out
 
 
@@ -294,34 +323,41 @@ def _prediction_reason(row: pd.Series) -> str:
     uncertainty_score = float(row.get("uncertainty_score", 0.5) or 0.5)
 
     if _is_high_conviction_flow(row):
-        reasons.append("수급 강함: 거래대금 15위 이내 + 외국인/기관 각각 1,000억 이상 순매수")
+        reasons.append("수급: 거래대금 상위 15위 안에 들고 외국인·기관이 각각 1,000억 이상 순매수했습니다")
+    elif _has_top_turnover_support(row):
+        reasons.append("수급: 거래대금 상위 15위로 시장 관심이 높은 종목입니다")
+    elif _has_strong_dual_buy_support(row):
+        reasons.append("수급: 외국인·기관이 각각 1,000억 이상 순매수했습니다")
     elif foreign_net_buy > 0 and institution_net_buy > 0:
         reasons.append(
-            f"수급 유입: 외국인 {foreign_net_buy/100_000_000:.0f}억, 기관 {institution_net_buy/100_000_000:.0f}억 순매수"
+            f"수급: 외국인 {_format_korean_amount(foreign_net_buy)}, 기관 {_format_korean_amount(institution_net_buy)} 순매수입니다"
         )
 
+    if _has_nasdaq_futures_tailwind(row):
+        reasons.append("해외 흐름: 나스닥100 선물이 올라 한국 증시에 우호적인 환경입니다")
+
     if up_probability >= 0.7:
-        reasons.append(f"상승확률 높음: {up_probability * 100:.1f}%")
+        reasons.append(f"확률: 상승 가능성이 {up_probability * 100:.1f}%로 높은 편입니다")
     elif up_probability >= 0.55:
-        reasons.append(f"상승확률 우세: {up_probability * 100:.1f}%")
+        reasons.append(f"확률: 상승 가능성이 {up_probability * 100:.1f}%로 우세합니다")
     else:
-        reasons.append(f"확률 중립/약세: {up_probability * 100:.1f}%")
+        reasons.append(f"확률: 상승 가능성이 {up_probability * 100:.1f}%로 아직 뚜렷하지 않습니다")
 
     if breakout_52w_flag > 0:
-        reasons.append("추세 강함: 52주 고점 돌파 흐름")
+        reasons.append("추세: 52주 고점을 돌파한 흐름입니다")
     elif near_52w_high_flag > 0:
-        reasons.append("추세 양호: 52주 고점 부근")
+        reasons.append("추세: 52주 고점 부근에서 버티는 흐름입니다")
 
     if history_acc >= 0.6:
-        reasons.append(f"모델 신뢰: 과거 방향 적중률 {history_acc * 100:.1f}%")
+        reasons.append(f"신뢰도: 과거 방향 적중률이 {history_acc * 100:.1f}%였습니다")
     elif uncertainty_score >= 0.7:
-        reasons.append("리스크: 변동성 높아 보수적 접근 필요")
+        reasons.append("주의: 변동성이 큰 편이라 보수적으로 보는 것이 좋습니다")
     elif uncertainty_score <= 0.35:
-        reasons.append("리스크: 예측 변동성 낮은 편")
+        reasons.append("안정성: 예측 변동성이 비교적 낮은 편입니다")
 
     if not reasons:
-        reasons.append("핵심 수급/추세 신호가 중립권이라 모델 종합 점수를 기준으로 판단")
-    return " | ".join(reasons[:4])
+        reasons.append("종합: 수급과 추세가 모두 중립권이라 모델 종합 점수를 중심으로 판단했습니다")
+    return " / ".join(reasons[:4])
 
 
 def _build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
@@ -535,13 +571,24 @@ def _calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Ind
         return pd.Series(up_probs, dtype=float)
 
 
+def _normalize_text_columns_for_csv(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    object_columns = out.select_dtypes(include=["object"]).columns
+    for column in object_columns:
+        out[column] = out[column].map(
+            lambda value: unicodedata.normalize("NFC", value) if isinstance(value, str) else value
+        )
+    return out
+
+
 def _safe_to_csv(df: pd.DataFrame, path: Path) -> Path:
+    normalized = _normalize_text_columns_for_csv(df)
     try:
-        df.to_csv(path, index=False, encoding="utf-8-sig")
+        normalized.to_csv(path, index=False, encoding="utf-8-sig")
         return path
     except PermissionError:
         fallback = path.with_name(f"{path.stem}_fallback{path.suffix}")
-        df.to_csv(fallback, index=False, encoding="utf-8-sig")
+        normalized.to_csv(fallback, index=False, encoding="utf-8-sig")
         print(f"[경고] 파일이 열려있어 기본 경로에 저장하지 못했습니다. 대체 경로로 저장: {fallback}")
         return fallback
 
@@ -566,66 +613,6 @@ def _build_combined_symbol_results(pred_df: pd.DataFrame, summary_csv: str | Non
     return str(saved)
 
 
-
-
-def _calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Index | list | tuple | pd.Series) -> pd.Series:
-    if oof_df.empty or "up_probability" not in oof_df.columns or "target_log_return" not in oof_df.columns:
-        return pd.Series(up_probs, dtype=float)
-
-    cal = oof_df[["up_probability", "target_log_return"]].copy().dropna()
-    if cal.empty or cal["up_probability"].nunique() < 3:
-        return pd.Series(up_probs, dtype=float)
-
-    y = (cal["target_log_return"] > 0).astype(int)
-    try:
-        iso = IsotonicRegression(out_of_bounds="clip")
-        iso.fit(cal["up_probability"].astype(float).values, y.values)
-        return pd.Series(iso.predict(pd.Series(up_probs, dtype=float).values), dtype=float).clip(0.0, 1.0)
-    except Exception:
-        return pd.Series(up_probs, dtype=float)
-
-
-def _safe_to_csv(df: pd.DataFrame, path: Path) -> Path:
-    try:
-        df.to_csv(path, index=False, encoding="utf-8-sig")
-        return path
-    except PermissionError:
-        fallback = path.with_name(f"{path.stem}_fallback{path.suffix}")
-        df.to_csv(fallback, index=False, encoding="utf-8-sig")
-        print(f"[경고] 파일이 열려있어 기본 경로에 저장하지 못했습니다. 대체 경로로 저장: {fallback}")
-        return fallback
-
-
-
-
-def _calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Index | list | tuple | pd.Series) -> pd.Series:
-    if oof_df.empty or "up_probability" not in oof_df.columns or "target_log_return" not in oof_df.columns:
-        return pd.Series(up_probs, dtype=float)
-
-    cal = oof_df[["up_probability", "target_log_return"]].copy().dropna()
-    if cal.empty or cal["up_probability"].nunique() < 3:
-        return pd.Series(up_probs, dtype=float)
-
-    y = (cal["target_log_return"] > 0).astype(int)
-    try:
-        iso = IsotonicRegression(out_of_bounds="clip")
-        iso.fit(cal["up_probability"].astype(float).values, y.values)
-        return pd.Series(iso.predict(pd.Series(up_probs, dtype=float).values), dtype=float).clip(0.0, 1.0)
-    except Exception:
-        return pd.Series(up_probs, dtype=float)
-
-
-def _safe_to_csv(df: pd.DataFrame, path: Path) -> Path:
-    try:
-        df.to_csv(path, index=False, encoding="utf-8-sig")
-        return path
-    except PermissionError:
-        fallback = path.with_name(f"{path.stem}_fallback{path.suffix}")
-        df.to_csv(fallback, index=False, encoding="utf-8-sig")
-        print(f"[경고] 파일이 열려있어 기본 경로에 저장하지 못했습니다. 대체 경로로 저장: {fallback}")
-        return fallback
-
-
 def run_pipeline(
     input_csv: str,
     output_csv: str,
@@ -634,7 +621,6 @@ def run_pipeline(
     figure_dir: str = "reports/figures",
     use_external: bool = True,
     use_investor_context: bool = False,
-    use_news_context: bool = True,
     dart_api_key: str | None = None,
     dart_corp_map_csv: str | None = None,
 ):
@@ -687,19 +673,18 @@ def run_pipeline(
     feature_columns = _feature_columns(feat)
 
     _print_progress(7, total_steps, "Running walk-forward validation")
-    folds = walk_forward_validate(feat, feature_columns, cfg.training)
+    folds, oof = walk_forward_validate_with_oof(feat, feature_columns, cfg.training)
     effective_cfg = cfg.training
     if not folds:
         effective_cfg = _adaptive_training_cfg(cfg, feat)
-        folds = walk_forward_validate(feat, feature_columns, effective_cfg)
+        folds, oof = walk_forward_validate_with_oof(feat, feature_columns, effective_cfg)
 
     wf_summary = pd.DataFrame([f.metrics for f in folds]).mean().to_dict() if folds else {}
 
     _print_progress(8, total_steps, "Evaluating baselines")
     baseline_summary = evaluate_baselines(feat)
 
-    _print_progress(9, total_steps, "Generating OOF predictions")
-    oof = walk_forward_oof_predictions(feat, feature_columns, effective_cfg)
+    _print_progress(9, total_steps, "Using walk-forward OOF predictions")
     if oof.empty:
         raise RuntimeError("OOF predictions are empty. Increase data length or adjust training window.")
 
@@ -738,7 +723,11 @@ def run_pipeline(
 
     _print_progress(12, total_steps, "Training final model and creating latest predictions")
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
-    model = MultiHeadStockModel(random_state=cfg.training.random_state)
+    model = MultiHeadStockModel(
+        random_state=cfg.training.random_state,
+        n_jobs=cfg.training.model_n_jobs,
+        use_gpu=cfg.training.use_gpu,
+    )
     model.fit(train_df, feature_columns, cfg.training.quantiles)
 
     latest = feat.sort_values("Date").groupby("Symbol", as_index=False).tail(1)
@@ -776,6 +765,10 @@ def run_pipeline(
     detail_df = latest.merge(pred_df.drop(columns=["Close"], errors="ignore"), on=["Date", "Symbol"], how="left")
     detail_numeric_cols = detail_df.select_dtypes(include=["number"]).columns
     detail_df.loc[:, detail_numeric_cols] = detail_df.loc[:, detail_numeric_cols].round(3)
+    detail_df["내일 예상 종가"] = detail_df["predicted_close"].map(lambda v: "-" if pd.isna(v) else f"{float(v):,.0f}원")
+    detail_df["상승확률(%)"] = detail_df["up_probability"].map(
+        lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
+    )
     detail_df["predicted_return_display"] = detail_df["predicted_return"].map(lambda v: _format_percentage_text(v, digits=3))
     detail_df["up_probability_display"] = detail_df["up_probability"].map(
         lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
@@ -853,9 +846,8 @@ def main():
     parser.add_argument("--fetch-real", action="store_true", help="Fetch real OHLCV from yfinance before running")
     parser.add_argument("--disable-external", action="store_true", help="Disable external market feature download")
     parser.add_argument("--fetch-investor-context", action="store_true", help="Fetch investor flow context features (foreign/institution flows)")
-    parser.add_argument("--disable-news-context", action="store_true", help="Deprecated: news/disclosure context is no longer used")
-    parser.add_argument("--dart-api-key", default=None, help="Deprecated: disclosure/news context is no longer used")
-    parser.add_argument("--dart-corp-map-csv", default=None, help="Deprecated: disclosure/news context is no longer used")
+    parser.add_argument("--dart-api-key", default=None, help="Deprecated legacy option kept for compatibility")
+    parser.add_argument("--dart-corp-map-csv", default=None, help="Deprecated legacy option kept for compatibility")
     parser.add_argument(
         "--real-symbols",
         nargs="*",
@@ -899,7 +891,6 @@ def main():
         args.figure_dir,
         use_external=not args.disable_external,
         use_investor_context=args.fetch_investor_context,
-        use_news_context=not args.disable_news_context,
         dart_api_key=args.dart_api_key,
         dart_corp_map_csv=args.dart_corp_map_csv,
     )
