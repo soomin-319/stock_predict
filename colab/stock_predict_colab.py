@@ -106,6 +106,7 @@ def run_colab_pipeline(
     )
 
     result_dir = PROJECT_ROOT / "result"
+    _print_colab_preview(result_dir / "result_simple.csv")
     return {
         "result_detail_csv": str(result_dir / "result_detail.csv"),
         "result_simple_csv": str(result_dir / "result_simple.csv"),
