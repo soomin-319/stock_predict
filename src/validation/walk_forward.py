@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import pandas as pd
 
@@ -16,6 +18,9 @@ class FoldResult:
     valid_start: pd.Timestamp
     valid_end: pd.Timestamp
     metrics: Dict[str, float]
+
+
+FoldInput = Tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp, pd.DataFrame, pd.DataFrame]
 
 
 def _iter_folds(df: pd.DataFrame, cfg: TrainingConfig):
@@ -33,45 +38,64 @@ def _iter_folds(df: pd.DataFrame, cfg: TrainingConfig):
         yield train_end_date, valid_start_date, valid_end_date, train_df, valid_df
 
 
+
+def _run_fold(fold: FoldInput, feature_columns: List[str], cfg: TrainingConfig) -> tuple[FoldResult, pd.DataFrame]:
+    train_end_date, valid_start_date, valid_end_date, train_df, valid_df = fold
+    model = MultiHeadStockModel(random_state=cfg.random_state, n_jobs=cfg.model_n_jobs, use_gpu=cfg.use_gpu)
+    model.fit(train_df, feature_columns, cfg.quantiles)
+    pred = model.predict(valid_df)
+
+    reg = regression_metrics(valid_df["target_log_return"], pred.predicted_return)
+    cls = classification_metrics(valid_df["target_up"], pred.up_probability)
+    result = FoldResult(
+        train_end=train_end_date,
+        valid_start=valid_start_date,
+        valid_end=valid_end_date,
+        metrics={**reg, **cls},
+    )
+
+    oof = valid_df[["Date", "Symbol", "Close", "market_regime", "target_log_return", "target_up"]].copy()
+    oof["predicted_return"] = pred.predicted_return
+    oof["up_probability"] = pred.up_probability
+    oof["quantile_low"] = pred.quantile_low
+    oof["quantile_mid"] = pred.quantile_mid
+    oof["quantile_high"] = pred.quantile_high
+    return result, oof
+
+
+
+def _execute_folds(folds: List[FoldInput], feature_columns: List[str], cfg: TrainingConfig) -> list[tuple[FoldResult, pd.DataFrame]]:
+    if not folds:
+        return []
+
+    max_workers = max(1, int(getattr(cfg, "walk_forward_n_jobs", 1) or 1))
+    if max_workers == 1 or len(folds) == 1:
+        return [_run_fold(fold, feature_columns, cfg) for fold in folds]
+
+    worker_count = min(max_workers, len(folds))
+    run_fold = partial(_run_fold, feature_columns=feature_columns, cfg=cfg)
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        return list(executor.map(run_fold, folds))
+
+
+
 def walk_forward_validate(df: pd.DataFrame, feature_columns: List[str], cfg: TrainingConfig) -> List[FoldResult]:
-    results: List[FoldResult] = []
-
-    for train_end_date, valid_start_date, valid_end_date, train_df, valid_df in _iter_folds(df, cfg):
-        model = MultiHeadStockModel(random_state=cfg.random_state)
-        model.fit(train_df, feature_columns, cfg.quantiles)
-        pred = model.predict(valid_df)
-
-        reg = regression_metrics(valid_df["target_log_return"], pred.predicted_return)
-        cls = classification_metrics(valid_df["target_up"], pred.up_probability)
-        result = {**reg, **cls}
-
-        results.append(
-            FoldResult(
-                train_end=train_end_date,
-                valid_start=valid_start_date,
-                valid_end=valid_end_date,
-                metrics=result,
-            )
-        )
-
+    results, _ = walk_forward_validate_with_oof(df, feature_columns, cfg)
     return results
 
 
+
 def walk_forward_oof_predictions(df: pd.DataFrame, feature_columns: List[str], cfg: TrainingConfig) -> pd.DataFrame:
-    rows = []
-    for _, _, _, train_df, valid_df in _iter_folds(df, cfg):
-        model = MultiHeadStockModel(random_state=cfg.random_state)
-        model.fit(train_df, feature_columns, cfg.quantiles)
-        pred = model.predict(valid_df)
+    _, oof = walk_forward_validate_with_oof(df, feature_columns, cfg)
+    return oof
 
-        fold = valid_df[["Date", "Symbol", "Close", "market_regime", "target_log_return", "target_up"]].copy()
-        fold["predicted_return"] = pred.predicted_return
-        fold["up_probability"] = pred.up_probability
-        fold["quantile_low"] = pred.quantile_low
-        fold["quantile_mid"] = pred.quantile_mid
-        fold["quantile_high"] = pred.quantile_high
-        rows.append(fold)
 
-    if not rows:
-        return pd.DataFrame()
-    return pd.concat(rows, axis=0, ignore_index=True)
+
+def walk_forward_validate_with_oof(df: pd.DataFrame, feature_columns: List[str], cfg: TrainingConfig) -> tuple[List[FoldResult], pd.DataFrame]:
+    executed = _execute_folds(list(_iter_folds(df, cfg)), feature_columns, cfg)
+    if not executed:
+        return [], pd.DataFrame()
+
+    results = [result for result, _ in executed]
+    oof = pd.concat([fold for _, fold in executed], axis=0, ignore_index=True)
+    return results, oof
