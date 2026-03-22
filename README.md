@@ -199,7 +199,7 @@ python src/pipeline.py \
 - 챗봇: 같은 종목으로 최신 예측 재실행
 
 ### pyngrok으로 코랩 공개 HTTPS URL 열기
-코랩에서는 `launch_colab_kakao_bot(...)`를 사용하면 Flask 서버 스레드 실행 + pyngrok 공개 HTTPS URL 생성까지 한 번에 처리할 수 있습니다.
+코랩에서는 `launch_colab_kakao_bot(...)`를 사용하면 Flask 서버 스레드 실행 + pyngrok 공개 HTTPS URL 생성까지 한 번에 처리할 수 있습니다. 이때 기본값으로 서버 시작 전에 기본 심볼 유니버스 예측을 한 번 미리 돌려 `result/result_simple.csv` 캐시를 채워두므로, 이후 사용자 요청에 더 빠르게 응답할 수 있습니다.
 
 ```python
 import os

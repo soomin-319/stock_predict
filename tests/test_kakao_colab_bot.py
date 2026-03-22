@@ -10,6 +10,8 @@ from src.chatbot.kakao_colab_bot import (
     KakaoColabPredictionBot,
     PipelineRuntimeConfig,
     PyngrokTunnelConfig,
+    launch_colab_kakao_bot,
+    prewarm_prediction_cache,
     start_pyngrok_tunnel,
 )
 
@@ -296,3 +298,62 @@ def test_start_pyngrok_tunnel_returns_public_url(monkeypatch):
     assert calls["auth_token"] == "token-123"
     assert calls["kwargs"]["addr"] == 9000
     assert calls["kwargs"]["proto"] == "http"
+
+
+def test_prewarm_prediction_cache_runs_colab_pipeline(monkeypatch, tmp_path: Path):
+    captured = {}
+
+    def _fake_run_colab_pipeline(**kwargs):
+        captured.update(kwargs)
+        result_dir = tmp_path / "result"
+        result_dir.mkdir(parents=True, exist_ok=True)
+        return {"result_simple_csv": str(result_dir / "result_simple.csv")}
+
+    monkeypatch.setattr("colab.stock_predict_colab.run_colab_pipeline", _fake_run_colab_pipeline)
+
+    runtime_config = PipelineRuntimeConfig(
+        project_root=tmp_path,
+        input_csv="data/sample_ohlcv.csv",
+        report_json="prewarm_report.json",
+        figure_dir="prewarm_figures",
+        fetch_investor_context=True,
+        bootstrap_default_symbols=True,
+        real_start="2020-01-01",
+    )
+
+    out = prewarm_prediction_cache(runtime_config, force=True)
+
+    assert captured["input_csv"] == "data/sample_ohlcv.csv"
+    assert captured["report_json"] == "prewarm_report.json"
+    assert captured["figure_dir"] == "prewarm_figures"
+    assert captured["use_investor_context"] is True
+    assert captured["bootstrap_default_symbols"] is True
+    assert captured["real_start"] == "2020-01-01"
+    assert out["result_simple_csv"].endswith("result/result_simple.csv")
+
+
+def test_launch_colab_kakao_bot_prewarms_cache_before_server_start(monkeypatch, tmp_path: Path):
+    events = []
+
+    class FakeThread:
+        def __init__(self, target=None, daemon=None):
+            self.target = target
+            self.daemon = daemon
+            self.started = False
+
+        def start(self):
+            self.started = True
+            events.append("thread_started")
+
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.prewarm_prediction_cache", lambda *a, **k: events.append("prewarm"))
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.create_app", lambda runtime_config=None, bot=None: object())
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.start_pyngrok_tunnel", lambda tunnel_config=None: "https://demo.ngrok")
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.threading.Thread", FakeThread)
+
+    launched = launch_colab_kakao_bot(
+        runtime_config=PipelineRuntimeConfig(project_root=tmp_path, prewarm_default_predictions=True),
+        tunnel_config=PyngrokTunnelConfig(port=8000),
+    )
+
+    assert events == ["prewarm", "thread_started"]
+    assert launched["webhook_url"] == "https://demo.ngrok/kakao/webhook"

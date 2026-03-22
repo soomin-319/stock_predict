@@ -56,6 +56,10 @@ class PipelineRuntimeConfig:
     dart_api_key: str | None = None
     dart_corp_map_csv: str | None = "data/dart_corp_map.csv"
     fetch_investor_context: bool = True
+    use_external: bool = False
+    bootstrap_default_symbols: bool = True
+    real_start: str = "2018-01-01"
+    prewarm_default_predictions: bool = True
     extra_args: tuple[str, ...] = ()
 
     def build_command(self, symbol: str) -> list[str]:
@@ -631,12 +635,51 @@ def start_pyngrok_tunnel(tunnel_config: PyngrokTunnelConfig | None = None) -> st
     return str(listener.public_url).rstrip("/")
 
 
+def prewarm_prediction_cache(runtime_config: PipelineRuntimeConfig | None = None, force: bool = False) -> dict[str, str]:
+    cfg = runtime_config or PipelineRuntimeConfig()
+    project_root = Path(cfg.project_root)
+    result_simple_path = project_root / "result" / "result_simple.csv"
+    if not force and result_simple_path.exists():
+        try:
+            cached = pd.read_csv(result_simple_path, dtype={"종목코드": str}, encoding="utf-8-sig")
+            if not cached.empty:
+                print(f"[KAKAO BOT] 기존 예측 캐시를 재사용합니다: {result_simple_path}")
+                return {"result_simple_csv": str(result_simple_path)}
+        except Exception:
+            pass
+
+    print("[KAKAO BOT] 기본 심볼 예측 캐시를 미리 생성합니다...")
+    from colab.stock_predict_colab import run_colab_pipeline
+
+    outputs = run_colab_pipeline(
+        input_csv=cfg.input_csv,
+        universe_csv=None,
+        report_json=cfg.report_json,
+        figure_dir=cfg.figure_dir,
+        use_external=cfg.use_external,
+        use_investor_context=cfg.fetch_investor_context,
+        dart_api_key=cfg.dart_api_key,
+        dart_corp_map_csv=cfg.dart_corp_map_csv,
+        bootstrap_default_symbols=cfg.bootstrap_default_symbols,
+        real_start=cfg.real_start,
+    )
+    print(f"[KAKAO BOT] 기본 심볼 예측 캐시 준비 완료: {outputs.get('result_simple_csv', '')}")
+    return outputs
+
+
 def launch_colab_kakao_bot(
     runtime_config: PipelineRuntimeConfig | None = None,
     tunnel_config: PyngrokTunnelConfig | None = None,
     host: str = "0.0.0.0",
+    prewarm_cache: bool | None = None,
+    force_prewarm: bool = False,
 ):
-    app = create_app(runtime_config=runtime_config)
+    cfg = runtime_config or PipelineRuntimeConfig()
+    should_prewarm = cfg.prewarm_default_predictions if prewarm_cache is None else prewarm_cache
+    if should_prewarm:
+        prewarm_prediction_cache(cfg, force=force_prewarm)
+
+    app = create_app(runtime_config=cfg)
     port = (tunnel_config or PyngrokTunnelConfig()).port
 
     server_thread = threading.Thread(
