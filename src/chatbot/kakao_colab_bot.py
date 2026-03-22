@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import hashlib
 import subprocess
 import sys
 import threading
+from difflib import SequenceMatcher
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +15,7 @@ from typing import Any, Callable
 
 import pandas as pd
 
+from src.data.krx_universe import find_symbol_candidates_by_name
 from src.data.fetch_real_data import normalize_user_symbols
 
 
@@ -54,7 +57,10 @@ class PipelineRuntimeConfig:
     dart_api_key: str | None = None
     dart_corp_map_csv: str | None = "data/dart_corp_map.csv"
     fetch_investor_context: bool = True
-    disable_news_context: bool = False
+    use_external: bool = False
+    bootstrap_default_symbols: bool = True
+    real_start: str = "2018-01-01"
+    prewarm_default_predictions: bool = True
     extra_args: tuple[str, ...] = ()
 
     def build_command(self, symbol: str) -> list[str]:
@@ -98,6 +104,7 @@ class KakaoColabPredictionBot:
         self.result_simple_path = self.project_root / (result_simple_path or "result/result_simple.csv")
         self.state_path = self.project_root / (state_path or "result/chatbot_jobs.json")
         self.session_path = self.project_root / (session_path or "result/chatbot_sessions.json")
+        self.prewarm_meta_path = self.project_root / "result" / "prewarm_cache_meta.json"
         self.log_dir = self.project_root / "result" / "chatbot_logs"
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,7 +140,7 @@ class KakaoColabPredictionBot:
 
         symbol_input = self._extract_stock_code(text)
         if not symbol_input:
-            return self._guide_response("종목코드를 찾지 못했습니다. 예: 005930 또는 000660.KS 형태로 입력해주세요.")
+            return self._handle_name_lookup_request(text, user_id=user_id)
 
         symbol = self._normalize_symbol(symbol_input)
         if not symbol:
@@ -199,6 +206,34 @@ class KakaoColabPredictionBot:
             ],
         )
 
+    def _handle_name_lookup_request(self, utterance: str, user_id: str | None = None) -> dict[str, Any]:
+        candidates = self._find_name_candidates(utterance)
+        if not candidates:
+            return self._guide_response(
+                "종목코드나 종목명을 찾지 못했습니다. 예: 005930 또는 삼성전자처럼 입력해주세요."
+            )
+
+        top = candidates[0]
+        exact_enough = float(top.get("score", 0.0) or 0.0) >= 0.96
+        same_score_candidates = [c for c in candidates if float(c.get("score", 0.0) or 0.0) >= 0.96]
+        if exact_enough and len(same_score_candidates) == 1:
+            symbol = self._normalize_symbol(str(top["ticker"]))
+            if symbol:
+                return self._handle_symbol_request(symbol, user_id=user_id, force_refresh=False, from_session=False)
+
+        lines = ["입력하신 이름과 비슷한 종목입니다. 아래 후보 중 하나를 골라주세요:"]
+        for idx, candidate in enumerate(candidates, start=1):
+            lines.append(
+                f"{idx}) {candidate['name']} ({candidate['ticker']}, {candidate['market']})"
+            )
+
+        quick_replies = [
+            (f"{candidate['name']}({candidate['ticker']})", str(candidate["ticker"]))
+            for candidate in candidates[:5]
+        ]
+        quick_replies.append(("도움말", "도움말"))
+        return self._build_response("\n".join(lines), quick_replies=quick_replies)
+
     def _guide_response(self, prefix: str | None = None) -> dict[str, Any]:
         lines = []
         if prefix:
@@ -207,8 +242,9 @@ class KakaoColabPredictionBot:
             [
                 "사용 방법:",
                 "1) 종목코드 입력: 005930",
-                "2) 예측 진행 중이면 '결과' 입력",
-                "3) 최신값으로 다시 돌리고 싶으면 '최신화' 입력",
+                "2) 종목명 입력: 삼성전자",
+                "3) 예측 진행 중이면 '결과' 입력",
+                "4) 최신값으로 다시 돌리고 싶으면 '최신화' 입력",
             ]
         )
         return self._build_response(
@@ -228,7 +264,47 @@ class KakaoColabPredictionBot:
         if match:
             return match.group(0)
         first_token = text.split()[0]
-        return first_token if first_token else None
+        if re.search(r"\d", first_token):
+            return first_token
+        if re.fullmatch(r"[A-Za-z]{1,10}(?:\.[A-Za-z]{1,4})?", first_token):
+            return first_token
+        return None
+
+    def _find_name_candidates(self, query: str) -> list[dict[str, Any]]:
+        normalized_query = self._normalize_name(query)
+        if not normalized_query:
+            return []
+
+        candidates = find_symbol_candidates_by_name(query, limit=None)
+        if candidates:
+            return candidates
+
+        cached_df = self._load_cached_result_simple()
+        if cached_df.empty or "종목명" not in cached_df.columns or "종목코드" not in cached_df.columns:
+            return []
+
+        rows: list[dict[str, Any]] = []
+        for row in cached_df.itertuples(index=False):
+            name = str(getattr(row, "종목명", "") or "")
+            ticker = str(getattr(row, "종목코드", "") or "")
+            market = self._infer_market_from_symbol(ticker)
+            name_norm = self._normalize_name(name)
+            if not name_norm or not ticker:
+                continue
+            if normalized_query == name_norm:
+                score = 1.0
+            elif normalized_query in name_norm:
+                score = 0.9
+            else:
+                score = SequenceMatcher(None, normalized_query, name_norm).ratio()
+            if score < 0.45:
+                continue
+            rows.append({"symbol": ticker, "ticker": ticker, "name": name, "market": market, "score": float(score)})
+        rows.sort(key=lambda item: (-float(item["score"]), str(item["name"]), str(item["ticker"])))
+        return rows
+
+    def _normalize_name(self, text: str) -> str:
+        return "".join(str(text).strip().lower().split())
 
     def _normalize_symbol(self, stock_code: str) -> str | None:
         normalized = normalize_user_symbols([stock_code])
@@ -250,13 +326,7 @@ class KakaoColabPredictionBot:
         )
 
     def _find_cached_prediction(self, symbol: str) -> pd.Series | None:
-        if not self.result_simple_path.exists():
-            return None
-        try:
-            simple_df = pd.read_csv(self.result_simple_path, dtype={"종목코드": str})
-        except Exception:
-            return None
-
+        simple_df = self._load_cached_result_simple()
         if simple_df.empty or "종목코드" not in simple_df.columns:
             return None
 
@@ -265,6 +335,23 @@ class KakaoColabPredictionBot:
         if matched.empty:
             return None
         return matched.iloc[0]
+
+    def _load_cached_result_simple(self) -> pd.DataFrame:
+        if not self.result_simple_path.exists():
+            return pd.DataFrame()
+        try:
+            return pd.read_csv(self.result_simple_path, dtype={"종목코드": str}, encoding="utf-8-sig")
+        except FileNotFoundError:
+            return pd.DataFrame()
+        except Exception as exc:
+            self._console_log(f"예측 캐시 CSV 로드 실패: {self.result_simple_path} ({exc})")
+            return pd.DataFrame()
+
+    def _infer_market_from_symbol(self, symbol: str) -> str:
+        s = str(symbol).upper()
+        if s.endswith(".KQ"):
+            return "KOSDAQ"
+        return "KOSPI"
 
     def _format_prediction_message(self, row: pd.Series) -> str:
         code = str(row.get("종목코드", "-"))
@@ -294,7 +381,12 @@ class KakaoColabPredictionBot:
         return f"{float(numeric):.3f}%"
 
     def _format_price(self, value: Any) -> str:
-        numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        if isinstance(value, str):
+            cleaned = value.strip().replace(",", "")
+            cleaned = re.sub(r"[^\d.\-]", "", cleaned)
+        else:
+            cleaned = value
+        numeric = pd.to_numeric(pd.Series([cleaned]), errors="coerce").iloc[0]
         if pd.isna(numeric):
             return "-"
         return f"{float(numeric):,.0f}원"
@@ -527,6 +619,49 @@ def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: Pipel
     return app
 
 
+def _runtime_cache_signature(cfg: PipelineRuntimeConfig, project_root: Path) -> dict[str, Any]:
+    input_path = project_root / cfg.input_csv
+    universe_path = project_root / "data" / "default_universe_kospi50_kosdaq50.csv"
+
+    def _stat_payload(path: Path) -> dict[str, int | None]:
+        if not path.exists():
+            return {"mtime_ns": None, "size": None}
+        stat = path.stat()
+        return {"mtime_ns": stat.st_mtime_ns, "size": stat.st_size}
+
+    return {
+        "input_csv": str(cfg.input_csv),
+        "input_stat": _stat_payload(input_path),
+        "default_universe_stat": _stat_payload(universe_path),
+        "report_json": str(cfg.report_json),
+        "figure_dir": str(cfg.figure_dir),
+        "fetch_investor_context": bool(cfg.fetch_investor_context),
+        "use_external": bool(cfg.use_external),
+        "bootstrap_default_symbols": bool(cfg.bootstrap_default_symbols),
+        "real_start": str(cfg.real_start),
+        "dart_api_key_enabled": bool(cfg.dart_api_key),
+        "dart_corp_map_csv": str(cfg.dart_corp_map_csv or ""),
+    }
+
+
+def _cache_signature_hash(payload: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _load_prewarm_meta(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_prewarm_meta(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def start_pyngrok_tunnel(tunnel_config: PyngrokTunnelConfig | None = None) -> str:
     # pyngrok is imported here so the rest of the chatbot module can still be
     # imported without opening a tunnel until the Colab launcher is actually used.
@@ -548,12 +683,57 @@ def start_pyngrok_tunnel(tunnel_config: PyngrokTunnelConfig | None = None) -> st
     return str(listener.public_url).rstrip("/")
 
 
+def prewarm_prediction_cache(runtime_config: PipelineRuntimeConfig | None = None, force: bool = False) -> dict[str, str]:
+    cfg = runtime_config or PipelineRuntimeConfig()
+    project_root = Path(cfg.project_root)
+    result_simple_path = project_root / "result" / "result_simple.csv"
+    meta_path = project_root / "result" / "prewarm_cache_meta.json"
+    signature = _runtime_cache_signature(cfg, project_root)
+    signature_hash = _cache_signature_hash(signature)
+
+    if not force and result_simple_path.exists():
+        try:
+            cached = pd.read_csv(result_simple_path, dtype={"종목코드": str}, encoding="utf-8-sig")
+            cached_meta = _load_prewarm_meta(meta_path)
+            if not cached.empty and cached_meta.get("signature_hash") == signature_hash:
+                print(f"[KAKAO BOT] 기존 예측 캐시를 재사용합니다: {result_simple_path}")
+                return {"result_simple_csv": str(result_simple_path)}
+        except Exception as exc:
+            print(f"[KAKAO BOT] 기존 예측 캐시 확인 실패. 캐시를 다시 생성합니다: {exc}")
+
+    print("[KAKAO BOT] 기본 심볼 예측 캐시를 미리 생성합니다...")
+    from colab.stock_predict_colab import run_colab_pipeline
+
+    outputs = run_colab_pipeline(
+        input_csv=cfg.input_csv,
+        universe_csv=None,
+        report_json=cfg.report_json,
+        figure_dir=cfg.figure_dir,
+        use_external=cfg.use_external,
+        use_investor_context=cfg.fetch_investor_context,
+        dart_api_key=cfg.dart_api_key,
+        dart_corp_map_csv=cfg.dart_corp_map_csv,
+        bootstrap_default_symbols=cfg.bootstrap_default_symbols,
+        real_start=cfg.real_start,
+    )
+    _write_prewarm_meta(meta_path, {"signature": signature, "signature_hash": signature_hash})
+    print(f"[KAKAO BOT] 기본 심볼 예측 캐시 준비 완료: {outputs.get('result_simple_csv', '')}")
+    return outputs
+
+
 def launch_colab_kakao_bot(
     runtime_config: PipelineRuntimeConfig | None = None,
     tunnel_config: PyngrokTunnelConfig | None = None,
     host: str = "0.0.0.0",
+    prewarm_cache: bool | None = None,
+    force_prewarm: bool = False,
 ):
-    app = create_app(runtime_config=runtime_config)
+    cfg = runtime_config or PipelineRuntimeConfig()
+    should_prewarm = cfg.prewarm_default_predictions if prewarm_cache is None else prewarm_cache
+    if should_prewarm:
+        prewarm_prediction_cache(cfg, force=force_prewarm)
+
+    app = create_app(runtime_config=cfg)
     port = (tunnel_config or PyngrokTunnelConfig()).port
 
     server_thread = threading.Thread(
@@ -581,7 +761,6 @@ def main():
     parser.add_argument("--figure-dir", default="figures_with_context")
     parser.add_argument("--dart-api-key", default=None)
     parser.add_argument("--dart-corp-map-csv", default="data/dart_corp_map.csv")
-    parser.add_argument("--disable-news-context", action="store_true")
     parser.add_argument("--use-pyngrok", action="store_true")
     parser.add_argument("--ngrok-auth-token", default=None)
     parser.add_argument("--ngrok-domain", default=None)
@@ -593,7 +772,6 @@ def main():
         figure_dir=args.figure_dir,
         dart_api_key=args.dart_api_key,
         dart_corp_map_csv=args.dart_corp_map_csv,
-        disable_news_context=args.disable_news_context,
     )
     if args.use_pyngrok:
         launched = launch_colab_kakao_bot(
