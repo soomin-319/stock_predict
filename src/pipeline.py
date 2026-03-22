@@ -22,7 +22,7 @@ from src.data.fetch_real_data import append_real_ohlcv_csv, normalize_user_symbo
 from src.data.krx_universe import get_symbol_name_map
 from src.data.loaders import load_ohlcv_csv
 from src.data.investor_context import InvestorContextConfig, add_investor_context_with_coverage
-from src.data.universe import filter_by_universe, load_universe_symbols
+from src.data.universe import filter_by_universe, load_default_universe_symbols, load_universe_symbols
 from src.features.external_features import add_external_market_features_with_coverage
 from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
@@ -45,31 +45,6 @@ from src.validation.metrics import probability_calibration_metrics
 
 
 
-DEFAULT_REAL_SYMBOLS: list[str] = [
-    "000270",
-    "207940",
-    "009830",
-    "012450",
-    "032820",
-    "034020",
-    "035420",
-    "272210",
-    "329180",
-    "373220",
-    "402340",
-    "042660",
-    "000660",
-    "042700",
-    "006400",
-    "015760",
-    "051910",
-    "068270",
-    "079550",
-    "086520",
-    "005380",
-    "005930",
-]
-
 HIGH_CONVICTION_NET_BUY = 100_000_000_000
 TOP_TURNOVER_UP_PROBABILITY = 0.65
 STRONG_DUAL_BUY_UP_PROBABILITY = 0.7
@@ -78,8 +53,9 @@ NASDAQ_FUTURES_TAILWIND_UP_PROBABILITY = 0.55
 
 
 def _fallback_symbols_from_input_or_default(input_csv: str) -> list[str]:
-    """Return the built-in demo universe used when no explicit fetch universe is provided."""
-    return normalize_user_symbols(DEFAULT_REAL_SYMBOLS)
+    """Return the repo-managed default fetch universe used when no explicit fetch universe is provided."""
+    _ = input_csv
+    return load_default_universe_symbols()
 
 
 def _project_result_dir() -> Path:
@@ -159,9 +135,16 @@ def _feature_columns(df: pd.DataFrame) -> list[str]:
         "institution_net_buy",
         "foreign_ownership_ratio",
         "program_trading_flow",
+        "disclosure_score",
+        "news_sentiment",
+        "news_relevance_score",
+        "news_impact_score",
+        "news_article_count",
         "foreign_buy_signal",
         "institution_buy_signal",
         "smart_money_buy_signal",
+        "news_positive_signal",
+        "news_negative_signal",
         "close_to_52w_high",
         "near_52w_high_flag",
         "breakout_52w_flag",
