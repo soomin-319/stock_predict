@@ -90,7 +90,7 @@ def _score_name_match(normalized_query: str, normalized_name: str) -> float:
 
 
 
-def find_symbol_candidates_by_name(query: str, limit: int = 5) -> list[dict[str, str | float]]:
+def find_symbol_candidates_by_name(query: str, limit: int | None = None) -> list[dict[str, str | float]]:
     normalized_query = _normalize_name(query)
     if not normalized_query:
         return []
@@ -117,7 +117,8 @@ def find_symbol_candidates_by_name(query: str, limit: int = 5) -> list[dict[str,
         deduped.setdefault(str(record["ticker"]), record)
 
     if deduped:
-        return list(deduped.values())[:limit]
+        candidates = list(deduped.values())
+        return candidates if limit is None else candidates[:limit]
 
     stock = import_pykrx_stock()
     if stock is None:
@@ -152,4 +153,5 @@ def find_symbol_candidates_by_name(query: str, limit: int = 5) -> list[dict[str,
     deduped_fallback: dict[str, dict[str, str | float]] = {}
     for record in sorted(fallback_records, key=lambda item: (-float(item["score"]), str(item["name"]), str(item["ticker"]))):
         deduped_fallback.setdefault(str(record["ticker"]), record)
-    return list(deduped_fallback.values())[:limit]
+    fallback_candidates = list(deduped_fallback.values())
+    return fallback_candidates if limit is None else fallback_candidates[:limit]

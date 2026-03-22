@@ -220,14 +220,14 @@ class KakaoColabPredictionBot:
                 return self._handle_symbol_request(symbol, user_id=user_id, force_refresh=False, from_session=False)
 
         lines = ["입력하신 이름과 비슷한 종목입니다. 아래 후보 중 하나를 골라주세요:"]
-        for idx, candidate in enumerate(candidates[:5], start=1):
+        for idx, candidate in enumerate(candidates, start=1):
             lines.append(
                 f"{idx}) {candidate['name']} ({candidate['ticker']}, {candidate['market']})"
             )
 
         quick_replies = [
             (f"{candidate['name']}({candidate['ticker']})", str(candidate["ticker"]))
-            for candidate in candidates[:3]
+            for candidate in candidates[:5]
         ]
         quick_replies.append(("도움말", "도움말"))
         return self._build_response("\n".join(lines), quick_replies=quick_replies)
@@ -273,7 +273,7 @@ class KakaoColabPredictionBot:
         if not normalized_query:
             return []
 
-        candidates = find_symbol_candidates_by_name(query, limit=5)
+        candidates = find_symbol_candidates_by_name(query, limit=None)
         if candidates:
             return candidates
 
@@ -299,7 +299,7 @@ class KakaoColabPredictionBot:
                 continue
             rows.append({"symbol": ticker, "ticker": ticker, "name": name, "market": market, "score": float(score)})
         rows.sort(key=lambda item: (-float(item["score"]), str(item["name"]), str(item["ticker"])))
-        return rows[:5]
+        return rows
 
     def _normalize_name(self, text: str) -> str:
         return "".join(str(text).strip().lower().split())

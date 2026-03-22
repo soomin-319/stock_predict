@@ -357,3 +357,27 @@ def test_launch_colab_kakao_bot_prewarms_cache_before_server_start(monkeypatch, 
 
     assert events == ["prewarm", "thread_started"]
     assert launched["webhook_url"] == "https://demo.ngrok/kakao/webhook"
+
+
+def test_name_query_lists_all_candidates_without_five_item_cap(tmp_path: Path, monkeypatch):
+    bot = make_bot(tmp_path)
+    monkeypatch.setattr(
+        "src.chatbot.kakao_colab_bot.find_symbol_candidates_by_name",
+        lambda query, limit=None: [
+            {"ticker": f"10000{i}", "name": f"테스트종목{i}", "market": "KOSPI", "score": 0.8 - i * 0.01}
+            for i in range(6)
+        ],
+    )
+
+    response = bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "테스트",
+                "user": {"id": "user-name-many"},
+            }
+        }
+    )
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "6) 테스트종목5 (100005, KOSPI)" in text
+    assert response["template"]["quickReplies"][0]["messageText"] == "100000"
