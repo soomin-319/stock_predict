@@ -19,3 +19,22 @@ def test_get_symbol_name_map_uses_pykrx_when_available(monkeypatch):
         "005930.KS": "삼성전자",
         "000660.KS": "000660.KS",
     }
+
+
+def test_find_symbol_candidates_by_name_returns_exact_then_similar_matches(monkeypatch):
+    class _Stock:
+        @staticmethod
+        def get_market_ticker_list(market):
+            return ["005930", "005935"] if market == "KOSPI" else []
+
+        @staticmethod
+        def get_market_ticker_name(ticker):
+            return {"005930": "삼성전자", "005935": "삼성전자우"}[ticker]
+
+    monkeypatch.setattr(krx_universe, "import_pykrx_stock", lambda: _Stock())
+
+    candidates = krx_universe.find_symbol_candidates_by_name("삼성전자")
+
+    assert candidates[0]["ticker"] == "005930"
+    assert candidates[0]["symbol"] == "005930.KS"
+    assert candidates[1]["ticker"] == "005935"
