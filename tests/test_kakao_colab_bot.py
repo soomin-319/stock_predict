@@ -10,6 +10,8 @@ from src.chatbot.kakao_colab_bot import (
     KakaoColabPredictionBot,
     PipelineRuntimeConfig,
     PyngrokTunnelConfig,
+    launch_colab_kakao_bot,
+    prewarm_prediction_cache,
     start_pyngrok_tunnel,
 )
 
@@ -121,6 +123,7 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert "--add-symbols" in command
     assert "000660.KS" in command
     assert "--fetch-investor-context" in command
+    assert "--disable-news-context" not in command
 
     session_path = tmp_path / "result" / "chatbot_sessions.json"
     assert session_path.exists()
@@ -187,6 +190,85 @@ def test_status_request_uses_previous_user_symbol(tmp_path: Path):
     assert "내일 예측 수익률" in text
 
 
+def test_cached_prediction_message_formats_price_string_from_result_simple_csv(tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "종목코드": "005930",
+                "종목명": "삼성전자",
+                "권고": "매수",
+                "내일 예상 종가": "71,200원",
+                "내일 예상 수익률(%)": "1.234%",
+                "상승확률(%)": "78.9%",
+                "예측 신뢰도": "88.0%",
+                "예측 이유": "테스트 사유",
+            }
+        ]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "005930",
+                "user": {"id": "user-price"},
+            }
+        }
+    )
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "내일 예측 종가: 71,200원" in text
+
+
+def test_name_query_with_exact_match_starts_prediction(tmp_path: Path, monkeypatch):
+    runner = RecordingRunner()
+    bot = make_bot(tmp_path, runner=runner)
+    monkeypatch.setattr(
+        "src.chatbot.kakao_colab_bot.find_symbol_candidates_by_name",
+        lambda query, limit=5: [{"ticker": "005930", "name": "삼성전자", "market": "KOSPI", "score": 1.0}],
+    )
+
+    response = bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "삼성전자",
+                "user": {"id": "user-name-exact"},
+            }
+        }
+    )
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "005930 예측을 시작합니다" in text
+    assert "005930.KS" in runner.calls[0]["command"]
+
+
+def test_name_query_with_similar_matches_returns_candidates(tmp_path: Path, monkeypatch):
+    bot = make_bot(tmp_path)
+    monkeypatch.setattr(
+        "src.chatbot.kakao_colab_bot.find_symbol_candidates_by_name",
+        lambda query, limit=5: [
+            {"ticker": "005930", "name": "삼성전자", "market": "KOSPI", "score": 0.91},
+            {"ticker": "005935", "name": "삼성전자우", "market": "KOSPI", "score": 0.88},
+        ],
+    )
+
+    response = bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "삼성전",
+                "user": {"id": "user-name-similar"},
+            }
+        }
+    )
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "비슷한 종목" in text
+    assert "삼성전자 (005930, KOSPI)" in text
+    assert response["template"]["quickReplies"][0]["messageText"] == "005930"
+
+
 def test_start_pyngrok_tunnel_returns_public_url(monkeypatch):
     calls = {}
 
@@ -216,3 +298,86 @@ def test_start_pyngrok_tunnel_returns_public_url(monkeypatch):
     assert calls["auth_token"] == "token-123"
     assert calls["kwargs"]["addr"] == 9000
     assert calls["kwargs"]["proto"] == "http"
+
+
+def test_prewarm_prediction_cache_runs_colab_pipeline(monkeypatch, tmp_path: Path):
+    captured = {}
+
+    def _fake_run_colab_pipeline(**kwargs):
+        captured.update(kwargs)
+        result_dir = tmp_path / "result"
+        result_dir.mkdir(parents=True, exist_ok=True)
+        return {"result_simple_csv": str(result_dir / "result_simple.csv")}
+
+    monkeypatch.setattr("colab.stock_predict_colab.run_colab_pipeline", _fake_run_colab_pipeline)
+
+    runtime_config = PipelineRuntimeConfig(
+        project_root=tmp_path,
+        input_csv="data/sample_ohlcv.csv",
+        report_json="prewarm_report.json",
+        figure_dir="prewarm_figures",
+        fetch_investor_context=True,
+        bootstrap_default_symbols=True,
+        real_start="2020-01-01",
+    )
+
+    out = prewarm_prediction_cache(runtime_config, force=True)
+
+    assert captured["input_csv"] == "data/sample_ohlcv.csv"
+    assert captured["report_json"] == "prewarm_report.json"
+    assert captured["figure_dir"] == "prewarm_figures"
+    assert captured["use_investor_context"] is True
+    assert captured["bootstrap_default_symbols"] is True
+    assert captured["real_start"] == "2020-01-01"
+    assert out["result_simple_csv"].endswith("result/result_simple.csv")
+
+
+def test_launch_colab_kakao_bot_prewarms_cache_before_server_start(monkeypatch, tmp_path: Path):
+    events = []
+
+    class FakeThread:
+        def __init__(self, target=None, daemon=None):
+            self.target = target
+            self.daemon = daemon
+            self.started = False
+
+        def start(self):
+            self.started = True
+            events.append("thread_started")
+
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.prewarm_prediction_cache", lambda *a, **k: events.append("prewarm"))
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.create_app", lambda runtime_config=None, bot=None: object())
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.start_pyngrok_tunnel", lambda tunnel_config=None: "https://demo.ngrok")
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.threading.Thread", FakeThread)
+
+    launched = launch_colab_kakao_bot(
+        runtime_config=PipelineRuntimeConfig(project_root=tmp_path, prewarm_default_predictions=True),
+        tunnel_config=PyngrokTunnelConfig(port=8000),
+    )
+
+    assert events == ["prewarm", "thread_started"]
+    assert launched["webhook_url"] == "https://demo.ngrok/kakao/webhook"
+
+
+def test_name_query_lists_all_candidates_without_five_item_cap(tmp_path: Path, monkeypatch):
+    bot = make_bot(tmp_path)
+    monkeypatch.setattr(
+        "src.chatbot.kakao_colab_bot.find_symbol_candidates_by_name",
+        lambda query, limit=None: [
+            {"ticker": f"10000{i}", "name": f"테스트종목{i}", "market": "KOSPI", "score": 0.8 - i * 0.01}
+            for i in range(6)
+        ],
+    )
+
+    response = bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "테스트",
+                "user": {"id": "user-name-many"},
+            }
+        }
+    )
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "6) 테스트종목5 (100005, KOSPI)" in text
+    assert response["template"]["quickReplies"][0]["messageText"] == "100000"
