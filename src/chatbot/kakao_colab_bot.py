@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import hashlib
 import subprocess
 import sys
 import threading
@@ -103,6 +104,7 @@ class KakaoColabPredictionBot:
         self.result_simple_path = self.project_root / (result_simple_path or "result/result_simple.csv")
         self.state_path = self.project_root / (state_path or "result/chatbot_jobs.json")
         self.session_path = self.project_root / (session_path or "result/chatbot_sessions.json")
+        self.prewarm_meta_path = self.project_root / "result" / "prewarm_cache_meta.json"
         self.log_dir = self.project_root / "result" / "chatbot_logs"
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -339,7 +341,10 @@ class KakaoColabPredictionBot:
             return pd.DataFrame()
         try:
             return pd.read_csv(self.result_simple_path, dtype={"종목코드": str}, encoding="utf-8-sig")
-        except Exception:
+        except FileNotFoundError:
+            return pd.DataFrame()
+        except Exception as exc:
+            self._console_log(f"예측 캐시 CSV 로드 실패: {self.result_simple_path} ({exc})")
             return pd.DataFrame()
 
     def _infer_market_from_symbol(self, symbol: str) -> str:
@@ -614,6 +619,49 @@ def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: Pipel
     return app
 
 
+def _runtime_cache_signature(cfg: PipelineRuntimeConfig, project_root: Path) -> dict[str, Any]:
+    input_path = project_root / cfg.input_csv
+    universe_path = project_root / "data" / "default_universe_kospi50_kosdaq50.csv"
+
+    def _stat_payload(path: Path) -> dict[str, int | None]:
+        if not path.exists():
+            return {"mtime_ns": None, "size": None}
+        stat = path.stat()
+        return {"mtime_ns": stat.st_mtime_ns, "size": stat.st_size}
+
+    return {
+        "input_csv": str(cfg.input_csv),
+        "input_stat": _stat_payload(input_path),
+        "default_universe_stat": _stat_payload(universe_path),
+        "report_json": str(cfg.report_json),
+        "figure_dir": str(cfg.figure_dir),
+        "fetch_investor_context": bool(cfg.fetch_investor_context),
+        "use_external": bool(cfg.use_external),
+        "bootstrap_default_symbols": bool(cfg.bootstrap_default_symbols),
+        "real_start": str(cfg.real_start),
+        "dart_api_key_enabled": bool(cfg.dart_api_key),
+        "dart_corp_map_csv": str(cfg.dart_corp_map_csv or ""),
+    }
+
+
+def _cache_signature_hash(payload: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _load_prewarm_meta(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_prewarm_meta(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def start_pyngrok_tunnel(tunnel_config: PyngrokTunnelConfig | None = None) -> str:
     # pyngrok is imported here so the rest of the chatbot module can still be
     # imported without opening a tunnel until the Colab launcher is actually used.
@@ -639,14 +687,19 @@ def prewarm_prediction_cache(runtime_config: PipelineRuntimeConfig | None = None
     cfg = runtime_config or PipelineRuntimeConfig()
     project_root = Path(cfg.project_root)
     result_simple_path = project_root / "result" / "result_simple.csv"
+    meta_path = project_root / "result" / "prewarm_cache_meta.json"
+    signature = _runtime_cache_signature(cfg, project_root)
+    signature_hash = _cache_signature_hash(signature)
+
     if not force and result_simple_path.exists():
         try:
             cached = pd.read_csv(result_simple_path, dtype={"종목코드": str}, encoding="utf-8-sig")
-            if not cached.empty:
+            cached_meta = _load_prewarm_meta(meta_path)
+            if not cached.empty and cached_meta.get("signature_hash") == signature_hash:
                 print(f"[KAKAO BOT] 기존 예측 캐시를 재사용합니다: {result_simple_path}")
                 return {"result_simple_csv": str(result_simple_path)}
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[KAKAO BOT] 기존 예측 캐시 확인 실패. 캐시를 다시 생성합니다: {exc}")
 
     print("[KAKAO BOT] 기본 심볼 예측 캐시를 미리 생성합니다...")
     from colab.stock_predict_colab import run_colab_pipeline
@@ -663,6 +716,7 @@ def prewarm_prediction_cache(runtime_config: PipelineRuntimeConfig | None = None
         bootstrap_default_symbols=cfg.bootstrap_default_symbols,
         real_start=cfg.real_start,
     )
+    _write_prewarm_meta(meta_path, {"signature": signature, "signature_hash": signature_hash})
     print(f"[KAKAO BOT] 기본 심볼 예측 캐시 준비 완료: {outputs.get('result_simple_csv', '')}")
     return outputs
 

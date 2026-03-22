@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -11,6 +12,8 @@ from src.chatbot.kakao_colab_bot import (
     PipelineRuntimeConfig,
     PyngrokTunnelConfig,
     launch_colab_kakao_bot,
+    _cache_signature_hash,
+    _runtime_cache_signature,
     prewarm_prediction_cache,
     start_pyngrok_tunnel,
 )
@@ -381,3 +384,55 @@ def test_name_query_lists_all_candidates_without_five_item_cap(tmp_path: Path, m
 
     assert "6) 테스트종목5 (100005, KOSPI)" in text
     assert response["template"]["quickReplies"][0]["messageText"] == "100000"
+
+
+def test_prewarm_prediction_cache_reuses_cache_only_when_signature_matches(monkeypatch, tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True, exist_ok=True)
+    (result_dir / "result_simple.csv").write_text("종목코드,종목명\n005930,삼성전자\n", encoding="utf-8-sig")
+
+    runtime_config = PipelineRuntimeConfig(project_root=tmp_path, input_csv="data/real_ohlcv.csv")
+    input_path = tmp_path / "data" / "real_ohlcv.csv"
+    input_path.parent.mkdir(parents=True, exist_ok=True)
+    input_path.write_text("Date,Symbol,Open,High,Low,Close,Volume\n", encoding="utf-8")
+    universe_path = tmp_path / "data" / "default_universe_kospi50_kosdaq50.csv"
+    universe_path.write_text("Symbol\n005930.KS\n", encoding="utf-8")
+
+    signature = _runtime_cache_signature(runtime_config, tmp_path)
+    meta_path = result_dir / "prewarm_cache_meta.json"
+    meta_path.write_text(
+        json.dumps({"signature": signature, "signature_hash": _cache_signature_hash(signature)}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    called = {"count": 0}
+
+    def _fake_run_colab_pipeline(**kwargs):
+        called["count"] += 1
+        return {"result_simple_csv": str(result_dir / "result_simple.csv")}
+
+    monkeypatch.setattr("colab.stock_predict_colab.run_colab_pipeline", _fake_run_colab_pipeline)
+
+    out = prewarm_prediction_cache(runtime_config, force=False)
+
+    assert called["count"] == 0
+    assert out["result_simple_csv"].endswith("result/result_simple.csv")
+
+    input_path.write_text("Date,Symbol,Open,High,Low,Close,Volume\n2024-01-02,005930.KS,1,1,1,1,1\n", encoding="utf-8")
+    out = prewarm_prediction_cache(runtime_config, force=False)
+
+    assert called["count"] == 1
+    assert out["result_simple_csv"].endswith("result/result_simple.csv")
+
+
+def test_load_cached_result_simple_logs_parse_failures(tmp_path: Path, capsys):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True, exist_ok=True)
+    (result_dir / "result_simple.csv").write_bytes(b"\x80\x81invalid")
+
+    bot = make_bot(tmp_path)
+    out = bot._load_cached_result_simple()
+
+    captured = capsys.readouterr()
+    assert out.empty
+    assert "예측 캐시 CSV 로드 실패" in captured.out

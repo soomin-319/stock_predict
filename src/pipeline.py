@@ -613,66 +613,6 @@ def _build_combined_symbol_results(pred_df: pd.DataFrame, summary_csv: str | Non
     return str(saved)
 
 
-
-
-def _calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Index | list | tuple | pd.Series) -> pd.Series:
-    if oof_df.empty or "up_probability" not in oof_df.columns or "target_log_return" not in oof_df.columns:
-        return pd.Series(up_probs, dtype=float)
-
-    cal = oof_df[["up_probability", "target_log_return"]].copy().dropna()
-    if cal.empty or cal["up_probability"].nunique() < 3:
-        return pd.Series(up_probs, dtype=float)
-
-    y = (cal["target_log_return"] > 0).astype(int)
-    try:
-        iso = IsotonicRegression(out_of_bounds="clip")
-        iso.fit(cal["up_probability"].astype(float).values, y.values)
-        return pd.Series(iso.predict(pd.Series(up_probs, dtype=float).values), dtype=float).clip(0.0, 1.0)
-    except Exception:
-        return pd.Series(up_probs, dtype=float)
-
-
-def _safe_to_csv(df: pd.DataFrame, path: Path) -> Path:
-    try:
-        df.to_csv(path, index=False, encoding="utf-8-sig")
-        return path
-    except PermissionError:
-        fallback = path.with_name(f"{path.stem}_fallback{path.suffix}")
-        df.to_csv(fallback, index=False, encoding="utf-8-sig")
-        print(f"[경고] 파일이 열려있어 기본 경로에 저장하지 못했습니다. 대체 경로로 저장: {fallback}")
-        return fallback
-
-
-
-
-def _calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Index | list | tuple | pd.Series) -> pd.Series:
-    if oof_df.empty or "up_probability" not in oof_df.columns or "target_log_return" not in oof_df.columns:
-        return pd.Series(up_probs, dtype=float)
-
-    cal = oof_df[["up_probability", "target_log_return"]].copy().dropna()
-    if cal.empty or cal["up_probability"].nunique() < 3:
-        return pd.Series(up_probs, dtype=float)
-
-    y = (cal["target_log_return"] > 0).astype(int)
-    try:
-        iso = IsotonicRegression(out_of_bounds="clip")
-        iso.fit(cal["up_probability"].astype(float).values, y.values)
-        return pd.Series(iso.predict(pd.Series(up_probs, dtype=float).values), dtype=float).clip(0.0, 1.0)
-    except Exception:
-        return pd.Series(up_probs, dtype=float)
-
-
-def _safe_to_csv(df: pd.DataFrame, path: Path) -> Path:
-    try:
-        df.to_csv(path, index=False, encoding="utf-8-sig")
-        return path
-    except PermissionError:
-        fallback = path.with_name(f"{path.stem}_fallback{path.suffix}")
-        df.to_csv(fallback, index=False, encoding="utf-8-sig")
-        print(f"[경고] 파일이 열려있어 기본 경로에 저장하지 못했습니다. 대체 경로로 저장: {fallback}")
-        return fallback
-
-
 def run_pipeline(
     input_csv: str,
     output_csv: str,
