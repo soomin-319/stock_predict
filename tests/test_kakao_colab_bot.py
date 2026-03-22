@@ -306,6 +306,33 @@ def test_name_query_with_similar_matches_returns_candidates(tmp_path: Path, monk
     assert response["template"]["quickReplies"][0]["messageText"] == "005930"
 
 
+def test_alpha_query_uses_name_lookup_instead_of_invalid_symbol_prediction(tmp_path: Path, monkeypatch):
+    runner = RecordingRunner()
+    bot = make_bot(tmp_path, runner=runner)
+    monkeypatch.setattr(
+        "src.chatbot.kakao_colab_bot.find_symbol_candidates_by_name",
+        lambda query, limit=None: [
+            {"ticker": "000660", "name": "SK하이닉스", "market": "KOSPI", "score": 0.9},
+            {"ticker": "034730", "name": "SK", "market": "KOSPI", "score": 0.88},
+        ],
+    )
+
+    response = bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "sk",
+                "user": {"id": "user-name-alpha"},
+            }
+        }
+    )
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "비슷한 종목" in text
+    assert "SK하이닉스 (000660, KOSPI)" in text
+    assert response["template"]["quickReplies"][0]["messageText"] == "000660"
+    assert runner.calls == []
+
+
 def test_start_pyngrok_tunnel_returns_public_url(monkeypatch):
     calls = {}
 

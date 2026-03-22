@@ -268,8 +268,6 @@ class KakaoColabPredictionBot:
         first_token = text.split()[0]
         if re.search(r"\d", first_token):
             return first_token
-        if re.fullmatch(r"[A-Za-z]{1,10}(?:\.[A-Za-z]{1,4})?", first_token):
-            return first_token
         return None
 
     def _find_name_candidates(self, query: str) -> list[dict[str, Any]]:
