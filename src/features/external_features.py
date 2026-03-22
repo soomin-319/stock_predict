@@ -56,6 +56,7 @@ def _symbol_candidates(symbol: str) -> tuple[str, list[str]]:
         "^KS11": ("ks11", ["^KS11", "EWY"]),
         "^KQ11": ("kq11", ["^KQ11", "KORU"]),
         "^IXIC": ("ixic", ["^IXIC", "QQQ"]),
+        "NQ=F": ("nq_f", ["NQ=F", "QQQ"]),
         "^GSPC": ("gspc", ["^GSPC", "SPY"]),
         "KRW=X": ("krw_x", ["KRW=X", "USDKRW=X"]),
         "^TNX": ("tnx", ["^TNX", "IEF"]),
