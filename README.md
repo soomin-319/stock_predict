@@ -28,7 +28,8 @@ python src/pipeline.py --fetch-real --input data/real_ohlcv.csv
 
 > 참고: 자동 KRX 유니버스 생성은 비활성화되었습니다.  
 > `--fetch-real` 사용 시 `--real-symbols` 또는 `--universe-csv`를 우선 사용합니다.  
-> 둘 다 없으면 요청하신 **기본 심볼 12종목(207940, 034020, 035420, 272210, 042660, 000660, 042700, 006400, 015760, 051910, 005380, 005930)** 으로 자동 수집을 진행합니다.
+> 둘 다 없으면 저장소에 포함된 기본 유니버스 CSV(`data/default_universe_kospi50_kosdaq50.csv`)의 100개 심볼(KOSPI 50 + KOSDAQ 50 스타일)로 자동 수집을 진행합니다.  
+> 코랩 `run_colab_pipeline()`의 첫 실행도 같은 원칙을 따르며, `data/sample_ohlcv.csv` 같은 데모 입력이 감지되면 먼저 같은 기본 100종목을 `data/real_ohlcv.csv`로 수집한 뒤 예측을 진행합니다.
 
 ### 2-1) 기존 입력 CSV에 종목 추가 수집(`--add-symbols`)
 이미 가지고 있는 `data/real_ohlcv.csv`에 특정 종목만 더 붙이고 싶으면 `--add-symbols`를 사용합니다.  
@@ -52,8 +53,6 @@ python src/pipeline.py `
   --add-symbols 005930 000660 `
   --real-start 2024-01-01 `
   --fetch-investor-context `
-  --dart-api-key "YOUR_DART_API_KEY" `
-  --dart-corp-map-csv data/dart_corp_map.csv `
   --report-json pipeline_report_added_symbols.json `
   --figure-dir figures_added_symbols
 ```
@@ -71,23 +70,16 @@ python src/pipeline.py \
 python src/pipeline.py `
   --fetch-real `
   --fetch-investor-context `
-  --dart-api-key "YOUR_DART_API_KEY" `
-  --dart-corp-map-csv data/dart_corp_map.csv `
   --input data/real_ohlcv.csv `
   --report-json pipeline_report_with_context.json `
   --figure-dir figures_with_context
 ```
-
-> 참고: 뉴스 점수화는 기본적으로 규칙 기반 fallback을 유지하면서, `OPENAI_API_KEY`와 `OPENAI_MODEL` 환경변수가 있으면 AI 기반 제목 점수화를 우선 시도합니다.  
-> 예: `NEWS_SCORING_MODE=ai` 또는 `NEWS_SCORING_MODE=auto`
 
 ### (참고) bash/zsh에서 줄바꿈 실행
 ```bash
 python src/pipeline.py \
   --fetch-real \
   --fetch-investor-context \
-  --dart-api-key "YOUR_DART_API_KEY" \
-  --dart-corp-map-csv data/dart_corp_map.csv \
   --input data/real_ohlcv.csv \
   --report-json pipeline_report_with_context.json \
   --figure-dir figures_with_context
@@ -105,7 +97,6 @@ python src/pipeline.py \
 - `--add-symbols`: 기존 입력 CSV에 사용자 심볼 추가 수집
 - `--disable-external`: 외부 시장 지표 feature 비활성화
 - `--fetch-investor-context`: 투자자 수급 컨텍스트(외국인/기관 순매수) 연동 활성화
-- `--disable-news-context`: 레거시 옵션(현재 뉴스/공시 기능은 사용하지 않음)
 - `--dart-api-key`: 레거시 옵션(현재 사용하지 않음)
 - `--dart-corp-map-csv`: 레거시 옵션(현재 사용하지 않음)
 
@@ -140,6 +131,7 @@ python src/pipeline.py \
 
 - 상세 CSV: `result/result_detail.csv` (예측값 + 최신 feature 값 전체)
 - 사용자용 요약 CSV: `result/result_simple.csv` (종목코드/이름/권고/예상 종가/예상 수익률/상승확률/신뢰도/예측 이유)
+- CSV는 한글 깨짐을 줄이기 위해 `UTF-8 BOM(utf-8-sig)`으로 저장합니다. Windows Excel/Colab에서 바로 열어도 한글이 최대한 유지되도록 맞춰두었습니다.
 - 리포트 JSON (`--report-json` 파일명 기준)
 - 그래프 PNG (`--figure-dir` 디렉토리명 기준)
 
@@ -171,6 +163,7 @@ python src/pipeline.py \
 
 ### 동작 방식
 1. 사용자가 카카오톡 챗봇에 `005930` 같은 종목코드를 보냅니다.
+   - 종목명(예: `삼성전자`)을 보내도 exact match면 바로 예측하고, 비슷한 이름이면 후보를 먼저 제안합니다.
 2. 웹훅은 카카오 payload의 `userRequest.user.id`를 읽어 사용자별 마지막 조회 종목을 기억합니다.
 3. `result/result_simple.csv`에 해당 종목의 예측 결과가 있으면, 챗봇이 아래 항목을 바로 응답합니다.
    - 종목명
@@ -188,8 +181,6 @@ python src/pipeline.py \
   --input data/real_ohlcv.csv \
   --add-symbols 005930 \
   --fetch-investor-context \
-  --dart-api-key "YOUR_DART_API_KEY" \
-  --dart-corp-map-csv data/dart_corp_map.csv \
   --report-json pipeline_report_with_context.json \
   --figure-dir figures_with_context
 ```
@@ -200,6 +191,8 @@ python src/pipeline.py \
 ### 실제 카카오톡 대화 예시
 - 사용자: `005930`
 - 챗봇: `005930 예측을 시작합니다...`
+- 사용자: `삼성전`
+- 챗봇: `비슷한 종목입니다: 삼성전자(005930), 삼성전자우(005935) ...`
 - 사용자: `결과`
 - 챗봇: 진행 중이면 진행 상태를, 완료 후에는 `종목명/권고/내일 예측 수익률/내일 예측 종가/신뢰도/사유`를 응답
 - 사용자: `최신화`

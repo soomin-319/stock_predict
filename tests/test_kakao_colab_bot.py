@@ -121,6 +121,7 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert "--add-symbols" in command
     assert "000660.KS" in command
     assert "--fetch-investor-context" in command
+    assert "--disable-news-context" not in command
 
     session_path = tmp_path / "result" / "chatbot_sessions.json"
     assert session_path.exists()
@@ -185,6 +186,85 @@ def test_status_request_uses_previous_user_symbol(tmp_path: Path):
 
     assert "삼성전자" in text
     assert "내일 예측 수익률" in text
+
+
+def test_cached_prediction_message_formats_price_string_from_result_simple_csv(tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "종목코드": "005930",
+                "종목명": "삼성전자",
+                "권고": "매수",
+                "내일 예상 종가": "71,200원",
+                "내일 예상 수익률(%)": "1.234%",
+                "상승확률(%)": "78.9%",
+                "예측 신뢰도": "88.0%",
+                "예측 이유": "테스트 사유",
+            }
+        ]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "005930",
+                "user": {"id": "user-price"},
+            }
+        }
+    )
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "내일 예측 종가: 71,200원" in text
+
+
+def test_name_query_with_exact_match_starts_prediction(tmp_path: Path, monkeypatch):
+    runner = RecordingRunner()
+    bot = make_bot(tmp_path, runner=runner)
+    monkeypatch.setattr(
+        "src.chatbot.kakao_colab_bot.find_symbol_candidates_by_name",
+        lambda query, limit=5: [{"ticker": "005930", "name": "삼성전자", "market": "KOSPI", "score": 1.0}],
+    )
+
+    response = bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "삼성전자",
+                "user": {"id": "user-name-exact"},
+            }
+        }
+    )
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "005930 예측을 시작합니다" in text
+    assert "005930.KS" in runner.calls[0]["command"]
+
+
+def test_name_query_with_similar_matches_returns_candidates(tmp_path: Path, monkeypatch):
+    bot = make_bot(tmp_path)
+    monkeypatch.setattr(
+        "src.chatbot.kakao_colab_bot.find_symbol_candidates_by_name",
+        lambda query, limit=5: [
+            {"ticker": "005930", "name": "삼성전자", "market": "KOSPI", "score": 0.91},
+            {"ticker": "005935", "name": "삼성전자우", "market": "KOSPI", "score": 0.88},
+        ],
+    )
+
+    response = bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "삼성전",
+                "user": {"id": "user-name-similar"},
+            }
+        }
+    )
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "비슷한 종목" in text
+    assert "삼성전자 (005930, KOSPI)" in text
+    assert response["template"]["quickReplies"][0]["messageText"] == "005930"
 
 
 def test_start_pyngrok_tunnel_returns_public_url(monkeypatch):
