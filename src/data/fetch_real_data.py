@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Iterable
 from datetime import datetime
@@ -7,6 +8,7 @@ import contextlib
 import io
 import logging
 import warnings
+from functools import lru_cache, partial
 
 import pandas as pd
 import yfinance as yf
@@ -17,6 +19,20 @@ from src.data.pykrx_support import import_pykrx_stock
 _import_pykrx_stock = import_pykrx_stock
 
 
+@lru_cache(maxsize=1)
+def _market_ticker_sets() -> tuple[set[str], set[str]]:
+    stock = _import_pykrx_stock()
+    if stock is None:
+        return set(), set()
+    try:
+        kospi = set(stock.get_market_ticker_list(market="KOSPI"))
+        kosdaq = set(stock.get_market_ticker_list(market="KOSDAQ"))
+        return kospi, kosdaq
+    except Exception:
+        return set(), set()
+
+
+
 def _to_yfinance_symbol(user_input: str) -> str:
     s = str(user_input).strip().upper()
     if not s:
@@ -25,19 +41,14 @@ def _to_yfinance_symbol(user_input: str) -> str:
         return s
 
     if s.isdigit() and len(s) == 6:
-        stock = _import_pykrx_stock()
-        if stock is not None:
-            try:
-                kospi = set(stock.get_market_ticker_list(market="KOSPI"))
-                kosdaq = set(stock.get_market_ticker_list(market="KOSDAQ"))
-                if s in kospi:
-                    return f"{s}.KS"
-                if s in kosdaq:
-                    return f"{s}.KQ"
-            except Exception:
-                pass
+        kospi, kosdaq = _market_ticker_sets()
+        if s in kospi:
+            return f"{s}.KS"
+        if s in kosdaq:
+            return f"{s}.KQ"
         return f"{s}.KS"
     return s
+
 
 
 def normalize_user_symbols(symbol_inputs: Iterable[str]) -> list[str]:
@@ -48,11 +59,13 @@ def normalize_user_symbols(symbol_inputs: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(s for s in parsed if s))
 
 
+
 def _normalize_yf_columns(df: pd.DataFrame) -> pd.DataFrame:
     if isinstance(df.columns, pd.MultiIndex):
         df = df.copy()
         df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
     return df
+
 
 
 def _safe_download_ohlcv(symbol: str, start: str, end: str | None = None) -> pd.DataFrame:
@@ -78,6 +91,7 @@ def _safe_download_ohlcv(symbol: str, start: str, end: str | None = None) -> pd.
     finally:
         yf_logger.disabled = prev_disabled
         yf_logger.setLevel(prev_level)
+
 
 
 def _fetch_krx_ohlcv(symbol: str, start: str, end: str | None = None) -> pd.DataFrame:
@@ -120,26 +134,40 @@ def _fetch_krx_ohlcv(symbol: str, start: str, end: str | None = None) -> pd.Data
     return out[["Date", "Open", "High", "Low", "Close", "Volume", "Symbol"]]
 
 
+
+def _fetch_single_symbol(symbol: str, start: str, end: str | None = None) -> pd.DataFrame:
+    df = _safe_download_ohlcv(symbol, start=start, end=end)
+    if df is None or df.empty:
+        df = _fetch_krx_ohlcv(symbol, start=start, end=end)
+        if df.empty:
+            return pd.DataFrame()
+        return df[["Date", "Open", "High", "Low", "Close", "Volume", "Symbol"]]
+
+    df = _normalize_yf_columns(df).reset_index()
+    required = ["Date", "Open", "High", "Low", "Close", "Volume"]
+    if any(c not in df.columns for c in required):
+        return pd.DataFrame()
+
+    out = df[required].copy()
+    out["Symbol"] = symbol
+    return out
+
+
+
 def fetch_real_ohlcv(symbols: Iterable[str], start: str = "2020-01-01", end: str | None = None) -> pd.DataFrame:
-    frames = []
-    for symbol in symbols:
-        df = _safe_download_ohlcv(symbol, start=start, end=end)
-        if df is None or df.empty:
-            df = _fetch_krx_ohlcv(symbol, start=start, end=end)
-            if df.empty:
-                continue
-            frames.append(df[["Date", "Open", "High", "Low", "Close", "Volume", "Symbol"]])
-            continue
+    normalized_symbols = list(dict.fromkeys(str(symbol) for symbol in symbols if str(symbol).strip()))
+    if not normalized_symbols:
+        raise RuntimeError("No symbols provided")
 
-        df = _normalize_yf_columns(df).reset_index()
-        required = ["Date", "Open", "High", "Low", "Close", "Volume"]
-        if any(c not in df.columns for c in required):
-            continue
+    max_workers = min(8, len(normalized_symbols))
+    if max_workers <= 1:
+        frames = [_fetch_single_symbol(symbol, start=start, end=end) for symbol in normalized_symbols]
+    else:
+        fetch_one = partial(_fetch_single_symbol, start=start, end=end)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            frames = list(executor.map(fetch_one, normalized_symbols))
 
-        out = df[required].copy()
-        out["Symbol"] = symbol
-        frames.append(out)
-
+    frames = [frame for frame in frames if frame is not None and not frame.empty]
     if not frames:
         raise RuntimeError("No data fetched from providers (yfinance/pykrx)")
 
@@ -147,6 +175,7 @@ def fetch_real_ohlcv(symbols: Iterable[str], start: str = "2020-01-01", end: str
     all_df = all_df[["Date", "Symbol", "Open", "High", "Low", "Close", "Volume"]]
     all_df = all_df.sort_values(["Symbol", "Date"]).reset_index(drop=True)
     return all_df
+
 
 
 def _preserve_existing_optional_columns(fetched_df: pd.DataFrame, existing_df: pd.DataFrame | None) -> pd.DataFrame:
@@ -166,6 +195,7 @@ def _preserve_existing_optional_columns(fetched_df: pd.DataFrame, existing_df: p
     return fetched_df.merge(preserved, on=keys, how="left")
 
 
+
 def save_real_ohlcv_csv(path: str | Path, symbols: Iterable[str], start: str = "2020-01-01", end: str | None = None) -> Path:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -175,6 +205,7 @@ def save_real_ohlcv_csv(path: str | Path, symbols: Iterable[str], start: str = "
         df = _preserve_existing_optional_columns(df, base)
     df.to_csv(p, index=False)
     return p
+
 
 
 def append_real_ohlcv_csv(path: str | Path, symbols: Iterable[str], start: str = "2020-01-01", end: str | None = None) -> Path:

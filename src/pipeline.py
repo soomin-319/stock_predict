@@ -40,7 +40,7 @@ from src.reports.visualize import (
 from src.validation.backtest import run_long_only_topk_backtest
 from src.validation.baselines import evaluate_baselines
 from src.validation.signal_tuning import tune_signal_weights
-from src.validation.walk_forward import walk_forward_oof_predictions, walk_forward_validate
+from src.validation.walk_forward import walk_forward_validate_with_oof
 from src.validation.metrics import probability_calibration_metrics
 
 
@@ -733,19 +733,18 @@ def run_pipeline(
     feature_columns = _feature_columns(feat)
 
     _print_progress(7, total_steps, "Running walk-forward validation")
-    folds = walk_forward_validate(feat, feature_columns, cfg.training)
+    folds, oof = walk_forward_validate_with_oof(feat, feature_columns, cfg.training)
     effective_cfg = cfg.training
     if not folds:
         effective_cfg = _adaptive_training_cfg(cfg, feat)
-        folds = walk_forward_validate(feat, feature_columns, effective_cfg)
+        folds, oof = walk_forward_validate_with_oof(feat, feature_columns, effective_cfg)
 
     wf_summary = pd.DataFrame([f.metrics for f in folds]).mean().to_dict() if folds else {}
 
     _print_progress(8, total_steps, "Evaluating baselines")
     baseline_summary = evaluate_baselines(feat)
 
-    _print_progress(9, total_steps, "Generating OOF predictions")
-    oof = walk_forward_oof_predictions(feat, feature_columns, effective_cfg)
+    _print_progress(9, total_steps, "Using walk-forward OOF predictions")
     if oof.empty:
         raise RuntimeError("OOF predictions are empty. Increase data length or adjust training window.")
 
@@ -784,7 +783,11 @@ def run_pipeline(
 
     _print_progress(12, total_steps, "Training final model and creating latest predictions")
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
-    model = MultiHeadStockModel(random_state=cfg.training.random_state)
+    model = MultiHeadStockModel(
+        random_state=cfg.training.random_state,
+        n_jobs=cfg.training.model_n_jobs,
+        use_gpu=cfg.training.use_gpu,
+    )
     model.fit(train_df, feature_columns, cfg.training.quantiles)
 
     latest = feat.sort_values("Date").groupby("Symbol", as_index=False).tail(1)
