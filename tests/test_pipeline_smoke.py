@@ -130,6 +130,8 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "backtest_sharpe" in detail_df.columns
     assert "foreign_net_buy" in detail_df.columns
     assert "institution_net_buy" in detail_df.columns
+    assert "내일 예상 종가" in detail_df.columns
+    assert "상승확률(%)" in detail_df.columns
     assert "disclosure_score" in detail_df.columns
     assert "news_sentiment" in detail_df.columns
     assert "news_relevance_score" in detail_df.columns
