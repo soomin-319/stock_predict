@@ -74,6 +74,8 @@ class PipelineRuntimeConfig:
         ]
         if self.fetch_investor_context:
             cmd.append("--fetch-investor-context")
+        if not self.use_external:
+            cmd.append("--disable-external")
         if self.report_json:
             cmd.extend(["--report-json", self.report_json])
         if self.figure_dir:

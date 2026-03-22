@@ -127,10 +127,44 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert "000660.KS" in command
     assert "--fetch-investor-context" in command
     assert "--disable-news-context" not in command
+    assert "--disable-external" in command
 
     session_path = tmp_path / "result" / "chatbot_sessions.json"
     assert session_path.exists()
     assert "user-77" in session_path.read_text(encoding="utf-8")
+
+
+def test_start_job_skips_disable_external_flag_when_external_features_enabled(tmp_path: Path):
+    runner = RecordingRunner()
+    runtime_config = PipelineRuntimeConfig(
+        project_root=tmp_path,
+        python_executable="python",
+        input_csv="data/real_ohlcv.csv",
+        report_json="pipeline_report_with_context.json",
+        figure_dir="figures_with_context",
+        dart_api_key="demo-key",
+        dart_corp_map_csv="data/dart_corp_map.csv",
+        use_external=True,
+    )
+    bot = KakaoColabPredictionBot(
+        runtime_config=runtime_config,
+        result_simple_path="result/result_simple.csv",
+        state_path="result/chatbot_jobs.json",
+        session_path="result/chatbot_sessions.json",
+        process_runner=runner,
+    )
+
+    bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "000660",
+                "user": {"id": "user-external-enabled"},
+            }
+        }
+    )
+
+    command = runner.calls[0]["command"]
+    assert "--disable-external" not in command
 
 
 def test_start_job_prints_console_progress_hint(tmp_path: Path, capsys):
