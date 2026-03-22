@@ -7,13 +7,59 @@ from src.data import fetch_real_data
 def test_fallback_symbols_always_uses_default_demo_universe():
     symbols = pipeline._fallback_symbols_from_input_or_default("dummy.csv")
 
-    assert symbols == ["207940.KS", "034020.KS", "035420.KS", "272210.KS", "042660.KS", "000660.KS", "042700.KS", "006400.KS", "015760.KS", "051910.KS", "005380.KS", "005930.KS"]
+    assert symbols == [
+        "000270.KS",
+        "207940.KS",
+        "009830.KS",
+        "012450.KS",
+        "032820.KS",
+        "034020.KS",
+        "035420.KS",
+        "272210.KS",
+        "329180.KS",
+        "373220.KS",
+        "402340.KS",
+        "042660.KS",
+        "000660.KS",
+        "042700.KS",
+        "006400.KS",
+        "015760.KS",
+        "051910.KS",
+        "068270.KS",
+        "079550.KS",
+        "086520.KS",
+        "005380.KS",
+        "005930.KS",
+    ]
 
 
 def test_fallback_symbols_uses_default_when_input_unavailable(monkeypatch):
     symbols = pipeline._fallback_symbols_from_input_or_default("dummy.csv")
 
-    assert symbols == ["207940.KS", "034020.KS", "035420.KS", "272210.KS", "042660.KS", "000660.KS", "042700.KS", "006400.KS", "015760.KS", "051910.KS", "005380.KS", "005930.KS"]
+    assert symbols == [
+        "000270.KS",
+        "207940.KS",
+        "009830.KS",
+        "012450.KS",
+        "032820.KS",
+        "034020.KS",
+        "035420.KS",
+        "272210.KS",
+        "329180.KS",
+        "373220.KS",
+        "402340.KS",
+        "042660.KS",
+        "000660.KS",
+        "042700.KS",
+        "006400.KS",
+        "015760.KS",
+        "051910.KS",
+        "068270.KS",
+        "079550.KS",
+        "086520.KS",
+        "005380.KS",
+        "005930.KS",
+    ]
 
 
 def test_save_real_ohlcv_csv_preserves_existing_optional_columns(tmp_path, monkeypatch):

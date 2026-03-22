@@ -22,7 +22,7 @@ class FeatureConfig:
 class ExternalFeatureConfig:
     enabled: bool = True
     market_symbols: List[str] = field(
-        default_factory=lambda: ["^KS11", "^KQ11", "^GSPC", "^IXIC", "^SOX", "^VIX", "KRW=X", "^TNX"]
+        default_factory=lambda: ["^KS11", "^KQ11", "^GSPC", "^IXIC", "NQ=F", "^SOX", "^VIX", "KRW=X", "^TNX"]
     )
 
 
