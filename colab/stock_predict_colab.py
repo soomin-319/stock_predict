@@ -71,6 +71,26 @@ def _should_bootstrap_default_symbols(input_csv: str | Path) -> bool:
     return not all(_looks_like_krx_symbol(symbol) for symbol in symbols)
 
 
+def _print_colab_preview(result_simple_path: Path):
+    if not result_simple_path.exists():
+        return
+    try:
+        simple = pd.read_csv(result_simple_path, encoding="utf-8-sig")
+    except Exception:
+        return
+    if simple.empty:
+        return
+
+    preview_columns = [
+        column
+        for column in ["종목코드", "종목명", "권고", "내일 예상 종가", "내일 예상 수익률(%)", "상승확률(%)", "예측 이유"]
+        if column in simple.columns
+    ]
+    print("\n=== Colab Prediction Preview ===")
+    print(simple[preview_columns].head(10).to_string(index=False))
+    print("\nresult_simple.csv는 UTF-8 BOM(utf-8-sig)으로 저장되었습니다.")
+
+
 def run_colab_pipeline(
     input_csv: str = "data/sample_ohlcv.csv",
     universe_csv: str | None = None,
@@ -106,6 +126,7 @@ def run_colab_pipeline(
     )
 
     result_dir = PROJECT_ROOT / "result"
+    _print_colab_preview(result_dir / "result_simple.csv")
     return {
         "result_detail_csv": str(result_dir / "result_detail.csv"),
         "result_simple_csv": str(result_dir / "result_simple.csv"),
