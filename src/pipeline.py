@@ -497,6 +497,9 @@ def _prediction_reason(row: pd.Series) -> str:
     if _is_rsi_overbought(row):
         reasons.append("RSI: 70 이상 과열권이라 차익실현을 우선합니다")
 
+    if _has_nasdaq_futures_tailwind(row):
+        reasons.append("해외 흐름: 나스닥100 선물이 올라 한국 증시에 우호적인 환경입니다")
+
     if up_probability >= 0.7:
         reasons.append(f"확률: 상승 가능성이 {up_probability * 100:.1f}%로 높은 편입니다")
     elif up_probability >= 0.55:
