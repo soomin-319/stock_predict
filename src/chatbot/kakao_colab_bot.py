@@ -57,6 +57,12 @@ class PipelineRuntimeConfig:
     dart_api_key: str | None = None
     dart_corp_map_csv: str | None = "data/dart_corp_map.csv"
     fetch_investor_context: bool = True
+    enable_investor_flow: bool = True
+    enable_investor_disclosure: bool = True
+    enable_investor_news: bool = True
+    news_scoring_mode: str = "auto"
+    openai_api_key: str | None = None
+    openai_model: str | None = None
     use_external: bool = False
     bootstrap_default_symbols: bool = True
     real_start: str = "2018-01-01"
@@ -74,6 +80,18 @@ class PipelineRuntimeConfig:
         ]
         if self.fetch_investor_context:
             cmd.append("--fetch-investor-context")
+            if not self.enable_investor_flow:
+                cmd.append("--disable-investor-flow")
+            if not self.enable_investor_disclosure:
+                cmd.append("--disable-disclosure-context")
+            if not self.enable_investor_news:
+                cmd.append("--disable-news-context")
+            if self.news_scoring_mode:
+                cmd.extend(["--news-scoring-mode", self.news_scoring_mode])
+            if self.openai_api_key:
+                cmd.extend(["--openai-api-key", self.openai_api_key])
+            if self.openai_model:
+                cmd.extend(["--openai-model", self.openai_model])
         if not self.use_external:
             cmd.append("--disable-external")
         if self.report_json:

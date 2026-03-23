@@ -54,7 +54,24 @@ def _run_fold(fold: FoldInput, feature_columns: List[str], cfg: TrainingConfig) 
         metrics={**reg, **cls},
     )
 
-    oof = valid_df[["Date", "Symbol", "Close", "market_regime", "target_log_return", "target_up"]].copy()
+    optional_cols = [
+        "vol_ratio_20",
+        "value_traded",
+        "turnover_rank_daily",
+        "foreign_net_buy",
+        "institution_net_buy",
+        "nq_f_ret_1d",
+        "rsi_14",
+        "near_52w_high_flag",
+        "breakout_52w_flag",
+        "leader_confirmation_flag",
+        "ks11_ret_1d",
+        "market_type",
+    ]
+    keep_cols = ["Date", "Symbol", "Close", "market_regime", "target_log_return", "target_up"] + [
+        c for c in optional_cols if c in valid_df.columns
+    ]
+    oof = valid_df[keep_cols].copy()
     oof["predicted_return"] = pred.predicted_return
     oof["up_probability"] = pred.up_probability
     oof["quantile_low"] = pred.quantile_low
