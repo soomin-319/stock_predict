@@ -23,6 +23,14 @@ def percentile_score(values: pd.Series) -> pd.Series:
     return values.rank(method="average", pct=True).fillna(0.5)
 
 
+def signal_label_series(values: pd.Series) -> pd.Series:
+    return pd.cut(
+        values,
+        bins=[-np.inf, 0.25, 0.45, 0.55, 0.75, np.inf],
+        labels=["strong_negative", "weak_negative", "neutral", "weak_positive", "strong_positive"],
+    )
+
+
 def build_prediction_frame(
     latest_df: pd.DataFrame,
     pred: MultiHeadPrediction,
@@ -36,11 +44,12 @@ def build_prediction_frame(
     out["uncertainty_width"] = pred.quantile_high - pred.quantile_low
     out["uncertainty_band"] = pd.Series(pred.quantile_low, index=out.index).map(lambda v: f"{float(v):.3f}") + " ~ " + pd.Series(pred.quantile_high, index=out.index).map(lambda v: f"{float(v):.3f}")
 
-    out["rel_strength"] = normalize_series(out["predicted_log_return"])
+    out["rel_strength"] = percentile_score(out["predicted_log_return"]) - 0.5
     # 과거 z-score + clip 방식은 음수 구간이 전부 0이 되어 정보가 손실될 수 있어,
     # 0~1 분위 백분위 점수로 치환한다.
     out["uncertainty_score"] = percentile_score(out["uncertainty_width"])
     out["norm_return"] = normalize_series(out["predicted_log_return"])
+    out["event_boost_score"] = 0.0
 
     out["signal_score"] = (
         signal_cfg.return_weight * out["norm_return"]
@@ -48,9 +57,5 @@ def build_prediction_frame(
         + signal_cfg.rel_strength_weight * out["rel_strength"]
         - signal_cfg.uncertainty_penalty * out["uncertainty_score"]
     )
-    out["signal_label"] = pd.cut(
-        out["signal_score"],
-        bins=[-np.inf, 0.25, 0.45, 0.55, 0.75, np.inf],
-        labels=["strong_negative", "weak_negative", "neutral", "weak_positive", "strong_positive"],
-    )
+    out["signal_label"] = signal_label_series(out["signal_score"])
     return out

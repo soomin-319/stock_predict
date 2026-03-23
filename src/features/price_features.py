@@ -112,6 +112,12 @@ def _compute_obv(close: pd.Series, volume: pd.Series) -> pd.Series:
     return (direction * volume.fillna(0)).cumsum()
 
 
+def _rolling_zscore(series: pd.Series, window: int) -> pd.Series:
+    mean = series.rolling(window).mean()
+    std = series.rolling(window).std().replace(0, np.nan)
+    return ((series - mean) / std).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+
 def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out = df.copy()
     grouped = out.groupby("Symbol", group_keys=False)
@@ -191,6 +197,7 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out["range_pct"] = (out["High"] - out["Low"]) / out["Close"].replace(0, np.nan)
     out["value_traded"] = out["Close"] * out["Volume"]
     out["turnover_rank_daily"] = out.groupby("Date")["value_traded"].rank(method="first", ascending=False)
+    out["is_top_turnover_3"] = (out["turnover_rank_daily"] <= 3).astype(float)
     out["is_top_turnover_10"] = (out["turnover_rank_daily"] <= 10).astype(float)
 
     for window in cfg.lookback_windows:
@@ -206,6 +213,8 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
 
     out["vol_ratio_20"] = out["Volume"] / grouped["Volume"].transform(lambda x: x.rolling(20).mean())
     out["rsi_14"] = grouped["Close"].transform(lambda x: _compute_rsi(x, cfg.rsi_period))
+    out["rsi_pullback_buy_flag"] = out["rsi_14"].between(30.0, 35.0, inclusive="both").astype(float)
+    out["rsi_overbought_sell_flag"] = (out["rsi_14"] >= 70.0).astype(float)
 
     macd = grouped["Close"].transform(lambda x: _compute_macd(x)[0])
     macd_sig = grouped["Close"].transform(lambda x: _compute_macd(x)[1])
@@ -245,6 +254,18 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out["foreign_buy_signal"] = (out["foreign_net_buy"] > 0).astype(float)
     out["institution_buy_signal"] = (out["institution_net_buy"] > 0).astype(float)
     out["smart_money_buy_signal"] = ((out["foreign_net_buy"] + out["institution_net_buy"]) > 0).astype(float)
+    value_traded_safe = out["value_traded"].replace(0, np.nan)
+    out["foreign_buy_ratio"] = (out["foreign_net_buy"] / value_traded_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out["institution_buy_ratio"] = (out["institution_net_buy"] / value_traded_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out["smart_money_strength"] = (
+        (out["foreign_net_buy"] + out["institution_net_buy"]) / value_traded_safe
+    ).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out["foreign_net_buy_z20"] = grouped["foreign_net_buy"].transform(lambda x: _rolling_zscore(x, 20))
+    out["institution_net_buy_z20"] = grouped["institution_net_buy"].transform(lambda x: _rolling_zscore(x, 20))
+    out["foreign_net_buy_3d"] = grouped["foreign_net_buy"].transform(lambda x: x.rolling(3).sum()).fillna(0.0)
+    out["foreign_net_buy_5d"] = grouped["foreign_net_buy"].transform(lambda x: x.rolling(5).sum()).fillna(0.0)
+    out["institution_net_buy_3d"] = grouped["institution_net_buy"].transform(lambda x: x.rolling(3).sum()).fillna(0.0)
+    out["institution_net_buy_5d"] = grouped["institution_net_buy"].transform(lambda x: x.rolling(5).sum()).fillna(0.0)
     out["news_positive_signal"] = (
         out["news_relevance_score"] * (out["news_sentiment"] - 0.5).clip(lower=0.0) * 2.0
     )
@@ -257,6 +278,14 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out["close_to_52w_high"] = out["Close"] / rolling_high_252.replace(0, np.nan)
     out["near_52w_high_flag"] = (out["close_to_52w_high"] >= 0.95).astype(float)
     out["breakout_52w_flag"] = (out["Close"] >= prev_rolling_high_252.fillna(np.inf)).astype(float)
+    top3_positive_count = (
+        ((out["turnover_rank_daily"] <= 3) & (out["daily_return"] > 0)).astype(float).groupby(out["Date"]).transform("sum")
+    )
+    out["leader_confirmation_flag"] = (
+        (out["turnover_rank_daily"] == 1)
+        & (out["daily_return"] > 0)
+        & (top3_positive_count >= 3)
+    ).astype(float)
 
     out["investor_event_score"] = (
         0.35 * out["is_top_turnover_10"]

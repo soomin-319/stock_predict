@@ -130,6 +130,8 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "backtest_sharpe" in detail_df.columns
     assert "foreign_net_buy" in detail_df.columns
     assert "institution_net_buy" in detail_df.columns
+    assert "내일 예상 종가" in detail_df.columns
+    assert "상승확률(%)" in detail_df.columns
     assert "disclosure_score" in detail_df.columns
     assert "news_sentiment" in detail_df.columns
     assert "news_relevance_score" in detail_df.columns
@@ -257,6 +259,32 @@ def test_uncertainty_score_uses_percentile_scale():
 
     assert (out["uncertainty_score"] > 0).all()
     assert (out["uncertainty_score"] <= 1).all()
+
+
+def test_rel_strength_is_not_duplicate_of_norm_return():
+    from src.inference.predict import build_prediction_frame
+    from src.models.lgbm_heads import MultiHeadPrediction
+
+    cfg = AppConfig()
+    latest = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2024-01-01", "2024-01-01", "2024-01-01"]),
+            "Symbol": ["A", "B", "C"],
+            "Close": [100.0, 101.0, 99.0],
+            "market_regime": ["neutral", "neutral", "neutral"],
+        }
+    )
+    pred = MultiHeadPrediction(
+        predicted_return=np.array([0.02, 0.0, -0.01]),
+        up_probability=np.array([0.6, 0.5, 0.4]),
+        quantile_low=np.array([-0.02, -0.01, -0.03]),
+        quantile_mid=np.array([0.0, 0.0, 0.0]),
+        quantile_high=np.array([0.03, 0.01, 0.02]),
+    )
+
+    out = build_prediction_frame(latest, pred, cfg.signal)
+
+    assert not out["rel_strength"].equals(out["norm_return"])
 
 
 

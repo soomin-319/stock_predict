@@ -2,18 +2,29 @@ import pandas as pd
 
 from src import pipeline
 from src.data import fetch_real_data
+from src.data import universe as universe_module
 
 
-def test_fallback_symbols_always_uses_default_demo_universe():
+def test_fallback_symbols_loads_repo_managed_default_universe():
     symbols = pipeline._fallback_symbols_from_input_or_default("dummy.csv")
 
-    assert symbols == ["207940.KS", "034020.KS", "035420.KS", "272210.KS", "042660.KS", "000660.KS", "042700.KS", "006400.KS", "015760.KS", "051910.KS", "005380.KS", "005930.KS"]
+    assert len(symbols) == 100
+    assert symbols[:5] == [
+        "005930.KS",
+        "000660.KS",
+        "373220.KS",
+        "207940.KS",
+        "005380.KS",
+    ]
+    assert symbols[-3:] == ["060150.KQ", "078130.KQ", "900140.KQ"]
 
 
-def test_fallback_symbols_uses_default_when_input_unavailable(monkeypatch):
+
+def test_fallback_symbols_match_default_universe_csv_contents():
     symbols = pipeline._fallback_symbols_from_input_or_default("dummy.csv")
 
-    assert symbols == ["207940.KS", "034020.KS", "035420.KS", "272210.KS", "042660.KS", "000660.KS", "042700.KS", "006400.KS", "015760.KS", "051910.KS", "005380.KS", "005930.KS"]
+    assert symbols == universe_module.load_default_universe_symbols()
+
 
 
 def test_save_real_ohlcv_csv_preserves_existing_optional_columns(tmp_path, monkeypatch):
@@ -54,6 +65,7 @@ def test_save_real_ohlcv_csv_preserves_existing_optional_columns(tmp_path, monke
     assert out["pbr"].tolist() == [1.1, 1.2]
     assert out["warning_level"].tolist() == [1, 2]
     assert out["Close"].tolist() == [201, 202]
+
 
 
 def test_append_real_ohlcv_csv_preserves_existing_optional_columns_on_overlap(tmp_path, monkeypatch):
