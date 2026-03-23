@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 import sys
-import unicodedata
 from pathlib import Path
 
 import pandas as pd
@@ -33,13 +32,16 @@ from src.domain.signal_policy import (
 from src.features.external_features import add_external_market_features_with_coverage
 from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
-from src.inference.predict import build_prediction_frame, signal_label_series
 from src.models.lgbm_heads import MultiHeadPrediction, MultiHeadStockModel
+from src.pipeline_support import (
+    PredictionFrameContext,
+    build_scored_prediction_frame,
+    build_symbol_history_accuracy,
+    finalize_latest_prediction_frame,
+)
 from src.reports.result_formatter import (
     build_result_simple as formatter_build_result_simple,
-    display_width as formatter_display_width,
     format_percentage_text as formatter_format_percentage_text,
-    pad_display as formatter_pad_display,
     print_prediction_console_summary as formatter_print_prediction_console_summary,
 )
 from src.reports.visualize import (
@@ -199,182 +201,8 @@ def _adaptive_training_cfg(cfg, feat: pd.DataFrame):
     return tuned
 
 
-def _display_width(text: str) -> int:
-    return formatter_display_width(text)
-
-
-def _pad_display(text: str, width: int, align: str = "left") -> str:
-    return formatter_pad_display(text, width, align)
-
-
-def _recommendation_from_signal(
-    signal_score: float | int | None,
-    predicted_return: float | int | None,
-    up_probability: float | int | None = None,
-    uncertainty_score: float | int | None = None,
-) -> str:
-    return domain_recommendation_from_signal(signal_score, predicted_return, up_probability, uncertainty_score)
-
-
-def _policy_recommendation(row: pd.Series) -> str:
-    signal = row.get("signal_score")
-    predicted_return = row.get("predicted_return")
-    up_probability = row.get("up_probability")
-    uncertainty_score = row.get("uncertainty_score")
-    nq_ret = pd.to_numeric(pd.Series([row.get("nq_f_ret_1d")]), errors="coerce").iloc[0]
-    rsi = pd.to_numeric(pd.Series([row.get("rsi_14")]), errors="coerce").iloc[0]
-    turnover_rank = pd.to_numeric(pd.Series([row.get("turnover_rank_daily")]), errors="coerce").iloc[0]
-    dual_buy = _has_dual_buy_support(row)
-    leader_confirmed = _has_leader_confirmation(row)
-    near_or_breakout = _prefers_52w_high(row)
-
-    if not pd.isna(nq_ret) and nq_ret <= -0.01:
-        return "매도"
-    if not pd.isna(rsi) and rsi >= 70.0:
-        return "매도"
-
-    if (
-        not pd.isna(turnover_rank)
-        and float(turnover_rank) <= 3.0
-        and dual_buy
-        and leader_confirmed
-        and near_or_breakout
-        and not pd.isna(nq_ret)
-        and nq_ret >= 0.01
-    ):
-        return _recommendation_from_signal(signal, predicted_return, up_probability, uncertainty_score)
-
-    return _recommendation_from_signal(signal, predicted_return, up_probability, uncertainty_score)
-
-
-def _confidence_label(confidence_score: float | int | None) -> str:
-    return domain_confidence_label(confidence_score)
-
-
-def _combined_confidence_score(row: pd.Series) -> float:
-    confidence = float(row.get("confidence_score", 0.5) or 0.5)
-    history_acc = float(row.get("history_direction_accuracy", 0.5) or 0.5)
-    return max(0.0, min(1.0, 0.5 * confidence + 0.5 * history_acc))
-
-
-def _risk_flag(row: pd.Series) -> str:
-    return domain_risk_flag(row)
-
-
-def _position_size_hint(confidence_score: float | int | None, risk_flag: str) -> str:
-    c = float(confidence_score) if not pd.isna(confidence_score) else 0.5
-    if "HIGH_UNCERTAINTY" in risk_flag:
-        return "소액"
-    if c >= 0.75:
-        return "중간"
-    if c >= 0.5:
-        return "소액"
-    return "관망"
-
-
 def _format_percentage_text(value, digits: int = 1, unit_interval: bool = False) -> str:
     return formatter_format_percentage_text(value, digits=digits, unit_interval=unit_interval)
-
-
-def _format_korean_amount(value: float | int | None) -> str:
-    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
-    if pd.isna(numeric):
-        return "-"
-    return f"{float(numeric) / 100_000_000:,.0f}억"
-
-
-def _has_top_turnover_support(row: pd.Series) -> bool:
-    turnover_rank = pd.to_numeric(pd.Series([row.get("turnover_rank_daily")]), errors="coerce").iloc[0]
-    return not pd.isna(turnover_rank) and float(turnover_rank) <= 15.0
-
-
-def _has_top3_turnover_support(row: pd.Series) -> bool:
-    turnover_rank = pd.to_numeric(pd.Series([row.get("turnover_rank_daily")]), errors="coerce").iloc[0]
-    return not pd.isna(turnover_rank) and float(turnover_rank) <= 3.0
-
-
-def _has_dual_buy_support(row: pd.Series) -> bool:
-    foreign_net_buy = float(row.get("foreign_net_buy", 0) or 0)
-    institution_net_buy = float(row.get("institution_net_buy", 0) or 0)
-    return foreign_net_buy > 0 and institution_net_buy > 0
-
-
-def _has_strong_dual_buy_support(row: pd.Series) -> bool:
-    foreign_net_buy = float(row.get("foreign_net_buy", 0) or 0)
-    institution_net_buy = float(row.get("institution_net_buy", 0) or 0)
-    return foreign_net_buy >= HIGH_CONVICTION_NET_BUY and institution_net_buy >= HIGH_CONVICTION_NET_BUY
-
-
-def _is_high_conviction_flow(row: pd.Series) -> bool:
-    return _has_top_turnover_support(row) and _has_strong_dual_buy_support(row)
-
-
-def _has_nasdaq_futures_tailwind(row: pd.Series) -> bool:
-    nq_ret = pd.to_numeric(pd.Series([row.get("nq_f_ret_1d")]), errors="coerce").iloc[0]
-    return not pd.isna(nq_ret) and float(nq_ret) > 0
-
-
-def _has_strong_nasdaq_tailwind(row: pd.Series) -> bool:
-    nq_ret = pd.to_numeric(pd.Series([row.get("nq_f_ret_1d")]), errors="coerce").iloc[0]
-    return not pd.isna(nq_ret) and float(nq_ret) >= 0.01
-
-
-def _has_strong_nasdaq_headwind(row: pd.Series) -> bool:
-    nq_ret = pd.to_numeric(pd.Series([row.get("nq_f_ret_1d")]), errors="coerce").iloc[0]
-    return not pd.isna(nq_ret) and float(nq_ret) <= -0.01
-
-
-def _has_leader_confirmation(row: pd.Series) -> bool:
-    return float(row.get("leader_confirmation_flag", 0) or 0) > 0
-
-
-def _prefers_52w_high(row: pd.Series) -> bool:
-    return float(row.get("near_52w_high_flag", 0) or 0) > 0 or float(row.get("breakout_52w_flag", 0) or 0) > 0
-
-
-def _is_rsi_pullback_buy_zone(row: pd.Series) -> bool:
-    rsi = pd.to_numeric(pd.Series([row.get("rsi_14")]), errors="coerce").iloc[0]
-    return not pd.isna(rsi) and 30.0 <= float(rsi) <= 35.0
-
-
-def _is_rsi_overbought(row: pd.Series) -> bool:
-    rsi = pd.to_numeric(pd.Series([row.get("rsi_14")]), errors="coerce").iloc[0]
-    return not pd.isna(rsi) and float(rsi) >= 70.0
-
-
-def _apply_event_signal_boost(pred_df: pd.DataFrame) -> pd.DataFrame:
-    out = vectorized_event_signal_boost(pred_df)
-    if "signal_score" in out.columns:
-        out["signal_label"] = signal_label_series(out["signal_score"])
-    return out
-
-
-def _attach_event_signal_boost(pred_df: pd.DataFrame, source_df: pd.DataFrame) -> pd.DataFrame:
-    event_columns = [
-        column
-        for column in [
-            "turnover_rank_daily",
-            "foreign_net_buy",
-            "institution_net_buy",
-            "nq_f_ret_1d",
-            "rsi_14",
-            "near_52w_high_flag",
-            "breakout_52w_flag",
-            "leader_confirmation_flag",
-        ]
-        if column in source_df.columns
-    ]
-    if not event_columns:
-        return _apply_event_signal_boost(pred_df)
-    missing_event_columns = [column for column in event_columns if column not in pred_df.columns]
-    if not missing_event_columns:
-        return _apply_event_signal_boost(pred_df)
-    merged = pd.concat([pred_df.reset_index(drop=True), source_df[missing_event_columns].reset_index(drop=True)], axis=1)
-    return _apply_event_signal_boost(merged)
-
-
-def _prediction_reason(row: pd.Series) -> str:
-    return domain_prediction_reason(row)
 
 
 def _build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
@@ -422,51 +250,7 @@ def _print_backtest_console_summary(backtest: dict):
 
 
 def _print_prediction_console_summary(pred_df: pd.DataFrame):
-    if pred_df.empty:
-        print("\n=== Prediction ===")
-        print("(no rows)")
-        return
-
-    out = pred_df.copy()
-    if "history_direction_accuracy" not in out.columns:
-        out["history_direction_accuracy"] = 0.5
-    out = out.sort_values(["history_direction_accuracy", "signal_score"], ascending=[False, False]).head(10).copy()
-    out = _build_result_simple(out)
-    rows = []
-    for _, r in out.iterrows():
-        rows.append(
-            {
-                "종목코드": str(r.get("종목코드", "")),
-                "종목명": str(r.get("종목명", "")),
-                "권고": str(r.get("권고", "")),
-                "포트폴리오 액션": str(r.get("포트폴리오 액션", "")),
-                "내일 예상 종가": str(r.get("내일 예상 종가", "-")),
-                "내일 예상 수익률(%)": str(r.get("내일 예상 수익률(%)", "-")),
-                "상승확률(%)": str(r.get("상승확률(%)", "-")),
-                "예측 신뢰도": str(r.get("예측 신뢰도", "-")),
-            }
-        )
-
-    headers = ["종목코드", "종목명", "권고", "포트폴리오 액션", "내일 예상 종가", "내일 예상 수익률(%)", "상승확률(%)", "예측 신뢰도"]
-    col_widths = {h: max(_display_width(h), *(_display_width(row[h]) for row in rows)) for h in headers}
-
-    print("\n=== Prediction ===")
-    print("  ".join(_pad_display(h, col_widths[h], "left") for h in headers))
-    for row in rows:
-        print(
-            "  ".join(
-                [
-                    _pad_display(row["종목코드"], col_widths["종목코드"], "left"),
-                    _pad_display(row["종목명"], col_widths["종목명"], "left"),
-                    _pad_display(row["권고"], col_widths["권고"], "left"),
-                    _pad_display(row["포트폴리오 액션"], col_widths["포트폴리오 액션"], "left"),
-                    _pad_display(row["내일 예상 종가"], col_widths["내일 예상 종가"], "right"),
-                    _pad_display(row["내일 예상 수익률(%)"], col_widths["내일 예상 수익률(%)"], "right"),
-                    _pad_display(row["상승확률(%)"], col_widths["상승확률(%)"], "right"),
-                    _pad_display(row["예측 신뢰도"], col_widths["예측 신뢰도"], "right"),
-                ]
-            )
-        )
+    formatter_print_prediction_console_summary(pred_df)
 
 def _split_oof_for_tuning_and_eval(scored_oof: pd.DataFrame, tune_ratio: float = 0.7) -> tuple[pd.DataFrame, pd.DataFrame]:
     dates = sorted(pd.to_datetime(scored_oof["Date"]).dropna().unique())
@@ -580,24 +364,13 @@ def _calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Ind
         return pd.Series(up_probs, dtype=float)
 
 
-def _normalize_text_columns_for_csv(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    object_columns = out.select_dtypes(include=["object", "string"]).columns
-    for column in object_columns:
-        out[column] = out[column].map(
-            lambda value: unicodedata.normalize("NFC", value) if isinstance(value, str) else value
-        )
-    return out
-
-
 def _safe_to_csv(df: pd.DataFrame, path: Path) -> Path:
-    normalized = _normalize_text_columns_for_csv(df)
     try:
-        normalized.to_csv(path, index=False, encoding="utf-8-sig")
+        df.to_csv(path, index=False, encoding="utf-8-sig")
         return path
     except PermissionError:
         fallback = path.with_name(f"{path.stem}_fallback{path.suffix}")
-        normalized.to_csv(fallback, index=False, encoding="utf-8-sig")
+        df.to_csv(fallback, index=False, encoding="utf-8-sig")
         print(f"[경고] 파일이 열려있어 기본 경로에 저장하지 못했습니다. 대체 경로로 저장: {fallback}")
         return fallback
 
@@ -643,6 +416,7 @@ def run_pipeline(
     turnover_limit: float | None = None,
     min_up_probability: float | None = None,
     min_signal_score: float | None = None,
+    min_external_coverage_ratio: float | None = None,
 ):
     total_steps = 13
     _print_progress(1, total_steps, "Loading app configuration")
@@ -655,6 +429,8 @@ def run_pipeline(
         cfg_overrides["backtest"]["min_up_probability"] = float(min_up_probability)
     if min_signal_score is not None:
         cfg_overrides["backtest"]["min_signal_score"] = float(min_signal_score)
+    if min_external_coverage_ratio is not None:
+        cfg_overrides["backtest"]["min_external_coverage_ratio"] = float(min_external_coverage_ratio)
     if not cfg_overrides["backtest"]:
         cfg_overrides = {}
     cfg = load_app_config(config_json, overrides=cfg_overrides or None)
@@ -734,37 +510,15 @@ def run_pipeline(
         investor_requested += int(investor_context_coverage.get(key, {}).get("requested", 0))
         investor_successful += int(investor_context_coverage.get(key, {}).get("successful", 0))
     investor_coverage_ratio = float(investor_successful) / float(investor_requested or 1) if investor_requested else 1.0
+    prediction_context = PredictionFrameContext(
+        external_coverage_ratio=external_coverage_ratio,
+        investor_coverage_ratio=investor_coverage_ratio,
+        min_liquidity_threshold=cfg.backtest.min_value_traded,
+    )
 
     oof_pred = _prediction_from_oof_df(oof)
     oof_pred.up_probability = _calibrate_up_probability(oof, oof_pred.up_probability).values
-    scored_oof = build_prediction_frame(oof, oof_pred, cfg.signal)
-    scored_oof["target_log_return"] = oof["target_log_return"].values
-    if "vol_ratio_20" in oof.columns:
-        scored_oof["vol_ratio_20"] = oof["vol_ratio_20"].values
-    for optional in [
-        "value_traded",
-        "turnover_rank_daily",
-        "foreign_net_buy",
-        "institution_net_buy",
-        "nq_f_ret_1d",
-        "rsi_14",
-        "near_52w_high_flag",
-        "breakout_52w_flag",
-        "leader_confirmation_flag",
-        "ks11_ret_1d",
-        "market_type",
-    ]:
-        if optional in oof.columns:
-            scored_oof[optional] = oof[optional].values
-    scored_oof["external_coverage_ratio"] = external_coverage_ratio
-    scored_oof["investor_coverage_ratio"] = investor_coverage_ratio
-    scored_oof["min_liquidity_threshold"] = cfg.backtest.min_value_traded
-    oof_nq = pd.to_numeric(
-        scored_oof["nq_f_ret_1d"] if "nq_f_ret_1d" in scored_oof.columns else pd.Series(0.0, index=scored_oof.index),
-        errors="coerce",
-    ).fillna(0.0)
-    scored_oof["market_headwind_score"] = (oof_nq < -0.01).astype(float) * -1.0
-    scored_oof = _attach_event_signal_boost(scored_oof, oof)
+    scored_oof = build_scored_prediction_frame(oof, oof_pred, cfg.signal, prediction_context)
 
     tune_df, eval_df = _split_oof_for_tuning_and_eval(scored_oof, tune_ratio=0.7)
 
@@ -775,34 +529,7 @@ def run_pipeline(
     cfg.signal.rel_strength_weight = tuned["rel_strength_weight"]
     cfg.signal.uncertainty_penalty = tuned["uncertainty_penalty"]
 
-    scored_oof = build_prediction_frame(oof, oof_pred, cfg.signal)
-    scored_oof["target_log_return"] = oof["target_log_return"].values
-    if "vol_ratio_20" in oof.columns:
-        scored_oof["vol_ratio_20"] = oof["vol_ratio_20"].values
-    for optional in [
-        "value_traded",
-        "turnover_rank_daily",
-        "foreign_net_buy",
-        "institution_net_buy",
-        "nq_f_ret_1d",
-        "rsi_14",
-        "near_52w_high_flag",
-        "breakout_52w_flag",
-        "leader_confirmation_flag",
-        "ks11_ret_1d",
-        "market_type",
-    ]:
-        if optional in oof.columns:
-            scored_oof[optional] = oof[optional].values
-    scored_oof["external_coverage_ratio"] = external_coverage_ratio
-    scored_oof["investor_coverage_ratio"] = investor_coverage_ratio
-    scored_oof["min_liquidity_threshold"] = cfg.backtest.min_value_traded
-    oof_nq = pd.to_numeric(
-        scored_oof["nq_f_ret_1d"] if "nq_f_ret_1d" in scored_oof.columns else pd.Series(0.0, index=scored_oof.index),
-        errors="coerce",
-    ).fillna(0.0)
-    scored_oof["market_headwind_score"] = (oof_nq < -0.01).astype(float) * -1.0
-    scored_oof = _attach_event_signal_boost(scored_oof, oof)
+    scored_oof = build_scored_prediction_frame(oof, oof_pred, cfg.signal, prediction_context)
     tune_df, eval_df = _split_oof_for_tuning_and_eval(scored_oof, tune_ratio=0.7)
 
     _print_progress(11, total_steps, "Running backtest on holdout split and creating figures")
@@ -829,31 +556,12 @@ def run_pipeline(
     latest = feat.sort_values("Date").groupby("Symbol", as_index=False).tail(1)
     latest_pred = model.predict(latest)
     latest_pred.up_probability = _calibrate_up_probability(scored_oof, latest_pred.up_probability).values
-    pred_df = build_prediction_frame(latest, latest_pred, cfg.signal)
-    pred_df["external_coverage_ratio"] = external_coverage_ratio
-    pred_df["investor_coverage_ratio"] = investor_coverage_ratio
-    pred_df["min_liquidity_threshold"] = cfg.backtest.min_value_traded
-    latest_nq = pd.to_numeric(
-        latest["nq_f_ret_1d"] if "nq_f_ret_1d" in latest.columns else pd.Series(0.0, index=latest.index),
-        errors="coerce",
-    ).fillna(0.0)
-    pred_df["market_headwind_score"] = (latest_nq < -0.01).astype(float) * -1.0
-    pred_df = _attach_event_signal_boost(pred_df, latest)
+    pred_df = build_scored_prediction_frame(latest, latest_pred, cfg.signal, prediction_context)
     symbol_name_map = get_symbol_name_map(pred_df["Symbol"].dropna().astype(str).tolist())
-    pred_df["symbol_name"] = pred_df["Symbol"].astype(str).map(symbol_name_map).fillna(pred_df["Symbol"].astype(str))
-    pred_df["confidence_score"] = (1 - pred_df["uncertainty_score"].fillna(1)).clip(lower=0, upper=1)
-    pred_df["confidence_label"] = pred_df["confidence_score"].map(_confidence_label)
-
-    sym_acc = pd.DataFrame(columns=["Symbol", "history_direction_accuracy"])
-    if {"Symbol", "target_log_return", "predicted_log_return"}.issubset(set(scored_oof.columns)):
-        tmp_acc = scored_oof[["Symbol", "target_log_return", "predicted_log_return"]].copy()
-        tmp_acc["history_direction_accuracy"] = (
-            (tmp_acc["target_log_return"] > 0).astype(int) == (tmp_acc["predicted_log_return"] > 0).astype(int)
-        ).astype(float)
-        sym_acc = tmp_acc.groupby("Symbol", as_index=False)["history_direction_accuracy"].mean()
+    sym_acc = build_symbol_history_accuracy(scored_oof)
     pred_df = pred_df.merge(sym_acc, on="Symbol", how="left")
     pred_df["history_direction_accuracy"] = pred_df["history_direction_accuracy"].fillna(0.5)
-    pred_df = build_prediction_policy_frame(pred_df)
+    pred_df = finalize_latest_prediction_frame(pred_df, symbol_name_map)
     pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: _format_percentage_text(v, digits=1, unit_interval=True))
     pred_df["예측 이유"] = pred_df["prediction_reason"]
     pred_df["권고"] = pred_df["recommendation"]
@@ -951,17 +659,17 @@ def run_pipeline(
     _print_prediction_console_summary(pred_df)
 
 
-def main():
+def build_cli_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Stock next-day prediction pipeline")
     parser.add_argument("--input", required=False, default="data/real_ohlcv.csv", help="OHLCV CSV path")
     parser.add_argument(
         "--output",
-        default=r"C:\Users\카운\Desktop\result\predictions_direct.csv",
+        default="result_detail.csv",
         help="Legacy option (CSV outputs are always saved as result_detail.csv and result_simple.csv under result/)",
     )
     parser.add_argument("--universe-csv", default=None, help="Optional universe CSV with Symbol column")
-    parser.add_argument("--report-json", default=r"C:\Users\카운\Desktop\result\pipeline_report.json", help="Pipeline summary JSON")
-    parser.add_argument("--figure-dir", default=r"C:\Users\카운\Desktop\result\figures", help="Directory for generated charts")
+    parser.add_argument("--report-json", default="pipeline_report.json", help="Pipeline summary JSON")
+    parser.add_argument("--figure-dir", default="figures", help="Directory for generated charts")
     parser.add_argument("--fetch-real", action="store_true", help="Fetch real OHLCV from yfinance before running")
     parser.add_argument("--disable-external", action="store_true", help="Disable external market feature download")
     parser.add_argument("--fetch-investor-context", action="store_true", help="Fetch investor flow context features (foreign/institution flows)")
@@ -979,6 +687,12 @@ def main():
     parser.add_argument("--min-up-probability", type=float, default=None, help="Override backtest minimum up probability")
     parser.add_argument("--min-signal-score", type=float, default=None, help="Override backtest minimum signal score")
     parser.add_argument(
+        "--min-external-coverage-ratio",
+        type=float,
+        default=None,
+        help="Override backtest minimum external feature coverage ratio",
+    )
+    parser.add_argument(
         "--real-symbols",
         nargs="*",
         default=None,
@@ -991,6 +705,11 @@ def main():
         default=None,
         help="Append user-entered stock codes/symbols into --input CSV (e.g., 005930 000660.KS)",
     )
+    return parser
+
+
+def main():
+    parser = build_cli_parser()
     args = parser.parse_args()
 
     input_csv = args.input
@@ -1034,6 +753,7 @@ def main():
         turnover_limit=args.turnover_limit,
         min_up_probability=args.min_up_probability,
         min_signal_score=args.min_signal_score,
+        min_external_coverage_ratio=args.min_external_coverage_ratio,
     )
 
 

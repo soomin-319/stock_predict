@@ -108,8 +108,11 @@ python src/pipeline.py \
 - `--min-value-traded`: 백테스트/리포트용 최소 거래대금 필터
 - `--turnover-limit`: 백테스트 turnover limit override
 - `--min-up-probability`, `--min-signal-score`: 백테스트 필터 override
+- `--min-external-coverage-ratio`: 외부 지표 커버리지 최소 비율 override
 - `--dart-api-key`: 레거시 옵션(현재 사용하지 않음)
 - `--dart-corp-map-csv`: 레거시 옵션(현재 사용하지 않음)
+
+기본 출력 파일명은 `result_detail.csv`, `pipeline_report.json`, `figures/`이며 실제 저장 위치는 항상 프로젝트의 `result/` 아래로 정규화됩니다.
 
 ## 입력 컬럼
 ### 필수

@@ -8,7 +8,8 @@ from src.config.settings import AppConfig
 from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
 from src.models.lgbm_heads import MultiHeadStockModel
-from src.pipeline import _ensure_universe_size, _split_oof_for_tuning_and_eval, resolve_output_path, run_pipeline
+from src.pipeline import _ensure_universe_size, _split_oof_for_tuning_and_eval, build_cli_parser, resolve_output_path, run_pipeline
+from src.pipeline_support import PredictionFrameContext, build_scored_prediction_frame
 
 
 def make_sample_df(days: int = 320):
@@ -164,6 +165,62 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "상승확률(%)" in simple_df.columns
     assert "예측 신뢰도" in simple_df.columns
     assert "예측 이유" in simple_df.columns
+
+
+def test_build_cli_parser_uses_project_relative_defaults_and_exposes_coverage_override():
+    parser = build_cli_parser()
+    args = parser.parse_args([])
+
+    assert args.output == "result_detail.csv"
+    assert args.report_json == "pipeline_report.json"
+    assert args.figure_dir == "figures"
+    assert hasattr(args, "min_external_coverage_ratio")
+
+
+def test_build_scored_prediction_frame_keeps_signal_label_separate_from_confidence_context():
+    from src.models.lgbm_heads import MultiHeadPrediction
+
+    cfg = AppConfig()
+    latest = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2024-01-01", "2024-01-01"]),
+            "Symbol": ["A", "B"],
+            "Close": [100.0, 101.0],
+            "market_regime": ["neutral", "neutral"],
+            "target_log_return": [0.01, -0.02],
+            "value_traded": [5_000_000_000.0, 6_000_000_000.0],
+            "turnover_rank_daily": [1, 20],
+            "foreign_net_buy": [120_000_000_000.0, -10.0],
+            "institution_net_buy": [120_000_000_000.0, -20.0],
+            "nq_f_ret_1d": [0.02, -0.02],
+            "rsi_14": [45.0, 72.0],
+            "near_52w_high_flag": [1, 0],
+            "breakout_52w_flag": [1, 0],
+            "leader_confirmation_flag": [1, 0],
+        }
+    )
+    pred = MultiHeadPrediction(
+        predicted_return=np.array([0.02, -0.01]),
+        up_probability=np.array([0.7, 0.4]),
+        quantile_low=np.array([-0.01, -0.03]),
+        quantile_mid=np.array([0.01, -0.01]),
+        quantile_high=np.array([0.04, 0.01]),
+    )
+
+    scored = build_scored_prediction_frame(
+        latest,
+        pred,
+        cfg.signal,
+        PredictionFrameContext(external_coverage_ratio=0.8, investor_coverage_ratio=0.7, min_liquidity_threshold=3_000_000_000.0),
+    )
+
+    assert "signal_label" in scored.columns
+    assert scored["signal_label"].astype(str).isin(
+        ["strong_negative", "weak_negative", "neutral", "weak_positive", "strong_positive"]
+    ).all()
+    assert "confidence_label" not in scored.columns
+    assert scored["external_coverage_ratio"].eq(0.8).all()
+    assert scored["investor_coverage_ratio"].eq(0.7).all()
 
 
 def test_run_pipeline_promotes_investor_context_to_separate_progress_step(tmp_path, monkeypatch, capsys):
