@@ -37,8 +37,8 @@
 
 ### P1: 성능·운영 고도화
 1. `price_features.py`의 컬럼 생성 방식을 `pd.concat` 중심으로 바꿔 fragmentation warning 제거
-2. sector/industry 메타데이터를 붙여 포트폴리오 편중 cap 추가
-3. 다중 호라이즌(5일/20일) 모델 헤드 확장
+2. sector/industry 메타데이터를 붙여 포트폴리오 편중 cap을 `market_type` cap에서 sector/industry cap으로 확장
+3. 다중 호라이즌(5일/20일) 모델 헤드는 반영되었으므로, 다음 단계는 호라이즌별 캘리브레이션/성과 리포트 추가
 
 ### P2: 실전 운용 확장
 4. 드리프트 감지/경보

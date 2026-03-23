@@ -54,6 +54,8 @@ class SignalConfig:
 @dataclass
 class BacktestConfig:
     top_k: int = 20
+    portfolio_value: float = 1_000_000_000.0
+    max_daily_participation: float = 0.10
     fee_bps: float = 10.0
     slippage_bps: float = 5.0
     dynamic_slippage_bps: float = 10.0
@@ -64,6 +66,8 @@ class BacktestConfig:
     turnover_limit: float = 0.5
     min_value_traded: float = 3_000_000_000.0
     min_external_coverage_ratio: float = 0.0
+    min_investor_coverage_ratio: float = 0.5
+    max_positions_per_market_type: int = 12
 
 
 @dataclass

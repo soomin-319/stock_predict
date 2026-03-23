@@ -67,6 +67,10 @@ def _run_fold(fold: FoldInput, feature_columns: List[str], cfg: TrainingConfig) 
         "leader_confirmation_flag",
         "ks11_ret_1d",
         "market_type",
+        "target_log_return_5d",
+        "target_up_5d",
+        "target_log_return_20d",
+        "target_up_20d",
     ]
     keep_cols = ["Date", "Symbol", "Close", "market_regime", "target_log_return", "target_up"] + [
         c for c in optional_cols if c in valid_df.columns
@@ -77,6 +81,10 @@ def _run_fold(fold: FoldInput, feature_columns: List[str], cfg: TrainingConfig) 
     oof["quantile_low"] = pred.quantile_low
     oof["quantile_mid"] = pred.quantile_mid
     oof["quantile_high"] = pred.quantile_high
+    for horizon, values in pred.horizon_predicted_return.items():
+        oof[f"predicted_return_{horizon}d"] = values
+    for horizon, values in pred.horizon_up_probability.items():
+        oof[f"up_probability_{horizon}d"] = values
     return result, oof
 
 

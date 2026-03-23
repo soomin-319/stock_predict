@@ -52,7 +52,9 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
             "risk_flag",
             "predicted_close",
             "predicted_return",
+            *([c for c in ["predicted_return_5d", "predicted_return_20d"] if c in out.columns]),
             "상승확률(%)",
+            *([c for c in ["up_probability_5d", "up_probability_20d"] if c in out.columns]),
             "예측 신뢰도",
             "예측 이유",
         ]
@@ -60,6 +62,10 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
         columns={
             "predicted_close": "내일 예상 종가",
             "predicted_return": "내일 예상 수익률(%)",
+            "predicted_return_5d": "5일 예상 수익률(%)",
+            "predicted_return_20d": "20일 예상 수익률(%)",
+            "up_probability_5d": "5일 상승확률(%)",
+            "up_probability_20d": "20일 상승확률(%)",
             "portfolio_action": "포트폴리오 액션",
             "trading_gate": "거래 게이트",
         }
@@ -68,6 +74,18 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
         lambda v: "-" if pd.isna(v) else f"{float(v):,.0f}원"
     )
     simple["내일 예상 수익률(%)"] = out["predicted_return"].map(lambda v: format_percentage_text(v, digits=3))
+    if "5일 예상 수익률(%)" in simple.columns:
+        simple["5일 예상 수익률(%)"] = out["predicted_return_5d"].map(lambda v: format_percentage_text(v, digits=3))
+    if "20일 예상 수익률(%)" in simple.columns:
+        simple["20일 예상 수익률(%)"] = out["predicted_return_20d"].map(lambda v: format_percentage_text(v, digits=3))
+    if "5일 상승확률(%)" in simple.columns:
+        simple["5일 상승확률(%)"] = pd.to_numeric(out["up_probability_5d"], errors="coerce").map(
+            lambda v: format_percentage_text(v, digits=1, unit_interval=True)
+        )
+    if "20일 상승확률(%)" in simple.columns:
+        simple["20일 상승확률(%)"] = pd.to_numeric(out["up_probability_20d"], errors="coerce").map(
+            lambda v: format_percentage_text(v, digits=1, unit_interval=True)
+        )
     simple["_sort_confidence"] = pd.to_numeric(out["confidence_score"], errors="coerce").values
     simple["_sort_return"] = pd.to_numeric(out["predicted_return"], errors="coerce").values
     simple = simple.sort_values(["_sort_confidence", "_sort_return"], ascending=[False, False]).reset_index(drop=True)

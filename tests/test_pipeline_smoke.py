@@ -115,6 +115,7 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert Path(payload["artifacts"]["result_simple_csv"]).exists()
     assert Path(payload["artifacts"]["actual_vs_predicted"]).exists()
     assert Path(payload["artifacts"]["actual_vs_predicted_price"]).exists()
+    assert Path(payload["artifacts"]["pm_report_json"]).exists()
     assert Path(payload["artifacts"]["symbol_summary_png"]).exists()
     assert Path(payload["artifacts"]["symbol_level_figure_dir"]).exists()
     assert payload["artifacts"]["symbol_level_figure_count"] > 0
@@ -137,10 +138,17 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "backtest_sharpe" in detail_df.columns
     assert "backtest_benchmark_cum_return" in detail_df.columns
     assert "backtest_excess_cum_return" in detail_df.columns
+    assert "predicted_return_5d" in detail_df.columns
+    assert "predicted_return_20d" in detail_df.columns
+    assert "up_probability_5d" in detail_df.columns
+    assert "up_probability_20d" in detail_df.columns
+    assert "coverage_gate_status" in detail_df.columns
     assert "foreign_net_buy" in detail_df.columns
     assert "institution_net_buy" in detail_df.columns
     assert "내일 예상 종가" in detail_df.columns
     assert "상승확률(%)" in detail_df.columns
+    assert "5일 예상 수익률(%)" in detail_df.columns
+    assert "20일 예상 수익률(%)" in detail_df.columns
     assert "disclosure_score" in detail_df.columns
     assert "news_sentiment" in detail_df.columns
     assert "news_relevance_score" in detail_df.columns
@@ -162,7 +170,11 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "거래 게이트" in simple_df.columns
     assert "내일 예상 종가" in simple_df.columns
     assert "내일 예상 수익률(%)" in simple_df.columns
+    assert "5일 예상 수익률(%)" in simple_df.columns
+    assert "20일 예상 수익률(%)" in simple_df.columns
     assert "상승확률(%)" in simple_df.columns
+    assert "5일 상승확률(%)" in simple_df.columns
+    assert "20일 상승확률(%)" in simple_df.columns
     assert "예측 신뢰도" in simple_df.columns
     assert "예측 이유" in simple_df.columns
 
@@ -175,6 +187,9 @@ def test_build_cli_parser_uses_project_relative_defaults_and_exposes_coverage_ov
     assert args.report_json == "pipeline_report.json"
     assert args.figure_dir == "figures"
     assert hasattr(args, "min_external_coverage_ratio")
+    assert hasattr(args, "min_investor_coverage_ratio")
+    assert hasattr(args, "portfolio_value")
+    assert hasattr(args, "max_daily_participation")
 
 
 def test_build_scored_prediction_frame_keeps_signal_label_separate_from_confidence_context():
@@ -205,6 +220,8 @@ def test_build_scored_prediction_frame_keeps_signal_label_separate_from_confiden
         quantile_low=np.array([-0.01, -0.03]),
         quantile_mid=np.array([0.01, -0.01]),
         quantile_high=np.array([0.04, 0.01]),
+        horizon_predicted_return={5: np.array([0.05, -0.02]), 20: np.array([0.1, -0.03])},
+        horizon_up_probability={5: np.array([0.72, 0.38]), 20: np.array([0.75, 0.35])},
     )
 
     scored = build_scored_prediction_frame(
@@ -219,6 +236,10 @@ def test_build_scored_prediction_frame_keeps_signal_label_separate_from_confiden
         ["strong_negative", "weak_negative", "neutral", "weak_positive", "strong_positive"]
     ).all()
     assert "confidence_label" not in scored.columns
+    assert "predicted_return_5d" in scored.columns
+    assert "predicted_return_20d" in scored.columns
+    assert "up_probability_5d" in scored.columns
+    assert "up_probability_20d" in scored.columns
     assert scored["external_coverage_ratio"].eq(0.8).all()
     assert scored["investor_coverage_ratio"].eq(0.7).all()
 

@@ -12,6 +12,10 @@ from src.models.lgbm_heads import MultiHeadPrediction
 
 OPTIONAL_PREDICTION_COLUMNS = [
     "target_log_return",
+    "target_log_return_5d",
+    "target_up_5d",
+    "target_log_return_20d",
+    "target_up_20d",
     "vol_ratio_20",
     "value_traded",
     "turnover_rank_daily",
@@ -95,6 +99,12 @@ def finalize_latest_prediction_frame(pred_df: pd.DataFrame, symbol_name_map: dic
     out["symbol_name"] = out["Symbol"].astype(str).map(symbol_name_map).fillna(out["Symbol"].astype(str))
     out["confidence_score"] = (1 - out["uncertainty_score"].fillna(1)).clip(lower=0, upper=1)
     out["confidence_label"] = out["confidence_score"].map(confidence_label)
+    if {"predicted_return_5d", "predicted_return_20d"}.issubset(set(out.columns)):
+        out["horizon_alignment"] = (
+            (pd.to_numeric(out["predicted_return"], errors="coerce").fillna(0.0) > 0).astype(int)
+            + (pd.to_numeric(out["predicted_return_5d"], errors="coerce").fillna(0.0) > 0).astype(int)
+            + (pd.to_numeric(out["predicted_return_20d"], errors="coerce").fillna(0.0) > 0).astype(int)
+        )
     out = build_prediction_policy_frame(out)
     return out
 

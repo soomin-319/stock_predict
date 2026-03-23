@@ -68,6 +68,9 @@ def confidence_label(confidence_score: float | int | None) -> str:
 
 def risk_flag(row: pd.Series) -> str:
     flags = []
+    coverage_status = str(row.get("coverage_gate_status", "") or "").lower()
+    if coverage_status == "halt":
+        flags.append("COVERAGE_HALT")
     if float(row.get("uncertainty_score", 0) or 0) >= 0.75:
         flags.append("HIGH_UNCERTAINTY")
     if float(row.get("up_probability", 0) or 0) < 0.5:
@@ -82,6 +85,12 @@ def risk_flag(row: pd.Series) -> str:
         flags.append("DATA_COVERAGE_LOW")
     if float(row.get("market_headwind_score", 0) or 0) <= -1:
         flags.append("MARKET_HEADWIND")
+    pred_5d = pd.to_numeric(pd.Series([row.get("predicted_return_5d")]), errors="coerce").iloc[0]
+    pred_20d = pd.to_numeric(pd.Series([row.get("predicted_return_20d")]), errors="coerce").iloc[0]
+    if not pd.isna(pred_5d) and not pd.isna(pred_20d) and pred_5d < 0 < pred_20d:
+        flags.append("SHORT_TERM_PULLBACK")
+    if not pd.isna(pred_5d) and not pd.isna(pred_20d) and pred_5d > 0 > pred_20d:
+        flags.append("LONG_TERM_DOWNSIDE")
     return "|".join(flags) if flags else "NORMAL"
 
 
@@ -187,6 +196,10 @@ def prediction_reason(row: pd.Series) -> str:
     near_52w_high_flag = float(row.get("near_52w_high_flag", 0) or 0)
     nq_ret = float(row.get("nq_f_ret_1d", 0) or 0)
     liquidity = float(row.get("value_traded", 0) or 0)
+    pred_5d = pd.to_numeric(pd.Series([row.get("predicted_return_5d")]), errors="coerce").iloc[0]
+    pred_20d = pd.to_numeric(pd.Series([row.get("predicted_return_20d")]), errors="coerce").iloc[0]
+    up_prob_5d = pd.to_numeric(pd.Series([row.get("up_probability_5d")]), errors="coerce").iloc[0]
+    up_prob_20d = pd.to_numeric(pd.Series([row.get("up_probability_20d")]), errors="coerce").iloc[0]
 
     if turnover_rank <= 15:
         reasons.append("수급: 거래대금 상위권이며 거래대금 상위 15위 종목입니다")
@@ -212,6 +225,12 @@ def prediction_reason(row: pd.Series) -> str:
         reasons.append("주의: 불확실성이 높아 비중을 줄이는 편이 좋습니다")
     if liquidity > 0 and row.get("min_liquidity_threshold") is not None and liquidity < float(row.get("min_liquidity_threshold") or 0):
         reasons.append("유동성: 거래대금 기준이 낮아 체결 리스크가 있습니다")
+    if not pd.isna(pred_5d) and not pd.isna(pred_20d):
+        reasons.append(f"호라이즌: 5일 {pred_5d:.2f}%, 20일 {pred_20d:.2f}% 기대수익률입니다")
+    if not pd.isna(up_prob_5d) and not pd.isna(up_prob_20d):
+        reasons.append(f"중기확률: 5일 {up_prob_5d * 100:.1f}%, 20일 {up_prob_20d * 100:.1f}%입니다")
+    if str(row.get("coverage_gate_status", "") or "").lower() == "halt":
+        reasons.append("운용게이트: 데이터 커버리지가 낮아 오늘은 거래를 중단합니다")
 
     if not reasons:
         reasons.append("종합: 신호·수급·추세가 중립권이라 모델 점수를 중심으로 판단했습니다")
@@ -222,7 +241,10 @@ def build_pm_summary_fields(row: pd.Series) -> dict[str, str]:
     action = _policy_recommendation(row)
     risk = risk_flag(row)
     position_size = _position_size_hint(row.get("confidence_score"), risk)
-    if action == "매수" and position_size == "중간":
+    coverage_status = str(row.get("coverage_gate_status", "") or "").lower()
+    if coverage_status == "halt":
+        portfolio_action = "거래보류"
+    elif action == "매수" and position_size == "중간":
         portfolio_action = "신규매수"
     elif action == "매수":
         portfolio_action = "관심관찰"
@@ -231,7 +253,9 @@ def build_pm_summary_fields(row: pd.Series) -> dict[str, str]:
     else:
         portfolio_action = "관망"
 
-    if "MARKET_HEADWIND" in risk or "DATA_COVERAGE_LOW" in risk:
+    if coverage_status == "halt" or "COVERAGE_HALT" in risk:
+        trading_gate = "거래중단"
+    elif "MARKET_HEADWIND" in risk or "DATA_COVERAGE_LOW" in risk or "LONG_TERM_DOWNSIDE" in risk:
         trading_gate = "보수모드"
     elif "LOW_LIQUIDITY" in risk:
         trading_gate = "체결주의"

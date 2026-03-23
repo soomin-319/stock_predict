@@ -4,11 +4,15 @@
   },
   "backtest": {
     "top_k": 20,
+    "portfolio_value": 1000000000.0,
+    "max_daily_participation": 0.1,
     "fee_bps": 10.0,
     "slippage_bps": 5.0,
     "dynamic_slippage_bps": 10.0,
     "turnover_limit": 0.5,
     "min_value_traded": 3000000000.0,
+    "min_investor_coverage_ratio": 0.5,
+    "max_positions_per_market_type": 12,
     "min_up_probability": 0.5,
     "min_signal_score": 0.0
   }

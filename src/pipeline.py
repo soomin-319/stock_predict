@@ -39,6 +39,7 @@ from src.pipeline_support import (
     build_symbol_history_accuracy,
     finalize_latest_prediction_frame,
 )
+from src.reports.pm_report import build_pm_report, save_pm_report
 from src.reports.result_formatter import (
     build_result_simple as formatter_build_result_simple,
     format_percentage_text as formatter_format_percentage_text,
@@ -230,6 +231,9 @@ def _backtest_summary_fields(backtest: dict) -> dict[str, float]:
         "avg_selected_count",
         "benchmark_cum_return",
         "excess_cum_return",
+        "halted_days",
+        "liquidity_blocked_days",
+        "avg_market_type_count",
     ]
     out = {}
     for k in keys:
@@ -252,6 +256,18 @@ def _print_backtest_console_summary(backtest: dict):
 def _print_prediction_console_summary(pred_df: pd.DataFrame):
     formatter_print_prediction_console_summary(pred_df)
 
+
+def _coverage_gate_status(cfg, external_coverage_ratio: float, investor_coverage_ratio: float) -> str:
+    if cfg.backtest.min_external_coverage_ratio > 0 and external_coverage_ratio < cfg.backtest.min_external_coverage_ratio:
+        return "halt"
+    if cfg.backtest.min_investor_coverage_ratio > 0 and investor_coverage_ratio < cfg.backtest.min_investor_coverage_ratio:
+        return "halt"
+    if external_coverage_ratio < max(0.7, cfg.backtest.min_external_coverage_ratio) or investor_coverage_ratio < max(
+        0.7, cfg.backtest.min_investor_coverage_ratio
+    ):
+        return "caution"
+    return "normal"
+
 def _split_oof_for_tuning_and_eval(scored_oof: pd.DataFrame, tune_ratio: float = 0.7) -> tuple[pd.DataFrame, pd.DataFrame]:
     dates = sorted(pd.to_datetime(scored_oof["Date"]).dropna().unique())
     if len(dates) < 10:
@@ -269,12 +285,23 @@ def _split_oof_for_tuning_and_eval(scored_oof: pd.DataFrame, tune_ratio: float =
 
 
 def _prediction_from_oof_df(oof: pd.DataFrame) -> MultiHeadPrediction:
+    horizon_predicted_return = {}
+    horizon_up_probability = {}
+    for horizon in (5, 20):
+        pred_col = f"predicted_return_{horizon}d"
+        prob_col = f"up_probability_{horizon}d"
+        if pred_col in oof.columns:
+            horizon_predicted_return[horizon] = oof[pred_col].values
+        if prob_col in oof.columns:
+            horizon_up_probability[horizon] = oof[prob_col].values
     return MultiHeadPrediction(
         predicted_return=oof["predicted_return"].values,
         up_probability=oof["up_probability"].values,
         quantile_low=oof["quantile_low"].values,
         quantile_mid=oof["quantile_mid"].values,
         quantile_high=oof["quantile_high"].values,
+        horizon_predicted_return=horizon_predicted_return,
+        horizon_up_probability=horizon_up_probability,
     )
 
 def _print_progress(step: int, total: int, message: str):
@@ -417,6 +444,10 @@ def run_pipeline(
     min_up_probability: float | None = None,
     min_signal_score: float | None = None,
     min_external_coverage_ratio: float | None = None,
+    min_investor_coverage_ratio: float | None = None,
+    portfolio_value: float | None = None,
+    max_daily_participation: float | None = None,
+    max_positions_per_market_type: int | None = None,
 ):
     total_steps = 13
     _print_progress(1, total_steps, "Loading app configuration")
@@ -431,6 +462,14 @@ def run_pipeline(
         cfg_overrides["backtest"]["min_signal_score"] = float(min_signal_score)
     if min_external_coverage_ratio is not None:
         cfg_overrides["backtest"]["min_external_coverage_ratio"] = float(min_external_coverage_ratio)
+    if min_investor_coverage_ratio is not None:
+        cfg_overrides["backtest"]["min_investor_coverage_ratio"] = float(min_investor_coverage_ratio)
+    if portfolio_value is not None:
+        cfg_overrides["backtest"]["portfolio_value"] = float(portfolio_value)
+    if max_daily_participation is not None:
+        cfg_overrides["backtest"]["max_daily_participation"] = float(max_daily_participation)
+    if max_positions_per_market_type is not None:
+        cfg_overrides["backtest"]["max_positions_per_market_type"] = int(max_positions_per_market_type)
     if not cfg_overrides["backtest"]:
         cfg_overrides = {}
     cfg = load_app_config(config_json, overrides=cfg_overrides or None)
@@ -510,6 +549,7 @@ def run_pipeline(
         investor_requested += int(investor_context_coverage.get(key, {}).get("requested", 0))
         investor_successful += int(investor_context_coverage.get(key, {}).get("successful", 0))
     investor_coverage_ratio = float(investor_successful) / float(investor_requested or 1) if investor_requested else 1.0
+    coverage_gate_status = _coverage_gate_status(cfg, external_coverage_ratio, investor_coverage_ratio)
     prediction_context = PredictionFrameContext(
         external_coverage_ratio=external_coverage_ratio,
         investor_coverage_ratio=investor_coverage_ratio,
@@ -519,6 +559,7 @@ def run_pipeline(
     oof_pred = _prediction_from_oof_df(oof)
     oof_pred.up_probability = _calibrate_up_probability(oof, oof_pred.up_probability).values
     scored_oof = build_scored_prediction_frame(oof, oof_pred, cfg.signal, prediction_context)
+    scored_oof["coverage_gate_status"] = coverage_gate_status
 
     tune_df, eval_df = _split_oof_for_tuning_and_eval(scored_oof, tune_ratio=0.7)
 
@@ -530,6 +571,7 @@ def run_pipeline(
     cfg.signal.uncertainty_penalty = tuned["uncertainty_penalty"]
 
     scored_oof = build_scored_prediction_frame(oof, oof_pred, cfg.signal, prediction_context)
+    scored_oof["coverage_gate_status"] = coverage_gate_status
     tune_df, eval_df = _split_oof_for_tuning_and_eval(scored_oof, tune_ratio=0.7)
 
     _print_progress(11, total_steps, "Running backtest on holdout split and creating figures")
@@ -557,6 +599,7 @@ def run_pipeline(
     latest_pred = model.predict(latest)
     latest_pred.up_probability = _calibrate_up_probability(scored_oof, latest_pred.up_probability).values
     pred_df = build_scored_prediction_frame(latest, latest_pred, cfg.signal, prediction_context)
+    pred_df["coverage_gate_status"] = coverage_gate_status
     symbol_name_map = get_symbol_name_map(pred_df["Symbol"].dropna().astype(str).tolist())
     sym_acc = build_symbol_history_accuracy(scored_oof)
     pred_df = pred_df.merge(sym_acc, on="Symbol", how="left")
@@ -587,6 +630,18 @@ def run_pipeline(
     detail_df["up_probability_display"] = detail_df["up_probability"].map(
         lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
     )
+    if "predicted_return_5d" in detail_df.columns:
+        detail_df["5일 예상 수익률(%)"] = detail_df["predicted_return_5d"].map(lambda v: _format_percentage_text(v, digits=3))
+    if "predicted_return_20d" in detail_df.columns:
+        detail_df["20일 예상 수익률(%)"] = detail_df["predicted_return_20d"].map(lambda v: _format_percentage_text(v, digits=3))
+    if "up_probability_5d" in detail_df.columns:
+        detail_df["5일 상승확률(%)"] = detail_df["up_probability_5d"].map(
+            lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
+        )
+    if "up_probability_20d" in detail_df.columns:
+        detail_df["20일 상승확률(%)"] = detail_df["up_probability_20d"].map(
+            lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
+        )
     detail_df["confidence_score_display"] = detail_df["confidence_score"].map(
         lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
     )
@@ -618,6 +673,7 @@ def run_pipeline(
             "external_coverage_ratio": external_coverage_ratio,
             "investor_coverage_ratio": investor_coverage_ratio,
             "min_value_traded": cfg.backtest.min_value_traded,
+            "status": coverage_gate_status,
         },
         "oof_diagnostics": oof_diagnostics,
         "probability_calibration": probability_calibration_metrics(
@@ -651,6 +707,11 @@ def run_pipeline(
             **symbol_summary_artifacts,
         },
     }
+
+    pm_report_path = resolve_output_path("pm_report.json")
+    pm_report = build_pm_report(pred_df, report)
+    save_pm_report(pm_report, pm_report_path)
+    report["artifacts"]["pm_report_json"] = str(pm_report_path)
 
     if report_json:
         report_path = resolve_output_path(report_json)
@@ -691,6 +752,25 @@ def build_cli_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Override backtest minimum external feature coverage ratio",
+    )
+    parser.add_argument(
+        "--min-investor-coverage-ratio",
+        type=float,
+        default=None,
+        help="Override backtest minimum investor context coverage ratio",
+    )
+    parser.add_argument("--portfolio-value", type=float, default=None, help="Backtest portfolio notional for liquidity capacity checks")
+    parser.add_argument(
+        "--max-daily-participation",
+        type=float,
+        default=None,
+        help="Maximum share of daily traded value allowed per position",
+    )
+    parser.add_argument(
+        "--max-positions-per-market-type",
+        type=int,
+        default=None,
+        help="Maximum number of holdings allowed per market_type bucket",
     )
     parser.add_argument(
         "--real-symbols",
@@ -754,6 +834,10 @@ def main():
         min_up_probability=args.min_up_probability,
         min_signal_score=args.min_signal_score,
         min_external_coverage_ratio=args.min_external_coverage_ratio,
+        min_investor_coverage_ratio=args.min_investor_coverage_ratio,
+        portfolio_value=args.portfolio_value,
+        max_daily_participation=args.max_daily_participation,
+        max_positions_per_market_type=args.max_positions_per_market_type,
     )
 
 

@@ -61,6 +61,8 @@
   - `target_log_return`
   - `target_up`
   - `target_close`
+  - `target_log_return_5d`, `target_up_5d`, `target_close_5d`
+  - `target_log_return_20d`, `target_up_20d`, `target_close_20d`
 
 ### 4.2 외부 시장 피처 (`src/features/external_features.py`)
 - KOSPI/KOSDAQ/S&P500/NASDAQ/SOX/VIX/USDKRW/미국10년금리 수집
@@ -79,6 +81,7 @@
 - 회귀 헤드: 다음날 로그수익률
 - 분류 헤드: 상승 확률
 - 분위수 회귀 헤드: 불확실성 밴드
+- 추가 호라이즌 헤드: 5일/20일 로그수익률 + 상승확률
 - LightGBM 사용 가능 환경에서는 LightGBM 우선 사용, 미설치 시 sklearn GBDT fallback
 
 ### 5.2 검증 (`src/validation/walk_forward.py`)
@@ -107,7 +110,8 @@
 ### 6.3 백테스트 (`src/validation/backtest.py`)
 - Long-only Top-K
 - `min_up_probability`, `min_signal_score` 필터 적용
-- 최소 거래대금 필터, turnover cap, 동적 슬리피지 시나리오
+- 최소 거래대금 필터, 커버리지 halt, 거래대금 참여율(capacity) 체크
+- `market_type` 기준 편중 cap, turnover cap, 동적 슬리피지 시나리오
 - 누적수익률, Sharpe, MDD + 평균 turnover/평균 선정 종목 수 계산
 - benchmark/excess return 및 비용 시나리오 비교
 
@@ -140,6 +144,7 @@
 - 예측 결과: `--output`
 - 실행 리포트: `--report-json` (외부지표 coverage, tuning/backtest 샘플, 백테스트 확장 지표 포함)
 - PM 요약: `portfolio_action`, `trading_gate`, `risk_flag`, `confidence_label`
+- PM 리포트 아티팩트: `pm_report.json`
 - OOF 결과: `reports/oof_predictions.csv`
 - 그래프: `--figure-dir/*.png`
 

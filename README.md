@@ -109,6 +109,10 @@ python src/pipeline.py \
 - `--turnover-limit`: 백테스트 turnover limit override
 - `--min-up-probability`, `--min-signal-score`: 백테스트 필터 override
 - `--min-external-coverage-ratio`: 외부 지표 커버리지 최소 비율 override
+- `--min-investor-coverage-ratio`: 투자자 컨텍스트 커버리지 최소 비율 override
+- `--portfolio-value`: 백테스트 포트폴리오 총 운용금액(유동성/참여율 체크)
+- `--max-daily-participation`: 종목별 하루 거래대금 대비 최대 참여율
+- `--max-positions-per-market-type`: `market_type` 버킷별 최대 편입 종목 수
 - `--dart-api-key`: 레거시 옵션(현재 사용하지 않음)
 - `--dart-corp-map-csv`: 레거시 옵션(현재 사용하지 않음)
 
@@ -152,6 +156,8 @@ python src/pipeline.py \
 ### 예측 CSV 주요 컬럼
 - `predicted_log_return`, `predicted_return`, `up_probability`
 - `uncertainty_width`, `uncertainty_score`, `signal_score`, `signal_label`
+- `predicted_return_5d`, `predicted_return_20d`
+- `up_probability_5d`, `up_probability_20d`
 - `confidence_score`, `confidence_label`
 - `history_direction_accuracy`, `risk_flag`, `position_size_hint`
 - `portfolio_action`, `trading_gate`
@@ -164,6 +170,7 @@ python src/pipeline.py \
 - `investor_context_coverage`
 - `coverage_gate`
 - `pm_summary`
+- `artifacts.pm_report_json`
 - `config`
 - `artifacts`
 
