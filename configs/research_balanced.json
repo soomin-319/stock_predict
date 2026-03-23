@@ -1,0 +1,15 @@
+{
+  "universe": {
+    "name": "KOSPI200_KOSDAQ150"
+  },
+  "backtest": {
+    "top_k": 20,
+    "fee_bps": 10.0,
+    "slippage_bps": 5.0,
+    "dynamic_slippage_bps": 10.0,
+    "turnover_limit": 0.5,
+    "min_value_traded": 3000000000.0,
+    "min_up_probability": 0.5,
+    "min_signal_score": 0.0
+  }
+}

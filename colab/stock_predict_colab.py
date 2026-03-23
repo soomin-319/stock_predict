@@ -71,6 +71,22 @@ def _should_bootstrap_default_symbols(input_csv: str | Path) -> bool:
     return not all(_looks_like_krx_symbol(symbol) for symbol in symbols)
 
 
+def _print_colab_preview(path: str | Path, rows: int = 5):
+    preview_path = _resolve_project_path(path)
+    if not preview_path.exists():
+        return
+    try:
+        df = pd.read_csv(preview_path)
+    except Exception:
+        return
+    if df.empty:
+        return
+    cols = [c for c in ["종목코드", "종목명", "권고", "포트폴리오 액션", "내일 예상 수익률(%)", "예측 신뢰도"] if c in df.columns]
+    shown = df[cols].head(rows) if cols else df.head(rows)
+    print("[Colab] result_simple.csv preview")
+    print(shown.to_string(index=False))
+
+
 def run_colab_pipeline(
     input_csv: str = "data/sample_ohlcv.csv",
     universe_csv: str | None = None,
@@ -78,17 +94,24 @@ def run_colab_pipeline(
     figure_dir: str = "figures_colab",
     use_external: bool = False,
     use_investor_context: bool = False,
+    enable_investor_flow: bool = True,
+    enable_investor_disclosure: bool = True,
+    enable_investor_news: bool = True,
+    news_scoring_mode: str = "auto",
+    openai_api_key: str | None = None,
+    openai_model: str | None = None,
     dart_api_key: str | None = None,
     dart_corp_map_csv: str | None = None,
     bootstrap_default_symbols: bool = True,
     real_start: str = "2018-01-01",
+    config_json: str | None = None,
 ) -> dict[str, str]:
     pipeline_input = input_csv
     if bootstrap_default_symbols and _should_bootstrap_default_symbols(input_csv):
         default_symbols = _fallback_symbols_from_input_or_default(input_csv)
         bootstrap_target = PROJECT_ROOT / "data" / "real_ohlcv.csv"
         print(
-            f"[Colab] demo/placeholder 입력을 감지해 기본 KRX 22종목 데이터를 먼저 수집합니다: {len(default_symbols)} symbols"
+            f"[Colab] demo/placeholder 입력을 감지해 기본 KRX 유니버스를 먼저 수집합니다: {len(default_symbols)} symbols"
         )
         save_real_ohlcv_csv(bootstrap_target, symbols=default_symbols, start=real_start)
         pipeline_input = str(Path("data") / "real_ohlcv.csv")
@@ -103,6 +126,13 @@ def run_colab_pipeline(
         use_investor_context=use_investor_context,
         dart_api_key=dart_api_key,
         dart_corp_map_csv=dart_corp_map_csv,
+        config_json=config_json,
+        enable_investor_flow=enable_investor_flow,
+        enable_investor_disclosure=enable_investor_disclosure,
+        enable_investor_news=enable_investor_news,
+        news_scoring_mode=news_scoring_mode,
+        openai_api_key=openai_api_key,
+        openai_model=openai_model,
     )
 
     result_dir = PROJECT_ROOT / "result"

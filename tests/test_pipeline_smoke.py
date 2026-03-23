@@ -122,12 +122,20 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     detail_df = pd.read_csv(detail_path)
     simple_df = pd.read_csv(simple_path)
     assert "signal_label" in detail_df.columns
-    assert detail_df["signal_label"].astype(str).str.contains("신뢰도").all()
+    assert detail_df["signal_label"].astype(str).isin(
+        ["strong_negative", "weak_negative", "neutral", "weak_positive", "strong_positive"]
+    ).all()
+    assert "confidence_label" in detail_df.columns
+    assert detail_df["confidence_label"].astype(str).str.contains("신뢰도").all()
     assert "history_direction_accuracy" in detail_df.columns
     assert "risk_flag" in detail_df.columns
     assert "position_size_hint" in detail_df.columns
+    assert "portfolio_action" in detail_df.columns
+    assert "trading_gate" in detail_df.columns
     assert "backtest_cum_return" in detail_df.columns
     assert "backtest_sharpe" in detail_df.columns
+    assert "backtest_benchmark_cum_return" in detail_df.columns
+    assert "backtest_excess_cum_return" in detail_df.columns
     assert "foreign_net_buy" in detail_df.columns
     assert "institution_net_buy" in detail_df.columns
     assert "내일 예상 종가" in detail_df.columns
@@ -149,6 +157,8 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "종목코드" in simple_df.columns
     assert "종목명" in simple_df.columns
     assert "권고" in simple_df.columns
+    assert "포트폴리오 액션" in simple_df.columns
+    assert "거래 게이트" in simple_df.columns
     assert "내일 예상 종가" in simple_df.columns
     assert "내일 예상 수익률(%)" in simple_df.columns
     assert "상승확률(%)" in simple_df.columns

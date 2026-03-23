@@ -1,0 +1,16 @@
+{
+  "universe": {
+    "name": "KOSPI200_KOSDAQ150_CONSERVATIVE"
+  },
+  "backtest": {
+    "top_k": 12,
+    "fee_bps": 10.0,
+    "slippage_bps": 7.5,
+    "dynamic_slippage_bps": 15.0,
+    "conservative_slippage_multiplier": 1.75,
+    "turnover_limit": 0.3,
+    "min_value_traded": 10000000000.0,
+    "min_up_probability": 0.58,
+    "min_signal_score": 0.1
+  }
+}
