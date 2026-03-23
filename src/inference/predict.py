@@ -58,4 +58,10 @@ def build_prediction_frame(
         - signal_cfg.uncertainty_penalty * out["uncertainty_score"]
     )
     out["signal_label"] = signal_label_series(out["signal_score"])
+    for horizon, values in sorted(pred.horizon_predicted_return.items()):
+        out[f"predicted_log_return_{horizon}d"] = values
+        out[f"predicted_return_{horizon}d"] = np.expm1(values) * 100.0
+        out[f"predicted_close_{horizon}d"] = out["Close"] * np.exp(values)
+    for horizon, values in sorted(pred.horizon_up_probability.items()):
+        out[f"up_probability_{horizon}d"] = values
     return out

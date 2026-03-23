@@ -1,4 +1,8 @@
-from dataclasses import dataclass, field
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass, field, fields, is_dataclass
+from pathlib import Path
 from typing import List
 
 
@@ -50,12 +54,20 @@ class SignalConfig:
 @dataclass
 class BacktestConfig:
     top_k: int = 20
+    portfolio_value: float = 1_000_000_000.0
+    max_daily_participation: float = 0.10
     fee_bps: float = 10.0
     slippage_bps: float = 5.0
     dynamic_slippage_bps: float = 10.0
+    conservative_slippage_multiplier: float = 1.5
+    aggressive_slippage_multiplier: float = 0.75
     min_up_probability: float = 0.50
     min_signal_score: float = 0.0
     turnover_limit: float = 0.5
+    min_value_traded: float = 3_000_000_000.0
+    min_external_coverage_ratio: float = 0.0
+    min_investor_coverage_ratio: float = 0.5
+    max_positions_per_market_type: int = 12
 
 
 @dataclass
@@ -66,3 +78,33 @@ class AppConfig:
     training: TrainingConfig = field(default_factory=TrainingConfig)
     signal: SignalConfig = field(default_factory=SignalConfig)
     backtest: BacktestConfig = field(default_factory=BacktestConfig)
+
+
+def _merge_dataclass_config(instance, overrides: dict):
+    valid_fields = {f.name: f for f in fields(instance)}
+    for key, value in overrides.items():
+        if key not in valid_fields:
+            continue
+        current = getattr(instance, key)
+        if is_dataclass(current) and isinstance(value, dict):
+            _merge_dataclass_config(current, value)
+        else:
+            setattr(instance, key, value)
+    return instance
+
+
+def load_app_config(config_path: str | Path | None = None, overrides: dict | None = None) -> AppConfig:
+    cfg = AppConfig()
+    payload: dict = {}
+    if config_path:
+        path = Path(config_path)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload:
+        _merge_dataclass_config(cfg, payload)
+    if overrides:
+        _merge_dataclass_config(cfg, overrides)
+    return cfg
+
+
+def app_config_to_dict(cfg: AppConfig) -> dict:
+    return asdict(cfg)

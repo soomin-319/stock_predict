@@ -362,7 +362,13 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out = out.drop(columns=list(legacy_removed_default_map.keys()), errors="ignore")
 
     out = out.copy()
-    out["target_log_return"] = grouped["Close"].transform(lambda x: np.log(x.shift(-1) / x))
-    out["target_up"] = (out["target_log_return"] > 0).astype(int)
-    out["target_close"] = out["Close"] * np.exp(out["target_log_return"])
+    horizon_map = {
+        1: ("target_log_return", "target_up", "target_close"),
+        5: ("target_log_return_5d", "target_up_5d", "target_close_5d"),
+        20: ("target_log_return_20d", "target_up_20d", "target_close_20d"),
+    }
+    for horizon, (return_col, up_col, close_col) in horizon_map.items():
+        out[return_col] = grouped["Close"].transform(lambda x, h=horizon: np.log(x.shift(-h) / x))
+        out[up_col] = (out[return_col] > 0).astype(int)
+        out[close_col] = out["Close"] * np.exp(out[return_col])
     return out

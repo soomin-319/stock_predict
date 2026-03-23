@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
 import numpy as np
@@ -23,6 +23,8 @@ class MultiHeadPrediction:
     quantile_low: np.ndarray
     quantile_mid: np.ndarray
     quantile_high: np.ndarray
+    horizon_predicted_return: dict[int, np.ndarray] = field(default_factory=dict)
+    horizon_up_probability: dict[int, np.ndarray] = field(default_factory=dict)
 
 
 class MultiHeadStockModel:
@@ -39,6 +41,8 @@ class MultiHeadStockModel:
         self.reg_model = None
         self.cls_model = None
         self.quantile_models: Dict[float, Any] = {}
+        self.horizon_reg_models: Dict[int, Any] = {}
+        self.horizon_cls_models: Dict[int, Any] = {}
         self.backend: str = "lightgbm" if LIGHTGBM_AVAILABLE else "sklearn"
 
     def _lightgbm_params(self) -> dict[str, Any]:
@@ -107,6 +111,24 @@ class MultiHeadStockModel:
             qm.fit(x, y_reg)
             self.quantile_models[q] = qm
 
+        self.horizon_reg_models = {}
+        self.horizon_cls_models = {}
+        for horizon in (5, 20):
+            reg_target = f"target_log_return_{horizon}d"
+            cls_target = f"target_up_{horizon}d"
+            if reg_target not in train.columns or cls_target not in train.columns:
+                continue
+            horizon_train = train.dropna(subset=feature_columns + [reg_target, cls_target])
+            if horizon_train.empty:
+                continue
+            horizon_x = horizon_train[feature_columns]
+            reg_model = self._build_regressor()
+            reg_model.fit(horizon_x, horizon_train[reg_target])
+            cls_model = self._build_classifier()
+            cls_model.fit(horizon_x, horizon_train[cls_target])
+            self.horizon_reg_models[horizon] = reg_model
+            self.horizon_cls_models[horizon] = cls_model
+
     def predict(self, df: pd.DataFrame) -> MultiHeadPrediction:
         if not self._feature_columns:
             raise RuntimeError("Model is not fitted.")
@@ -118,6 +140,12 @@ class MultiHeadStockModel:
 
         quantiles = sorted(self.quantile_models)
         q_preds = {q: self.quantile_models[q].predict(x) for q in quantiles}
+        horizon_predicted_return = {
+            horizon: model.predict(x) for horizon, model in self.horizon_reg_models.items()
+        }
+        horizon_up_probability = {
+            horizon: model.predict_proba(x)[:, 1] for horizon, model in self.horizon_cls_models.items()
+        }
 
         return MultiHeadPrediction(
             predicted_return=predicted_return,
@@ -125,4 +153,6 @@ class MultiHeadStockModel:
             quantile_low=q_preds[quantiles[0]],
             quantile_mid=q_preds[quantiles[1]],
             quantile_high=q_preds[quantiles[2]],
+            horizon_predicted_return=horizon_predicted_return,
+            horizon_up_probability=horizon_up_probability,
         )
