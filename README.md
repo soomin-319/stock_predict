@@ -7,8 +7,10 @@
 - 회귀 + 분류 + 분위수 예측(불확실성 포함)
 - 외부 시장 지표(지수/환율/금리) feature
 - 투자자 수급 컨텍스트 feature(외국인·기관 수급) 선택 연동
+- 설정 JSON 기반 실행 모드 분리(research / conservative production 예시 포함)
 - 리포트/그래프/OOF CSV 자동 생성
 - 콘솔 Top10 출력(방향정확도 중심)
+- 포트폴리오 액션/거래 게이트/리스크 플래그 기반 PM 요약
 
 ## 설치
 ```bash
@@ -97,8 +99,20 @@ python src/pipeline.py \
 - `--add-symbols`: 기존 입력 CSV에 사용자 심볼 추가 수집
 - `--disable-external`: 외부 시장 지표 feature 비활성화
 - `--fetch-investor-context`: 투자자 수급 컨텍스트(외국인/기관 순매수) 연동 활성화
+- `--disable-investor-flow`: 투자자 수급(pykrx) 비활성화
+- `--disable-disclosure-context`: 공시 컨텍스트 비활성화
+- `--disable-news-context`: 뉴스 컨텍스트 비활성화
+- `--news-scoring-mode`: `auto` / `rule` / `ai`
+- `--openai-api-key`, `--openai-model`: AI 뉴스 점수화 옵션
+- `--config-json`: `configs/*.json` 형식의 AppConfig 오버라이드
+- `--min-value-traded`: 백테스트/리포트용 최소 거래대금 필터
+- `--turnover-limit`: 백테스트 turnover limit override
+- `--min-up-probability`, `--min-signal-score`: 백테스트 필터 override
+- `--min-external-coverage-ratio`: 외부 지표 커버리지 최소 비율 override
 - `--dart-api-key`: 레거시 옵션(현재 사용하지 않음)
 - `--dart-corp-map-csv`: 레거시 옵션(현재 사용하지 않음)
+
+기본 출력 파일명은 `result_detail.csv`, `pipeline_report.json`, `figures/`이며 실제 저장 위치는 항상 프로젝트의 `result/` 아래로 정규화됩니다.
 
 ## 입력 컬럼
 ### 필수
@@ -138,7 +152,9 @@ python src/pipeline.py \
 ### 예측 CSV 주요 컬럼
 - `predicted_log_return`, `predicted_return`, `up_probability`
 - `uncertainty_width`, `uncertainty_score`, `signal_score`, `signal_label`
+- `confidence_score`, `confidence_label`
 - `history_direction_accuracy`, `risk_flag`, `position_size_hint`
+- `portfolio_action`, `trading_gate`
 - 백테스트 요약 컬럼: `backtest_days`, `backtest_cum_return`, `backtest_sharpe` 등
 
 ### 리포트 JSON 주요 키
@@ -146,7 +162,22 @@ python src/pipeline.py \
 - `probability_calibration`(ECE/Brier)
 - `external_feature_coverage`
 - `investor_context_coverage`
+- `coverage_gate`
+- `pm_summary`
+- `config`
 - `artifacts`
+
+## 설정 프로필 예시
+```bash
+python src/pipeline.py \
+  --input data/real_ohlcv.csv \
+  --config-json configs/prod_conservative.json \
+  --fetch-investor-context \
+  --news-scoring-mode rule
+```
+
+- `configs/research_balanced.json`: 연구/검증용 기본형
+- `configs/prod_conservative.json`: 더 보수적인 거래대금·회전율·비용 가정
 
 ## 그래프(대표)
 - `equity_curve.png`, `drawdown_curve.png`
