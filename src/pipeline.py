@@ -21,6 +21,14 @@ from src.data.krx_universe import get_symbol_name_map
 from src.data.loaders import load_ohlcv_csv
 from src.data.investor_context import InvestorContextConfig, add_investor_context_with_coverage
 from src.data.universe import filter_by_universe, load_default_universe_symbols, load_universe_symbols
+from src.domain.signal_policy import (
+    build_prediction_policy_frame,
+    confidence_label as domain_confidence_label,
+    prediction_reason as domain_prediction_reason,
+    recommendation_from_signal as domain_recommendation_from_signal,
+    risk_flag as domain_risk_flag,
+    vectorized_event_signal_boost,
+)
 from src.features.external_features import add_external_market_features_with_coverage
 from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
