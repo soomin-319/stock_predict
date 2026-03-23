@@ -38,7 +38,7 @@ def test_recommendation_uses_hold_between_minus_one_and_plus_one_percent():
     assert _recommendation_from_signal(0.3, 1.2) == "매수"
     assert _recommendation_from_signal(0.3, -1.2) == "매도"
     assert _recommendation_from_signal(0.3, 1.0) == "관망"
-    assert _recommendation_from_signal(0.3, -1.0) == "매도"
+    assert _recommendation_from_signal(0.3, -1.0) == "관망"
     assert _recommendation_from_signal(0.3, 0.8) == "관망"
     assert _recommendation_from_signal(0.3, -0.8) == "관망"
     assert _recommendation_from_signal(float("nan"), -2.1) == "매도"
