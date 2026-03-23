@@ -261,6 +261,32 @@ def test_uncertainty_score_uses_percentile_scale():
     assert (out["uncertainty_score"] <= 1).all()
 
 
+def test_rel_strength_is_not_duplicate_of_norm_return():
+    from src.inference.predict import build_prediction_frame
+    from src.models.lgbm_heads import MultiHeadPrediction
+
+    cfg = AppConfig()
+    latest = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2024-01-01", "2024-01-01", "2024-01-01"]),
+            "Symbol": ["A", "B", "C"],
+            "Close": [100.0, 101.0, 99.0],
+            "market_regime": ["neutral", "neutral", "neutral"],
+        }
+    )
+    pred = MultiHeadPrediction(
+        predicted_return=np.array([0.02, 0.0, -0.01]),
+        up_probability=np.array([0.6, 0.5, 0.4]),
+        quantile_low=np.array([-0.02, -0.01, -0.03]),
+        quantile_mid=np.array([0.0, 0.0, 0.0]),
+        quantile_high=np.array([0.03, 0.01, 0.02]),
+    )
+
+    out = build_prediction_frame(latest, pred, cfg.signal)
+
+    assert not out["rel_strength"].equals(out["norm_return"])
+
+
 
 
 def test_normalize_user_symbols_parses_codes():

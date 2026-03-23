@@ -26,7 +26,7 @@ from src.data.universe import filter_by_universe, load_default_universe_symbols,
 from src.features.external_features import add_external_market_features_with_coverage
 from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
-from src.inference.predict import build_prediction_frame
+from src.inference.predict import build_prediction_frame, signal_label_series
 from src.models.lgbm_heads import MultiHeadPrediction, MultiHeadStockModel
 from src.reports.visualize import (
     save_actual_vs_predicted_plot,
@@ -46,10 +46,10 @@ from src.validation.metrics import probability_calibration_metrics
 
 
 HIGH_CONVICTION_NET_BUY = 100_000_000_000
-TOP_TURNOVER_UP_PROBABILITY = 0.65
-STRONG_DUAL_BUY_UP_PROBABILITY = 0.7
-HIGH_CONVICTION_COMBINED_UP_PROBABILITY = 0.78
-NASDAQ_FUTURES_TAILWIND_UP_PROBABILITY = 0.55
+TOP_TURNOVER_EVENT_BOOST = 0.04
+STRONG_DUAL_BUY_EVENT_BOOST = 0.06
+HIGH_CONVICTION_COMBINED_EVENT_BOOST = 0.08
+NASDAQ_FUTURES_TAILWIND_EVENT_BOOST = 0.03
 
 
 def _fallback_symbols_from_input_or_default(input_csv: str) -> list[str]:
@@ -143,6 +143,15 @@ def _feature_columns(df: pd.DataFrame) -> list[str]:
         "foreign_buy_signal",
         "institution_buy_signal",
         "smart_money_buy_signal",
+        "foreign_buy_ratio",
+        "institution_buy_ratio",
+        "smart_money_strength",
+        "foreign_net_buy_z20",
+        "institution_net_buy_z20",
+        "foreign_net_buy_3d",
+        "foreign_net_buy_5d",
+        "institution_net_buy_3d",
+        "institution_net_buy_5d",
         "news_positive_signal",
         "news_negative_signal",
         "close_to_52w_high",
@@ -195,16 +204,32 @@ def _pad_display(text: str, width: int, align: str = "left") -> str:
     return s + " " * pad
 
 
-def _recommendation_from_signal(signal_score: float | int | None, predicted_return: float | int | None) -> str:
+def _recommendation_from_signal(
+    signal_score: float | int | None,
+    predicted_return: float | int | None,
+    up_probability: float | int | None = None,
+    uncertainty_score: float | int | None = None,
+) -> str:
     if pd.isna(predicted_return):
         return "관망"
 
     ret = float(predicted_return)
+    signal = pd.to_numeric(pd.Series([signal_score]), errors="coerce").iloc[0]
+    up_prob = pd.to_numeric(pd.Series([up_probability]), errors="coerce").iloc[0]
+    uncertainty = pd.to_numeric(pd.Series([uncertainty_score]), errors="coerce").iloc[0]
 
-    if ret > 1.0:
+    if pd.isna(signal) or pd.isna(up_prob) or pd.isna(uncertainty):
+        if ret > 1.0:
+            return "매수"
+        if ret <= -1.0:
+            return "매도"
+        return "관망"
+
+    if signal >= 0.55 and up_prob >= 0.55 and uncertainty <= 0.60 and ret > 0:
         return "매수"
-    if ret <= -1.0:
+    if signal <= 0.25 or up_prob < 0.45 or (ret <= -1.0 and uncertainty >= 0.5):
         return "매도"
+
     return "관망"
 
 
@@ -282,8 +307,8 @@ def _has_nasdaq_futures_tailwind(row: pd.Series) -> bool:
     return not pd.isna(nq_ret) and float(nq_ret) > 0
 
 
-def _apply_probability_overrides(pred_df: pd.DataFrame) -> pd.DataFrame:
-    if pred_df.empty or "up_probability" not in pred_df.columns:
+def _apply_event_signal_boost(pred_df: pd.DataFrame) -> pd.DataFrame:
+    if pred_df.empty:
         return pred_df
 
     out = pred_df.copy()
@@ -291,24 +316,31 @@ def _apply_probability_overrides(pred_df: pd.DataFrame) -> pd.DataFrame:
     dual_buy_mask = out.apply(_has_strong_dual_buy_support, axis=1)
     combined_mask = top_turnover_mask & dual_buy_mask
     nasdaq_tailwind_mask = out.apply(_has_nasdaq_futures_tailwind, axis=1)
-
+    out["event_boost_score"] = pd.Series(0.0, index=out.index, dtype=float)
     if top_turnover_mask.any():
-        out.loc[top_turnover_mask, "up_probability"] = out.loc[top_turnover_mask, "up_probability"].clip(
-            lower=TOP_TURNOVER_UP_PROBABILITY
-        )
+        out.loc[top_turnover_mask, "event_boost_score"] += TOP_TURNOVER_EVENT_BOOST
     if dual_buy_mask.any():
-        out.loc[dual_buy_mask, "up_probability"] = out.loc[dual_buy_mask, "up_probability"].clip(
-            lower=STRONG_DUAL_BUY_UP_PROBABILITY
-        )
+        out.loc[dual_buy_mask, "event_boost_score"] += STRONG_DUAL_BUY_EVENT_BOOST
     if combined_mask.any():
-        out.loc[combined_mask, "up_probability"] = out.loc[combined_mask, "up_probability"].clip(
-            lower=HIGH_CONVICTION_COMBINED_UP_PROBABILITY
-        )
+        out.loc[combined_mask, "event_boost_score"] += HIGH_CONVICTION_COMBINED_EVENT_BOOST
     if nasdaq_tailwind_mask.any():
-        out.loc[nasdaq_tailwind_mask, "up_probability"] = out.loc[nasdaq_tailwind_mask, "up_probability"].clip(
-            lower=NASDAQ_FUTURES_TAILWIND_UP_PROBABILITY
-        )
+        out.loc[nasdaq_tailwind_mask, "event_boost_score"] += NASDAQ_FUTURES_TAILWIND_EVENT_BOOST
+    if "signal_score" in out.columns:
+        out["signal_score"] = out["signal_score"].astype(float) + out["event_boost_score"].astype(float)
+        out["signal_label"] = signal_label_series(out["signal_score"])
     return out
+
+
+def _attach_event_signal_boost(pred_df: pd.DataFrame, source_df: pd.DataFrame) -> pd.DataFrame:
+    event_columns = [
+        column
+        for column in ["turnover_rank_daily", "foreign_net_buy", "institution_net_buy", "nq_f_ret_1d"]
+        if column in source_df.columns
+    ]
+    if not event_columns:
+        return _apply_event_signal_boost(pred_df)
+    merged = pd.concat([pred_df.reset_index(drop=True), source_df[event_columns].reset_index(drop=True)], axis=1)
+    return _apply_event_signal_boost(merged)
 
 
 def _prediction_reason(row: pd.Series) -> str:
@@ -365,7 +397,12 @@ def _build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
     out["종목코드"] = out["Symbol"].astype(str).str.replace(r"\..*$", "", regex=True)
     out["종목명"] = out["symbol_name"].astype(str)
     out["권고"] = out.apply(
-        lambda row: _recommendation_from_signal(row.get("signal_score"), row.get("predicted_return")),
+        lambda row: _recommendation_from_signal(
+            row.get("signal_score"),
+            row.get("predicted_return"),
+            row.get("up_probability"),
+            row.get("uncertainty_score"),
+        ),
         axis=1,
     )
     out["예측 신뢰도"] = out.apply(_combined_confidence_score, axis=1)
@@ -694,6 +731,7 @@ def run_pipeline(
     scored_oof["target_log_return"] = oof["target_log_return"].values
     if "vol_ratio_20" in oof.columns:
         scored_oof["vol_ratio_20"] = oof["vol_ratio_20"].values
+    scored_oof = _attach_event_signal_boost(scored_oof, oof)
 
     tune_df, eval_df = _split_oof_for_tuning_and_eval(scored_oof, tune_ratio=0.7)
 
@@ -708,6 +746,7 @@ def run_pipeline(
     scored_oof["target_log_return"] = oof["target_log_return"].values
     if "vol_ratio_20" in oof.columns:
         scored_oof["vol_ratio_20"] = oof["vol_ratio_20"].values
+    scored_oof = _attach_event_signal_boost(scored_oof, oof)
 
     _print_progress(11, total_steps, "Running backtest on holdout split and creating figures")
     backtest_input = eval_df if not eval_df.empty else scored_oof
@@ -734,7 +773,7 @@ def run_pipeline(
     latest_pred = model.predict(latest)
     latest_pred.up_probability = _calibrate_up_probability(scored_oof, latest_pred.up_probability).values
     pred_df = build_prediction_frame(latest, latest_pred, cfg.signal)
-    pred_df = _apply_probability_overrides(pred_df)
+    pred_df = _attach_event_signal_boost(pred_df, latest)
     symbol_name_map = get_symbol_name_map(pred_df["Symbol"].dropna().astype(str).tolist())
     pred_df["symbol_name"] = pred_df["Symbol"].astype(str).map(symbol_name_map).fillna(pred_df["Symbol"].astype(str))
     pred_df["confidence_score"] = (1 - pred_df["uncertainty_score"].fillna(1)).clip(lower=0, upper=1)
@@ -762,7 +801,9 @@ def run_pipeline(
     oof_diagnostics = _compute_oof_diagnostics(scored_oof)
 
     _print_progress(13, total_steps, "Saving artifacts")
-    detail_df = latest.merge(pred_df.drop(columns=["Close"], errors="ignore"), on=["Date", "Symbol"], how="left")
+    pred_detail = pred_df.drop(columns=["Close"], errors="ignore")
+    overlap_cols = [c for c in pred_detail.columns if c in latest.columns and c not in {"Date", "Symbol"}]
+    detail_df = latest.merge(pred_detail.drop(columns=overlap_cols, errors="ignore"), on=["Date", "Symbol"], how="left")
     detail_numeric_cols = detail_df.select_dtypes(include=["number"]).columns
     detail_df.loc[:, detail_numeric_cols] = detail_df.loc[:, detail_numeric_cols].round(3)
     detail_df["내일 예상 종가"] = detail_df["predicted_close"].map(lambda v: "-" if pd.isna(v) else f"{float(v):,.0f}원")
