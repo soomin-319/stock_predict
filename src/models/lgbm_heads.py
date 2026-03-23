@@ -31,25 +31,35 @@ class MultiHeadStockModel:
     LightGBM이 설치된 환경이면 LightGBM을 사용하고, 없으면 sklearn GBDT로 fallback한다.
     """
 
-    def __init__(self, random_state: int = 42):
+    def __init__(self, random_state: int = 42, n_jobs: int | None = None, use_gpu: bool = False):
         self.random_state = random_state
+        self.n_jobs = n_jobs
+        self.use_gpu = use_gpu
         self._feature_columns: List[str] = []
         self.reg_model = None
         self.cls_model = None
         self.quantile_models: Dict[float, Any] = {}
         self.backend: str = "lightgbm" if LIGHTGBM_AVAILABLE else "sklearn"
 
+    def _lightgbm_params(self) -> dict[str, Any]:
+        params: dict[str, Any] = dict(
+            random_state=self.random_state,
+            n_estimators=400,
+            learning_rate=0.03,
+            num_leaves=31,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            verbose=-1,
+        )
+        if self.n_jobs is not None:
+            params["n_jobs"] = self.n_jobs
+        if self.use_gpu:
+            params["device"] = "gpu"
+        return params
+
     def _build_regressor(self, loss: str = "squared_error", alpha: float | None = None):
         if LIGHTGBM_AVAILABLE:
-            params = dict(
-                random_state=self.random_state,
-                n_estimators=400,
-                learning_rate=0.03,
-                num_leaves=31,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                verbose=-1,
-            )
+            params = self._lightgbm_params()
             if loss == "quantile":
                 params["objective"] = "quantile"
                 params["alpha"] = alpha
@@ -67,16 +77,9 @@ class MultiHeadStockModel:
 
     def _build_classifier(self):
         if LIGHTGBM_AVAILABLE:
-            return lgb.LGBMClassifier(
-                objective="binary",
-                random_state=self.random_state,
-                n_estimators=400,
-                learning_rate=0.03,
-                num_leaves=31,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                verbose=-1,
-            )
+            params = self._lightgbm_params()
+            params["objective"] = "binary"
+            return lgb.LGBMClassifier(**params)
 
         return GradientBoostingClassifier(
             random_state=self.random_state,

@@ -112,6 +112,12 @@ def _compute_obv(close: pd.Series, volume: pd.Series) -> pd.Series:
     return (direction * volume.fillna(0)).cumsum()
 
 
+def _rolling_zscore(series: pd.Series, window: int) -> pd.Series:
+    mean = series.rolling(window).mean()
+    std = series.rolling(window).std().replace(0, np.nan)
+    return ((series - mean) / std).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+
 def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out = df.copy()
     grouped = out.groupby("Symbol", group_keys=False)
@@ -245,6 +251,18 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out["foreign_buy_signal"] = (out["foreign_net_buy"] > 0).astype(float)
     out["institution_buy_signal"] = (out["institution_net_buy"] > 0).astype(float)
     out["smart_money_buy_signal"] = ((out["foreign_net_buy"] + out["institution_net_buy"]) > 0).astype(float)
+    value_traded_safe = out["value_traded"].replace(0, np.nan)
+    out["foreign_buy_ratio"] = (out["foreign_net_buy"] / value_traded_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out["institution_buy_ratio"] = (out["institution_net_buy"] / value_traded_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out["smart_money_strength"] = (
+        (out["foreign_net_buy"] + out["institution_net_buy"]) / value_traded_safe
+    ).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    out["foreign_net_buy_z20"] = grouped["foreign_net_buy"].transform(lambda x: _rolling_zscore(x, 20))
+    out["institution_net_buy_z20"] = grouped["institution_net_buy"].transform(lambda x: _rolling_zscore(x, 20))
+    out["foreign_net_buy_3d"] = grouped["foreign_net_buy"].transform(lambda x: x.rolling(3).sum()).fillna(0.0)
+    out["foreign_net_buy_5d"] = grouped["foreign_net_buy"].transform(lambda x: x.rolling(5).sum()).fillna(0.0)
+    out["institution_net_buy_3d"] = grouped["institution_net_buy"].transform(lambda x: x.rolling(3).sum()).fillna(0.0)
+    out["institution_net_buy_5d"] = grouped["institution_net_buy"].transform(lambda x: x.rolling(5).sum()).fillna(0.0)
     out["news_positive_signal"] = (
         out["news_relevance_score"] * (out["news_sentiment"] - 0.5).clip(lower=0.0) * 2.0
     )
