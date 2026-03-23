@@ -46,6 +46,14 @@ from src.validation.metrics import probability_calibration_metrics
 
 
 HIGH_CONVICTION_NET_BUY = 100_000_000_000
+TOP3_TURNOVER_EVENT_BOOST = 0.05
+DUAL_BUY_EVENT_BOOST = 0.04
+LEADER_CONFIRMATION_EVENT_BOOST = 0.05
+FIFTY_TWO_WEEK_HIGH_EVENT_BOOST = 0.03
+RSI_PULLBACK_EVENT_BOOST = 0.02
+NASDAQ_STRONG_TAILWIND_EVENT_BOOST = 0.06
+NASDAQ_STRONG_HEADWIND_EVENT_PENALTY = 0.12
+RSI_OVERBOUGHT_EVENT_PENALTY = 0.08
 TOP_TURNOVER_EVENT_BOOST = 0.04
 STRONG_DUAL_BUY_EVENT_BOOST = 0.06
 HIGH_CONVICTION_COMBINED_EVENT_BOOST = 0.08
@@ -117,6 +125,7 @@ def _feature_columns(df: pd.DataFrame) -> list[str]:
         "obv_change_5d",
         "value_traded",
         "turnover_rank_daily",
+        "is_top_turnover_3",
         "is_top_turnover_10",
         "market_type_kospi",
         "market_type_kosdaq",
@@ -157,6 +166,9 @@ def _feature_columns(df: pd.DataFrame) -> list[str]:
         "close_to_52w_high",
         "near_52w_high_flag",
         "breakout_52w_flag",
+        "leader_confirmation_flag",
+        "rsi_pullback_buy_flag",
+        "rsi_overbought_sell_flag",
         "investor_event_score",
         "limit_hit_up_flag",
         "limit_hit_down_flag",
@@ -233,6 +245,37 @@ def _recommendation_from_signal(
     return "관망"
 
 
+def _policy_recommendation(row: pd.Series) -> str:
+    signal = row.get("signal_score")
+    predicted_return = row.get("predicted_return")
+    up_probability = row.get("up_probability")
+    uncertainty_score = row.get("uncertainty_score")
+    nq_ret = pd.to_numeric(pd.Series([row.get("nq_f_ret_1d")]), errors="coerce").iloc[0]
+    rsi = pd.to_numeric(pd.Series([row.get("rsi_14")]), errors="coerce").iloc[0]
+    turnover_rank = pd.to_numeric(pd.Series([row.get("turnover_rank_daily")]), errors="coerce").iloc[0]
+    dual_buy = _has_dual_buy_support(row)
+    leader_confirmed = _has_leader_confirmation(row)
+    near_or_breakout = _prefers_52w_high(row)
+
+    if not pd.isna(nq_ret) and nq_ret <= -0.01:
+        return "매도"
+    if not pd.isna(rsi) and rsi >= 70.0:
+        return "매도"
+
+    if (
+        not pd.isna(turnover_rank)
+        and float(turnover_rank) <= 3.0
+        and dual_buy
+        and leader_confirmed
+        and near_or_breakout
+        and not pd.isna(nq_ret)
+        and nq_ret >= 0.01
+    ):
+        return _recommendation_from_signal(signal, predicted_return, up_probability, uncertainty_score)
+
+    return _recommendation_from_signal(signal, predicted_return, up_probability, uncertainty_score)
+
+
 def _confidence_label(confidence_score: float | int | None) -> str:
     if pd.isna(confidence_score):
         return "신뢰도 보통"
@@ -292,6 +335,17 @@ def _has_top_turnover_support(row: pd.Series) -> bool:
     return not pd.isna(turnover_rank) and float(turnover_rank) <= 15.0
 
 
+def _has_top3_turnover_support(row: pd.Series) -> bool:
+    turnover_rank = pd.to_numeric(pd.Series([row.get("turnover_rank_daily")]), errors="coerce").iloc[0]
+    return not pd.isna(turnover_rank) and float(turnover_rank) <= 3.0
+
+
+def _has_dual_buy_support(row: pd.Series) -> bool:
+    foreign_net_buy = float(row.get("foreign_net_buy", 0) or 0)
+    institution_net_buy = float(row.get("institution_net_buy", 0) or 0)
+    return foreign_net_buy > 0 and institution_net_buy > 0
+
+
 def _has_strong_dual_buy_support(row: pd.Series) -> bool:
     foreign_net_buy = float(row.get("foreign_net_buy", 0) or 0)
     institution_net_buy = float(row.get("institution_net_buy", 0) or 0)
@@ -307,24 +361,76 @@ def _has_nasdaq_futures_tailwind(row: pd.Series) -> bool:
     return not pd.isna(nq_ret) and float(nq_ret) > 0
 
 
+def _has_strong_nasdaq_tailwind(row: pd.Series) -> bool:
+    nq_ret = pd.to_numeric(pd.Series([row.get("nq_f_ret_1d")]), errors="coerce").iloc[0]
+    return not pd.isna(nq_ret) and float(nq_ret) >= 0.01
+
+
+def _has_strong_nasdaq_headwind(row: pd.Series) -> bool:
+    nq_ret = pd.to_numeric(pd.Series([row.get("nq_f_ret_1d")]), errors="coerce").iloc[0]
+    return not pd.isna(nq_ret) and float(nq_ret) <= -0.01
+
+
+def _has_leader_confirmation(row: pd.Series) -> bool:
+    return float(row.get("leader_confirmation_flag", 0) or 0) > 0
+
+
+def _prefers_52w_high(row: pd.Series) -> bool:
+    return float(row.get("near_52w_high_flag", 0) or 0) > 0 or float(row.get("breakout_52w_flag", 0) or 0) > 0
+
+
+def _is_rsi_pullback_buy_zone(row: pd.Series) -> bool:
+    rsi = pd.to_numeric(pd.Series([row.get("rsi_14")]), errors="coerce").iloc[0]
+    return not pd.isna(rsi) and 30.0 <= float(rsi) <= 35.0
+
+
+def _is_rsi_overbought(row: pd.Series) -> bool:
+    rsi = pd.to_numeric(pd.Series([row.get("rsi_14")]), errors="coerce").iloc[0]
+    return not pd.isna(rsi) and float(rsi) >= 70.0
+
+
 def _apply_event_signal_boost(pred_df: pd.DataFrame) -> pd.DataFrame:
     if pred_df.empty:
         return pred_df
 
     out = pred_df.copy()
+    top3_turnover_mask = out.apply(_has_top3_turnover_support, axis=1)
     top_turnover_mask = out.apply(_has_top_turnover_support, axis=1)
-    dual_buy_mask = out.apply(_has_strong_dual_buy_support, axis=1)
-    combined_mask = top_turnover_mask & dual_buy_mask
+    dual_buy_mask = out.apply(_has_dual_buy_support, axis=1)
+    strong_dual_buy_mask = out.apply(_has_strong_dual_buy_support, axis=1)
+    leader_confirmation_mask = out.apply(_has_leader_confirmation, axis=1)
+    fifty_two_week_mask = out.apply(_prefers_52w_high, axis=1)
+    rsi_pullback_mask = out.apply(_is_rsi_pullback_buy_zone, axis=1)
+    rsi_overbought_mask = out.apply(_is_rsi_overbought, axis=1)
+    combined_mask = top_turnover_mask & strong_dual_buy_mask
     nasdaq_tailwind_mask = out.apply(_has_nasdaq_futures_tailwind, axis=1)
+    strong_nasdaq_tailwind_mask = out.apply(_has_strong_nasdaq_tailwind, axis=1)
+    strong_nasdaq_headwind_mask = out.apply(_has_strong_nasdaq_headwind, axis=1)
     out["event_boost_score"] = pd.Series(0.0, index=out.index, dtype=float)
+    if top3_turnover_mask.any():
+        out.loc[top3_turnover_mask, "event_boost_score"] += TOP3_TURNOVER_EVENT_BOOST
     if top_turnover_mask.any():
         out.loc[top_turnover_mask, "event_boost_score"] += TOP_TURNOVER_EVENT_BOOST
     if dual_buy_mask.any():
-        out.loc[dual_buy_mask, "event_boost_score"] += STRONG_DUAL_BUY_EVENT_BOOST
+        out.loc[dual_buy_mask, "event_boost_score"] += DUAL_BUY_EVENT_BOOST
+    if strong_dual_buy_mask.any():
+        out.loc[strong_dual_buy_mask, "event_boost_score"] += STRONG_DUAL_BUY_EVENT_BOOST
     if combined_mask.any():
         out.loc[combined_mask, "event_boost_score"] += HIGH_CONVICTION_COMBINED_EVENT_BOOST
+    if leader_confirmation_mask.any():
+        out.loc[leader_confirmation_mask, "event_boost_score"] += LEADER_CONFIRMATION_EVENT_BOOST
+    if fifty_two_week_mask.any():
+        out.loc[fifty_two_week_mask, "event_boost_score"] += FIFTY_TWO_WEEK_HIGH_EVENT_BOOST
+    if rsi_pullback_mask.any():
+        out.loc[rsi_pullback_mask, "event_boost_score"] += RSI_PULLBACK_EVENT_BOOST
+    if rsi_overbought_mask.any():
+        out.loc[rsi_overbought_mask, "event_boost_score"] -= RSI_OVERBOUGHT_EVENT_PENALTY
     if nasdaq_tailwind_mask.any():
         out.loc[nasdaq_tailwind_mask, "event_boost_score"] += NASDAQ_FUTURES_TAILWIND_EVENT_BOOST
+    if strong_nasdaq_tailwind_mask.any():
+        out.loc[strong_nasdaq_tailwind_mask, "event_boost_score"] += NASDAQ_STRONG_TAILWIND_EVENT_BOOST
+    if strong_nasdaq_headwind_mask.any():
+        out.loc[strong_nasdaq_headwind_mask, "event_boost_score"] -= NASDAQ_STRONG_HEADWIND_EVENT_PENALTY
     if "signal_score" in out.columns:
         out["signal_score"] = out["signal_score"].astype(float) + out["event_boost_score"].astype(float)
         out["signal_label"] = signal_label_series(out["signal_score"])
@@ -334,7 +440,16 @@ def _apply_event_signal_boost(pred_df: pd.DataFrame) -> pd.DataFrame:
 def _attach_event_signal_boost(pred_df: pd.DataFrame, source_df: pd.DataFrame) -> pd.DataFrame:
     event_columns = [
         column
-        for column in ["turnover_rank_daily", "foreign_net_buy", "institution_net_buy", "nq_f_ret_1d"]
+        for column in [
+            "turnover_rank_daily",
+            "foreign_net_buy",
+            "institution_net_buy",
+            "nq_f_ret_1d",
+            "rsi_14",
+            "near_52w_high_flag",
+            "breakout_52w_flag",
+            "leader_confirmation_flag",
+        ]
         if column in source_df.columns
     ]
     if not event_columns:
@@ -355,7 +470,9 @@ def _prediction_reason(row: pd.Series) -> str:
     uncertainty_score = float(row.get("uncertainty_score", 0.5) or 0.5)
 
     if _is_high_conviction_flow(row):
-        reasons.append("수급: 거래대금 상위 15위 안에 들고 외국인·기관이 각각 1,000억 이상 순매수했습니다")
+        reasons.append("수급: 거래대금 상위권에서 외국인·기관이 각각 1,000억 이상 순매수했습니다")
+    elif _has_top3_turnover_support(row):
+        reasons.append("종배 조건: 거래대금 상위 3위 안의 주도주 후보입니다")
     elif _has_top_turnover_support(row):
         reasons.append("수급: 거래대금 상위 15위로 시장 관심이 높은 종목입니다")
     elif _has_strong_dual_buy_support(row):
@@ -364,6 +481,21 @@ def _prediction_reason(row: pd.Series) -> str:
         reasons.append(
             f"수급: 외국인 {_format_korean_amount(foreign_net_buy)}, 기관 {_format_korean_amount(institution_net_buy)} 순매수입니다"
         )
+    if _has_dual_buy_support(row):
+        reasons.append("수급: 외국인과 기관이 동반 순매수했습니다")
+    if _has_leader_confirmation(row):
+        reasons.append("주도 확인: 1등주 상승과 함께 2등·3등주도 동반 상승했습니다")
+
+    if _has_nasdaq_futures_tailwind(row):
+        reasons.append("해외 흐름: 나스닥100 선물이 올라 한국 증시에 우호적인 환경입니다")
+    if _has_strong_nasdaq_tailwind(row):
+        reasons.append("해외 흐름: 나스닥100 선물이 +1% 이상 상승해 종가베팅 우호 조건입니다")
+    if _has_strong_nasdaq_headwind(row):
+        reasons.append("해외 경고: 나스닥100 선물이 -1% 이하로 밀려 보수적으로 대응해야 합니다")
+    if _is_rsi_pullback_buy_zone(row):
+        reasons.append("RSI: 30~35 구간으로 중장기 분할매수 후보입니다")
+    if _is_rsi_overbought(row):
+        reasons.append("RSI: 70 이상 과열권이라 차익실현을 우선합니다")
 
     if _has_nasdaq_futures_tailwind(row):
         reasons.append("해외 흐름: 나스닥100 선물이 올라 한국 증시에 우호적인 환경입니다")
@@ -375,7 +507,9 @@ def _prediction_reason(row: pd.Series) -> str:
     else:
         reasons.append(f"확률: 상승 가능성이 {up_probability * 100:.1f}%로 아직 뚜렷하지 않습니다")
 
-    if breakout_52w_flag > 0:
+    if _prefers_52w_high(row) and breakout_52w_flag <= 0 and near_52w_high_flag <= 0:
+        reasons.append("추세: 52주 신고가 계열 종목을 우선적으로 봅니다")
+    elif breakout_52w_flag > 0:
         reasons.append("추세: 52주 고점을 돌파한 흐름입니다")
     elif near_52w_high_flag > 0:
         reasons.append("추세: 52주 고점 부근에서 버티는 흐름입니다")
@@ -396,15 +530,7 @@ def _build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
     out = pred_df.copy()
     out["종목코드"] = out["Symbol"].astype(str).str.replace(r"\..*$", "", regex=True)
     out["종목명"] = out["symbol_name"].astype(str)
-    out["권고"] = out.apply(
-        lambda row: _recommendation_from_signal(
-            row.get("signal_score"),
-            row.get("predicted_return"),
-            row.get("up_probability"),
-            row.get("uncertainty_score"),
-        ),
-        axis=1,
-    )
+    out["권고"] = out.apply(_policy_recommendation, axis=1)
     out["예측 신뢰도"] = out.apply(_combined_confidence_score, axis=1)
     out["예측 이유"] = out.apply(_prediction_reason, axis=1)
     if "up_probability" in out.columns:

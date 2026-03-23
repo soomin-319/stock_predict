@@ -197,6 +197,7 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out["range_pct"] = (out["High"] - out["Low"]) / out["Close"].replace(0, np.nan)
     out["value_traded"] = out["Close"] * out["Volume"]
     out["turnover_rank_daily"] = out.groupby("Date")["value_traded"].rank(method="first", ascending=False)
+    out["is_top_turnover_3"] = (out["turnover_rank_daily"] <= 3).astype(float)
     out["is_top_turnover_10"] = (out["turnover_rank_daily"] <= 10).astype(float)
 
     for window in cfg.lookback_windows:
@@ -212,6 +213,8 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
 
     out["vol_ratio_20"] = out["Volume"] / grouped["Volume"].transform(lambda x: x.rolling(20).mean())
     out["rsi_14"] = grouped["Close"].transform(lambda x: _compute_rsi(x, cfg.rsi_period))
+    out["rsi_pullback_buy_flag"] = out["rsi_14"].between(30.0, 35.0, inclusive="both").astype(float)
+    out["rsi_overbought_sell_flag"] = (out["rsi_14"] >= 70.0).astype(float)
 
     macd = grouped["Close"].transform(lambda x: _compute_macd(x)[0])
     macd_sig = grouped["Close"].transform(lambda x: _compute_macd(x)[1])
@@ -275,6 +278,14 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out["close_to_52w_high"] = out["Close"] / rolling_high_252.replace(0, np.nan)
     out["near_52w_high_flag"] = (out["close_to_52w_high"] >= 0.95).astype(float)
     out["breakout_52w_flag"] = (out["Close"] >= prev_rolling_high_252.fillna(np.inf)).astype(float)
+    top3_positive_count = (
+        ((out["turnover_rank_daily"] <= 3) & (out["daily_return"] > 0)).astype(float).groupby(out["Date"]).transform("sum")
+    )
+    out["leader_confirmation_flag"] = (
+        (out["turnover_rank_daily"] == 1)
+        & (out["daily_return"] > 0)
+        & (top3_positive_count >= 3)
+    ).astype(float)
 
     out["investor_event_score"] = (
         0.35 * out["is_top_turnover_10"]
