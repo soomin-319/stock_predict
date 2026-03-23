@@ -4,9 +4,12 @@ import contextlib
 import io
 import logging
 import warnings
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 
 import pandas as pd
 import yfinance as yf
+
 
 
 def _safe_download(symbol: str, start: str, end: str | None) -> pd.Series:
@@ -49,6 +52,7 @@ def _safe_download(symbol: str, start: str, end: str | None) -> pd.Series:
             pass
 
 
+
 def _symbol_candidates(symbol: str) -> tuple[str, list[str]]:
     fallback = {
         "^SOX": ("sox", ["^SOX", "SOXX"]),
@@ -56,6 +60,7 @@ def _symbol_candidates(symbol: str) -> tuple[str, list[str]]:
         "^KS11": ("ks11", ["^KS11", "EWY"]),
         "^KQ11": ("kq11", ["^KQ11", "KORU"]),
         "^IXIC": ("ixic", ["^IXIC", "QQQ"]),
+        "NQ=F": ("nq_f", ["NQ=F", "QQQ"]),
         "^GSPC": ("gspc", ["^GSPC", "SPY"]),
         "KRW=X": ("krw_x", ["KRW=X", "USDKRW=X"]),
         "^TNX": ("tnx", ["^TNX", "IEF"]),
@@ -65,6 +70,57 @@ def _symbol_candidates(symbol: str) -> tuple[str, list[str]]:
 
     alias = symbol.replace("^", "").replace("=", "_").replace("-", "_").lower()
     return alias, [symbol]
+
+
+
+def _series_to_external_frame(series_or_df: pd.Series | pd.DataFrame, col_base: str) -> pd.DataFrame:
+    if isinstance(series_or_df, pd.Series):
+        frame = series_or_df.rename(f"{col_base}_close").reset_index()
+    else:
+        frame = pd.DataFrame(series_or_df).reset_index()
+
+    if frame.empty or frame.shape[1] < 2:
+        return pd.DataFrame(columns=["Date", f"{col_base}_close"])
+
+    date_col = frame.columns[0]
+    value_col = None
+    for candidate in frame.columns[1:]:
+        if pd.api.types.is_numeric_dtype(frame[candidate]):
+            value_col = candidate
+            break
+    if value_col is None:
+        value_col = frame.columns[-1]
+
+    out = frame[[date_col, value_col]].copy()
+    out.columns = ["Date", f"{col_base}_close"]
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+    out = out.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
+    return out
+
+
+
+def _download_external_symbol(sym: str, start: str, end: str) -> tuple[str, dict, pd.DataFrame | None]:
+    col_base, candidates = _symbol_candidates(sym)
+
+    s = pd.Series(dtype=float)
+    used_candidate = None
+    for candidate in candidates:
+        s = _safe_download(candidate, start=start, end=end)
+        if not s.empty:
+            used_candidate = candidate
+            break
+
+    if s.empty:
+        return sym, {"symbol": sym, "status": "failed", "used": None}, None
+
+    e = _series_to_external_frame(s, col_base)
+    if e.empty:
+        return sym, {"symbol": sym, "status": "failed", "used": None}, None
+    e[f"{col_base}_ret_1d"] = e[f"{col_base}_close"].pct_change()
+    e[f"{col_base}_ret_5d"] = e[f"{col_base}_close"].pct_change(5)
+    e[f"{col_base}_vol_20"] = e[f"{col_base}_ret_1d"].rolling(20).std()
+    return sym, {"symbol": sym, "status": "ok", "used": used_candidate}, e
+
 
 
 def add_external_market_features_with_coverage(df: pd.DataFrame, symbols: list[str]) -> tuple[pd.DataFrame, dict]:
@@ -85,35 +141,25 @@ def add_external_market_features_with_coverage(df: pd.DataFrame, symbols: list[s
     base_dates = pd.Series(sorted(out["Date"].unique()), name="Date")
     ext = pd.DataFrame({"Date": pd.to_datetime(base_dates)})
 
-    for sym in symbols:
-        col_base, candidates = _symbol_candidates(sym)
+    worker_count = min(4, len(symbols))
+    if worker_count <= 1:
+        downloads = [_download_external_symbol(sym, start, end) for sym in symbols]
+    else:
+        download_one = partial(_download_external_symbol, start=start, end=end)
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            downloads = list(executor.map(download_one, symbols))
 
-        s = pd.Series(dtype=float)
-        used_candidate = None
-        for candidate in candidates:
-            s = _safe_download(candidate, start=start, end=end)
-            if not s.empty:
-                used_candidate = candidate
-                break
-
-        if s.empty:
+    for sym, detail, frame in downloads:
+        if detail["status"] == "failed" or frame is None:
             coverage["failed"] += 1
-            coverage["details"].append({"symbol": sym, "status": "failed", "used": None})
+            coverage["details"].append(detail)
             continue
 
         coverage["successful"] += 1
-        if used_candidate != sym:
+        if detail["used"] != sym:
             coverage["fallback_used"] += 1
-
-        coverage["details"].append({"symbol": sym, "status": "ok", "used": used_candidate})
-        e = s.reset_index()
-        e.columns = ["Date", f"{col_base}_close"]
-        e["Date"] = pd.to_datetime(e["Date"])
-        e = e.sort_values("Date")
-        e[f"{col_base}_ret_1d"] = e[f"{col_base}_close"].pct_change()
-        e[f"{col_base}_ret_5d"] = e[f"{col_base}_close"].pct_change(5)
-        e[f"{col_base}_vol_20"] = e[f"{col_base}_ret_1d"].rolling(20).std()
-        ext = ext.merge(e, on="Date", how="left")
+        coverage["details"].append(detail)
+        ext = ext.merge(frame, on="Date", how="left")
 
     if coverage["successful"] == 0:
         return out, coverage
@@ -121,6 +167,7 @@ def add_external_market_features_with_coverage(df: pd.DataFrame, symbols: list[s
     ext = ext.sort_values("Date").ffill().bfill()
     out = out.merge(ext, on="Date", how="left")
     return out, coverage
+
 
 
 def add_external_market_features(df: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
