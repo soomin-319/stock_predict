@@ -230,67 +230,8 @@ def _normalize_news_title(title: str) -> str:
     return re.sub(r"\s+", " ", str(title).strip()).lower()
 
 
-def _resolve_news_ai_settings(cfg: InvestorContextConfig | None) -> tuple[str, str | None, str | None]:
-    if cfg is None:
-        mode = os.getenv("NEWS_SCORING_MODE", "auto")
-        api_key = os.getenv("OPENAI_API_KEY")
-        model = os.getenv("OPENAI_MODEL")
-        return mode.lower(), api_key, model
-
-    mode = str(cfg.news_scoring_mode or os.getenv("NEWS_SCORING_MODE", "auto")).lower()
-    api_key = cfg.openai_api_key if cfg.openai_api_key is not None else os.getenv("OPENAI_API_KEY")
-    model = cfg.openai_model if cfg.openai_model is not None else os.getenv("OPENAI_MODEL")
-    return mode, api_key, model
-
-
-def _score_headline_with_openai(title: str, api_key: str | None, model: str | None) -> tuple[float, float, float] | None:
-    if not api_key or not model or not str(title).strip():
-        return None
-
-    try:
-        from openai import OpenAI
-    except Exception:
-        return None
-
-    prompt = (
-        "You are a financial news analyst. Read the stock-news headline and score its likely short-term price impact "
-        "(1-5 trading days) for the referenced company. Return JSON only with these numeric keys: "
-        "sentiment_score, relevance_score, impact_score. "
-        "sentiment_score must be between 0 and 1 where 0 is strongly bearish, 0.5 is neutral, and 1 is strongly bullish. "
-        "relevance_score must be between 0 and 1 and represent how directly the headline should affect the company's stock price. "
-        "impact_score must be between -1 and 1 and represent the expected stock-price impact direction and magnitude. "
-        "If the headline is ambiguous, lower relevance_score and keep sentiment_score near 0.5."
-    )
-
-    try:
-        client = OpenAI(api_key=api_key)
-        response = client.responses.create(
-            model=model,
-            input=[
-                {"role": "system", "content": [{"type": "input_text", "text": prompt}]},
-                {"role": "user", "content": [{"type": "input_text", "text": str(title)}]},
-            ],
-        )
-        raw = getattr(response, "output_text", "") or ""
-        payload = json.loads(raw)
-        sentiment = float(payload["sentiment_score"])
-        relevance = float(payload["relevance_score"])
-        impact = float(payload["impact_score"])
-    except Exception:
-        return None
-
-    sentiment = max(0.0, min(1.0, sentiment))
-    relevance = max(0.0, min(1.0, relevance))
-    impact = max(-1.0, min(1.0, impact))
-    return sentiment, relevance, impact
-
-
 def _headline_news_features(text: str, cfg: InvestorContextConfig | None = None) -> tuple[float, float, float]:
-    mode, api_key, model = _resolve_news_ai_settings(cfg)
-    if mode in {"auto", "ai"}:
-        ai_result = _score_headline_with_openai(text, api_key=api_key, model=model)
-        if ai_result is not None:
-            return ai_result
+    _ = cfg
     return _headline_news_features_rule_based(text)
 
 
@@ -301,18 +242,16 @@ def _fetch_news_sentiment(symbols: list[str], start: str, end: str, cfg: Investo
 
     for symbol in symbols:
         try:
-            items = yf.Ticker(symbol).news or []
+            items = _load_yfinance_news_items(symbol)
             if not items:
                 coverage["failed"] += 1
                 continue
             recs = []
             seen_titles: set[tuple[pd.Timestamp, str]] = set()
             for it in items:
-                ts = it.get("providerPublishTime")
-                title = it.get("title", "")
-                if ts is None:
+                dt, title = _parse_news_datetime_and_title(it)
+                if dt is None:
                     continue
-                dt = pd.to_datetime(ts, unit="s", utc=True).tz_localize(None).normalize()
                 if dt < start_dt or dt > end_dt:
                     continue
                 normalized_title = _normalize_news_title(title)
@@ -353,6 +292,73 @@ def _fetch_news_sentiment(symbols: list[str], start: str, end: str, cfg: Investo
             columns=["Date", "Symbol", "news_sentiment", "news_relevance_score", "news_impact_score", "news_article_count"]
         ), coverage
     return pd.concat(rows, ignore_index=True), coverage
+
+
+def _load_yfinance_news_items(symbol: str) -> list[dict]:
+    ticker = yf.Ticker(symbol)
+    merged: list[dict] = []
+
+    direct_news = getattr(ticker, "news", None)
+    if isinstance(direct_news, list):
+        merged.extend(item for item in direct_news if isinstance(item, dict))
+
+    get_news = getattr(ticker, "get_news", None)
+    if callable(get_news):
+        for kwargs in ({}, {"count": 100}):
+            try:
+                fetched = get_news(**kwargs)
+            except TypeError:
+                continue
+            except Exception:
+                break
+            if isinstance(fetched, list):
+                merged.extend(item for item in fetched if isinstance(item, dict))
+                if fetched:
+                    break
+
+    unique: list[dict] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for item in merged:
+        dt, title = _parse_news_datetime_and_title(item)
+        key = (str(dt), _normalize_news_title(title))
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        unique.append(item)
+    return unique
+
+
+def _parse_news_datetime_and_title(item: dict) -> tuple[pd.Timestamp | None, str]:
+    content = item.get("content") if isinstance(item.get("content"), dict) else item
+    title = str(
+        content.get("title")
+        or content.get("headline")
+        or item.get("title")
+        or item.get("headline")
+        or ""
+    ).strip()
+
+    ts_value = (
+        content.get("providerPublishTime")
+        or content.get("pubDate")
+        or content.get("published")
+        or content.get("publish_time")
+        or item.get("providerPublishTime")
+        or item.get("pubDate")
+        or item.get("published")
+        or item.get("publish_time")
+    )
+    if ts_value is None:
+        return None, title
+
+    if isinstance(ts_value, (int, float)):
+        unit = "ms" if float(ts_value) > 1_000_000_000_000 else "s"
+        dt = pd.to_datetime(ts_value, unit=unit, utc=True, errors="coerce")
+    else:
+        dt = pd.to_datetime(ts_value, utc=True, errors="coerce")
+    if pd.isna(dt):
+        return None, title
+    return dt.tz_localize(None).normalize(), title
 
 
 def add_investor_context_with_coverage(df: pd.DataFrame, cfg: InvestorContextConfig) -> tuple[pd.DataFrame, dict]:
@@ -404,3 +410,96 @@ def add_investor_context_with_coverage(df: pd.DataFrame, cfg: InvestorContextCon
         out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0.0)
 
     return out, coverage
+
+
+def collect_context_raw_events(
+    symbols: list[str],
+    start: str,
+    end: str,
+    dart_api_key: str | None = None,
+    dart_corp_map_csv: str | None = None,
+) -> pd.DataFrame:
+    rows: list[dict] = []
+    start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
+
+    for symbol in symbols:
+        try:
+            news_items = _load_yfinance_news_items(symbol)
+        except Exception:
+            news_items = []
+        for item in news_items:
+            dt, title = _parse_news_datetime_and_title(item)
+            if dt is None or dt < start_dt or dt > end_dt:
+                continue
+            content = item.get("content") if isinstance(item.get("content"), dict) else item
+            provider = str(
+                content.get("provider")
+                or content.get("publisher")
+                or item.get("provider")
+                or item.get("publisher")
+                or "yfinance"
+            ).strip()
+            url = (
+                content.get("link")
+                or content.get("url")
+                or item.get("link")
+                or item.get("url")
+                or ""
+            )
+            if isinstance(content.get("canonicalUrl"), dict):
+                url = content.get("canonicalUrl", {}).get("url") or url
+            rows.append(
+                {
+                    "Date": dt.strftime("%Y-%m-%d"),
+                    "Symbol": symbol,
+                    "source_type": "news",
+                    "title": title,
+                    "published_at": dt.isoformat(),
+                    "provider": provider,
+                    "url": str(url or ""),
+                    "raw_id": str(item.get("id") or ""),
+                }
+            )
+
+    if dart_api_key:
+        corp_map = _load_dart_corp_map(dart_corp_map_csv)
+        for symbol in symbols:
+            corp = corp_map.get(symbol)
+            if not corp:
+                continue
+            try:
+                payload = _dart_list(dart_api_key, corp, start, end)
+                items = payload.get("list", []) if isinstance(payload, dict) else []
+            except Exception:
+                items = []
+            for item in items:
+                rcept_dt = str(item.get("rcept_dt") or "").strip()
+                if len(rcept_dt) != 8:
+                    continue
+                dt = pd.to_datetime(rcept_dt, format="%Y%m%d", errors="coerce")
+                if pd.isna(dt):
+                    continue
+                dt = dt.normalize()
+                if dt < start_dt or dt > end_dt:
+                    continue
+                rcept_no = str(item.get("rcept_no") or "").strip()
+                dart_url = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}" if rcept_no else ""
+                rows.append(
+                    {
+                        "Date": dt.strftime("%Y-%m-%d"),
+                        "Symbol": symbol,
+                        "source_type": "disclosure",
+                        "title": str(item.get("report_nm") or "").strip(),
+                        "published_at": dt.isoformat(),
+                        "provider": "DART",
+                        "url": dart_url,
+                        "raw_id": rcept_no,
+                    }
+                )
+
+    if not rows:
+        return pd.DataFrame(columns=["Date", "Symbol", "source_type", "title", "published_at", "provider", "url", "raw_id"])
+
+    out = pd.DataFrame(rows).drop_duplicates(subset=["Date", "Symbol", "source_type", "title", "raw_id"]).reset_index(drop=True)
+    out = out.sort_values(["Date", "Symbol", "source_type", "title"]).reset_index(drop=True)
+    return out
