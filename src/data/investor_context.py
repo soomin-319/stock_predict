@@ -301,18 +301,16 @@ def _fetch_news_sentiment(symbols: list[str], start: str, end: str, cfg: Investo
 
     for symbol in symbols:
         try:
-            items = yf.Ticker(symbol).news or []
+            items = _load_yfinance_news_items(symbol)
             if not items:
                 coverage["failed"] += 1
                 continue
             recs = []
             seen_titles: set[tuple[pd.Timestamp, str]] = set()
             for it in items:
-                ts = it.get("providerPublishTime")
-                title = it.get("title", "")
-                if ts is None:
+                dt, title = _parse_news_datetime_and_title(it)
+                if dt is None:
                     continue
-                dt = pd.to_datetime(ts, unit="s", utc=True).tz_localize(None).normalize()
                 if dt < start_dt or dt > end_dt:
                     continue
                 normalized_title = _normalize_news_title(title)
@@ -353,6 +351,73 @@ def _fetch_news_sentiment(symbols: list[str], start: str, end: str, cfg: Investo
             columns=["Date", "Symbol", "news_sentiment", "news_relevance_score", "news_impact_score", "news_article_count"]
         ), coverage
     return pd.concat(rows, ignore_index=True), coverage
+
+
+def _load_yfinance_news_items(symbol: str) -> list[dict]:
+    ticker = yf.Ticker(symbol)
+    merged: list[dict] = []
+
+    direct_news = getattr(ticker, "news", None)
+    if isinstance(direct_news, list):
+        merged.extend(item for item in direct_news if isinstance(item, dict))
+
+    get_news = getattr(ticker, "get_news", None)
+    if callable(get_news):
+        for kwargs in ({}, {"count": 100}):
+            try:
+                fetched = get_news(**kwargs)
+            except TypeError:
+                continue
+            except Exception:
+                break
+            if isinstance(fetched, list):
+                merged.extend(item for item in fetched if isinstance(item, dict))
+                if fetched:
+                    break
+
+    unique: list[dict] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for item in merged:
+        dt, title = _parse_news_datetime_and_title(item)
+        key = (str(dt), _normalize_news_title(title))
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        unique.append(item)
+    return unique
+
+
+def _parse_news_datetime_and_title(item: dict) -> tuple[pd.Timestamp | None, str]:
+    content = item.get("content") if isinstance(item.get("content"), dict) else item
+    title = str(
+        content.get("title")
+        or content.get("headline")
+        or item.get("title")
+        or item.get("headline")
+        or ""
+    ).strip()
+
+    ts_value = (
+        content.get("providerPublishTime")
+        or content.get("pubDate")
+        or content.get("published")
+        or content.get("publish_time")
+        or item.get("providerPublishTime")
+        or item.get("pubDate")
+        or item.get("published")
+        or item.get("publish_time")
+    )
+    if ts_value is None:
+        return None, title
+
+    if isinstance(ts_value, (int, float)):
+        unit = "ms" if float(ts_value) > 1_000_000_000_000 else "s"
+        dt = pd.to_datetime(ts_value, unit=unit, utc=True, errors="coerce")
+    else:
+        dt = pd.to_datetime(ts_value, utc=True, errors="coerce")
+    if pd.isna(dt):
+        return None, title
+    return dt.tz_localize(None).normalize(), title
 
 
 def add_investor_context_with_coverage(df: pd.DataFrame, cfg: InvestorContextConfig) -> tuple[pd.DataFrame, dict]:
