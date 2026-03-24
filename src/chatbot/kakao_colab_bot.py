@@ -391,23 +391,6 @@ class KakaoColabPredictionBot:
             f"원문 사유: {reason}"
         )
 
-    def _build_user_rationale_block(
-        self,
-        recommendation: str,
-        up_probability: str,
-        predicted_return: str,
-        reason: str,
-    ) -> str:
-        action_guide = self._build_action_guide(recommendation)
-        normalized_reason = (reason or "").strip() or "예측 이유 정보가 없습니다."
-        return (
-            "사유(개정 포맷)\n"
-            f"- 결론: {recommendation} 관점 (상승확률 {up_probability}, 기대수익률 {predicted_return})\n"
-            f"- 핵심 근거: {normalized_reason}\n"
-            "- 무효화 조건: 장초반 과도한 갭, 거래대금 급감, 변동성 급등 시 관망\n"
-            f"- 실행 가이드: {action_guide}"
-        )
-
     def _format_reason_for_display(self, reason: str) -> str:
         raw = (reason or "").strip()
         if not raw:
@@ -510,7 +493,15 @@ class KakaoColabPredictionBot:
         if status == "completed":
             cached_row = self._find_cached_prediction(symbol)
             if cached_row is not None:
-                self._console_log(f"{display_code} 예측 완료\n{self._format_prediction_message(cached_row)}")
+                try:
+                    message = self._format_prediction_message(cached_row)
+                except Exception as exc:
+                    self._console_log(
+                        f"{display_code} 예측 완료 메시지 포맷 오류({type(exc).__name__}): {exc}. 원문 사유로 대체합니다."
+                    )
+                    raw_reason = str(cached_row.get("예측 이유", "예측 이유 정보가 없습니다."))
+                    message = f"[{display_code}] 예측 완료\n사유: {raw_reason}"
+                self._console_log(f"{display_code} 예측 완료\n{message}")
             else:
                 self._console_log(f"{display_code} 예측 작업 completed (exit_code=0). 결과 CSV를 확인해주세요.")
         else:
