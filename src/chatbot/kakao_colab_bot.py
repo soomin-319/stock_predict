@@ -442,7 +442,9 @@ class KakaoColabPredictionBot:
         up_probability = self._format_percent(row.get("상승확률(%)"))
         predicted_close = self._format_price(row.get("내일 예상 종가"))
         confidence = self._format_confidence(row.get("예측 신뢰도"))
-        reason = self._format_reason_for_display(str(row.get("예측 이유", "예측 이유 정보가 없습니다.")))
+        reason_lines = self._format_reason_for_display(row.get("예측 이유"))
+        rationale_block = self._build_rationale_block(reason_lines)
+        issue_block = self._build_issue_summary_block(row)
         return (
             f"[{code} {name}]\n"
             f"권고: {recommendation}\n"
@@ -450,16 +452,61 @@ class KakaoColabPredictionBot:
             f"내일 예측 수익률: {predicted_return}\n"
             f"내일 예측 종가: {predicted_close}\n"
             f"신뢰도: {confidence}\n"
-            f"{rationale_block}\n"
-            f"원문 사유: {reason}"
+            f"{rationale_block}"
+            f"{issue_block}"
         )
 
     # Backward-compatible shim for legacy runtime objects that still reference this method.
-    def _format_reason_for_display(self, reason: str) -> str:
-        raw = (reason or "").strip()
+    def _format_reason_for_display(self, reason: Any) -> list[str]:
+        if reason is None or pd.isna(reason):
+            return []
+        raw = str(reason).strip()
         if not raw:
-            return "예측 이유 정보가 없습니다."
-        return raw
+            return []
+        normalized = raw.replace("\n", " / ")
+        parts = [part.strip() for part in normalized.split("/") if part.strip()]
+        return parts
+
+    def _build_rationale_block(self, reason_lines: list[str]) -> str:
+        normalized_reasons = self._normalize_reason_labels(reason_lines)
+        if not normalized_reasons:
+            return ""
+        return f"사유: {', '.join(normalized_reasons)}\n"
+
+    def _normalize_reason_labels(self, reason_lines: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for reason_line in reason_lines:
+            text = str(reason_line).strip()
+            if not text or text == "예측 이유 정보가 없습니다.":
+                continue
+            if "거래대금" in text and "상위" in text:
+                label = "거래대금 상위"
+            elif "외국인" in text and "기관" in text and "순매수" in text:
+                label = "외국인/기관 순매수"
+            else:
+                label = re.sub(r"^[^:]+:\s*", "", text).strip().rstrip(".")
+            if label and label not in normalized:
+                normalized.append(label)
+        return normalized
+
+    def _build_issue_summary_block(self, row: pd.Series) -> str:
+        issue_fields = [
+            ("오늘 종목 이슈 한줄 요약", "오늘 이슈"),
+            ("공시 요약", "공시 요약"),
+            ("뉴스 요약", "뉴스 요약"),
+            ("종합 판단", "종합 판단"),
+        ]
+        lines: list[str] = []
+        for column, label in issue_fields:
+            raw = row.get(column)
+            if pd.isna(raw) if not isinstance(raw, str) else False:
+                continue
+            text = str(raw).strip()
+            if text and text != "-":
+                lines.append(f"{label}: {text}")
+        if not lines:
+            return ""
+        return "\n[공시/뉴스 요약]\n" + "\n".join(lines)
 
     def _maybe_patch_legacy_rationale_bug(self, exc: Exception) -> bool:
         is_legacy_name_error = isinstance(exc, NameError) and "rationale_block" in str(exc)
