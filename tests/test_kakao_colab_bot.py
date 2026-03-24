@@ -576,3 +576,55 @@ def test_finalize_process_falls_back_when_prediction_message_format_fails(tmp_pa
 
     assert any("메시지 포맷 오류(NameError)" in log for log in logs)
     assert any("사유: 종배수급: 거래대금 15위 이내 상위 종목입니다" in log for log in logs)
+
+
+def test_handle_symbol_request_falls_back_when_cached_message_format_fails(tmp_path: Path, monkeypatch):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "종목코드": "005930",
+                "종목명": "삼성전자",
+                "권고": "매수",
+                "내일 예상 종가": 71200,
+                "내일 예상 수익률(%)": "1.234%",
+                "상승확률(%)": "78.9%",
+                "예측 신뢰도": "88.0%",
+                "예측 이유": "종배수급: 거래대금 15위 이내 상위 종목입니다",
+            }
+        ]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+
+    bot = make_bot(tmp_path)
+    monkeypatch.setattr(
+        bot,
+        "_format_prediction_message",
+        lambda row: (_ for _ in ()).throw(NameError("rationale_block")),
+    )
+
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u1"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "[005930 삼성전자]" in text
+    assert "사유: 종배수급: 거래대금 15위 이내 상위 종목입니다" in text
+
+
+def test_kakao_webhook_returns_safe_response_when_handler_raises(tmp_path: Path, monkeypatch):
+    from src.chatbot.kakao_colab_bot import create_app
+
+    bot = make_bot(tmp_path)
+    app = create_app(bot=bot)
+
+    monkeypatch.setattr(
+        bot,
+        "handle_kakao_payload",
+        lambda payload: (_ for _ in ()).throw(NameError("rationale_block")),
+    )
+
+    client = app.test_client()
+    response = client.post("/kakao/webhook", json={"userRequest": {"utterance": "005930"}})
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert "예측 메시지 처리 중 오류가 발생했습니다" in body["template"]["outputs"][0]["simpleText"]["text"]

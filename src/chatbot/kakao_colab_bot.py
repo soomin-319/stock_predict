@@ -191,8 +191,19 @@ class KakaoColabPredictionBot:
 
         cached_row = None if force_refresh else self._find_cached_prediction(symbol)
         if cached_row is not None:
+            try:
+                message = self._format_prediction_message(cached_row)
+            except Exception as exc:
+                self._console_log(
+                    f"{display_code} 응답 메시지 포맷 오류({type(exc).__name__}): {exc}. 원문 사유로 대체합니다."
+                )
+                raw_reason = str(cached_row.get("예측 이유", "예측 이유 정보가 없습니다."))
+                message = (
+                    f"[{display_code} {str(cached_row.get('종목명', '-'))}]\n"
+                    f"사유: {raw_reason}"
+                )
             return self._build_response(
-                self._format_prediction_message(cached_row),
+                message,
                 quick_replies=[
                     ("최신화", "최신화"),
                     ("결과 확인", "결과"),
@@ -663,7 +674,16 @@ def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: Pipel
     @app.post("/kakao/webhook")
     def kakao_webhook():
         payload = request.get_json(silent=True) or {}
-        return jsonify(service.handle_kakao_payload(payload))
+        try:
+            return jsonify(service.handle_kakao_payload(payload))
+        except Exception as exc:
+            service._console_log(f"웹훅 처리 오류({type(exc).__name__}): {exc}")
+            return jsonify(
+                service._build_response(
+                    "예측 메시지 처리 중 오류가 발생했습니다. 같은 종목코드를 다시 입력해주세요.",
+                    quick_replies=[("도움말", "도움말"), ("다시 시도", "결과")],
+                )
+            )
 
     return app
 
