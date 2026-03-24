@@ -57,6 +57,7 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
             *([c for c in ["up_probability_5d", "up_probability_20d"] if c in out.columns]),
             "예측 신뢰도",
             "예측 이유",
+            *([c for c in ["오늘 종목 이슈 한줄 요약", "공시 요약", "뉴스 요약", "종합 판단", "주의사항", "원문 개수", "핵심 원문 목록"] if c in out.columns]),
         ]
     ].rename(
         columns={
