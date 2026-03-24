@@ -379,7 +379,7 @@ class KakaoColabPredictionBot:
         up_probability = self._format_percent(row.get("상승확률(%)"))
         predicted_close = self._format_price(row.get("내일 예상 종가"))
         confidence = self._format_confidence(row.get("예측 신뢰도"))
-        reason = str(row.get("예측 이유", "예측 이유 정보가 없습니다."))
+        reason = self._format_reason_for_display(str(row.get("예측 이유", "예측 이유 정보가 없습니다.")))
         return (
             f"[{code} {name}]\n"
             f"권고: {recommendation}\n"
@@ -389,6 +389,28 @@ class KakaoColabPredictionBot:
             f"신뢰도: {confidence}\n"
             f"사유: {reason}"
         )
+
+    def _format_reason_for_display(self, reason: str) -> str:
+        raw = (reason or "").strip()
+        if not raw:
+            return "예측 이유 정보가 없습니다."
+
+        matched: list[str] = []
+        criteria_map = [
+            ("종배수급:", "거래대금 15위 이내"),
+            ("수급조건:", "외국인/기관 각각 1,000억 이상 순매수"),
+            ("주도주확인:", "1·2·3등주 동반 상승(관련 값 존재 시)"),
+            ("추세조건:", "52주 신고가"),
+            ("해외조건:", "나스닥선물 +1% / -1%"),
+            ("중장기조건:", "RSI 30~35(분할매수 관찰), RSI 70 이상(매도 우선)"),
+        ]
+        for key, label in criteria_map:
+            if key in raw:
+                matched.append(label)
+
+        if not matched:
+            return raw
+        return ", \n".join(matched) + " 해당 기준을 충족합니다"
 
     def _format_percent(self, value: Any) -> str:
         if isinstance(value, str) and value.strip().endswith("%"):
@@ -470,7 +492,15 @@ class KakaoColabPredictionBot:
         if status == "completed":
             cached_row = self._find_cached_prediction(symbol)
             if cached_row is not None:
-                self._console_log(f"{display_code} 예측 완료\n{self._format_prediction_message(cached_row)}")
+                try:
+                    message = self._format_prediction_message(cached_row)
+                except Exception as exc:
+                    self._console_log(
+                        f"{display_code} 예측 완료 메시지 포맷 오류({type(exc).__name__}): {exc}. 원문 사유로 대체합니다."
+                    )
+                    raw_reason = str(cached_row.get("예측 이유", "예측 이유 정보가 없습니다."))
+                    message = f"[{display_code}] 예측 완료\n사유: {raw_reason}"
+                self._console_log(f"{display_code} 예측 완료\n{message}")
             else:
                 self._console_log(f"{display_code} 예측 작업 completed (exit_code=0). 결과 CSV를 확인해주세요.")
         else:
