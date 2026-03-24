@@ -396,7 +396,7 @@ class KakaoColabPredictionBot:
         up_probability = self._format_percent(row.get("상승확률(%)"))
         predicted_close = self._format_price(row.get("내일 예상 종가"))
         confidence = self._format_confidence(row.get("예측 신뢰도"))
-        reason = str(row.get("예측 이유", "예측 이유 정보가 없습니다."))
+        reason = self._format_reason_for_display(str(row.get("예측 이유", "예측 이유 정보가 없습니다.")))
         return (
             f"[{code} {name}]\n"
             f"권고: {recommendation}\n"
@@ -404,7 +404,8 @@ class KakaoColabPredictionBot:
             f"내일 예측 수익률: {predicted_return}\n"
             f"내일 예측 종가: {predicted_close}\n"
             f"신뢰도: {confidence}\n"
-            f"사유: {reason}"
+            f"{rationale_block}\n"
+            f"원문 사유: {reason}"
         )
 
     # Backward-compatible shim for legacy runtime objects that still reference this method.
