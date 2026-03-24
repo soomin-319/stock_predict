@@ -574,8 +574,8 @@ def test_finalize_process_falls_back_when_prediction_message_format_fails(tmp_pa
 
     bot._finalize_process("005930.KS", 0)
 
-    assert any("메시지 포맷 오류(NameError)" in log for log in logs)
-    assert any("사유: 종배수급: 거래대금 15위 이내 상위 종목입니다" in log for log in logs)
+    assert any("레거시 포맷터 오류 감지(NameError: rationale_block)" in log for log in logs)
+    assert any("사유: 거래대금 15위 이내 해당 기준을 충족합니다" in log for log in logs)
 
 
 def test_handle_symbol_request_falls_back_when_cached_message_format_fails(tmp_path: Path, monkeypatch):
@@ -607,7 +607,7 @@ def test_handle_symbol_request_falls_back_when_cached_message_format_fails(tmp_p
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
     assert "[005930 삼성전자]" in text
-    assert "사유: 종배수급: 거래대금 15위 이내 상위 종목입니다" in text
+    assert "사유: 거래대금 15위 이내 해당 기준을 충족합니다" in text
 
 
 def test_kakao_webhook_returns_safe_response_when_handler_raises(tmp_path: Path, monkeypatch):

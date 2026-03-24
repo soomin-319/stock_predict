@@ -133,6 +133,7 @@ class KakaoColabPredictionBot:
         self._active_processes: dict[str, Any] = {}
         self._job_registry = self._load_registry(self.state_path)
         self._session_registry = self._load_registry(self.session_path)
+        self._legacy_formatter_patched = False
 
     def handle_kakao_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         utterance = ((payload.get("userRequest") or {}).get("utterance") or "").strip()
@@ -194,14 +195,17 @@ class KakaoColabPredictionBot:
             try:
                 message = self._format_prediction_message(cached_row)
             except Exception as exc:
-                self._console_log(
-                    f"{display_code} 응답 메시지 포맷 오류({type(exc).__name__}): {exc}. 원문 사유로 대체합니다."
-                )
-                raw_reason = str(cached_row.get("예측 이유", "예측 이유 정보가 없습니다."))
-                message = (
-                    f"[{display_code} {str(cached_row.get('종목명', '-'))}]\n"
-                    f"사유: {raw_reason}"
-                )
+                if self._maybe_patch_legacy_rationale_bug(exc):
+                    message = self._safe_format_prediction_message(cached_row)
+                else:
+                    self._console_log(
+                        f"{display_code} 응답 메시지 포맷 오류({type(exc).__name__}): {exc}. 원문 사유로 대체합니다."
+                    )
+                    raw_reason = str(cached_row.get("예측 이유", "예측 이유 정보가 없습니다."))
+                    message = (
+                        f"[{display_code} {str(cached_row.get('종목명', '-'))}]\n"
+                        f"사유: {raw_reason}"
+                    )
             return self._build_response(
                 message,
                 quick_replies=[
@@ -383,6 +387,9 @@ class KakaoColabPredictionBot:
         return "KOSPI"
 
     def _format_prediction_message(self, row: pd.Series) -> str:
+        return self._safe_format_prediction_message(row)
+
+    def _safe_format_prediction_message(self, row: pd.Series) -> str:
         code = str(row.get("종목코드", "-"))
         name = str(row.get("종목명", "-"))
         recommendation = str(row.get("권고", "-"))
@@ -423,6 +430,20 @@ class KakaoColabPredictionBot:
         if not matched:
             return raw
         return ", \n".join(matched) + " 해당 기준을 충족합니다"
+
+    def _maybe_patch_legacy_rationale_bug(self, exc: Exception) -> bool:
+        is_legacy_name_error = isinstance(exc, NameError) and "rationale_block" in str(exc)
+        if not is_legacy_name_error:
+            return False
+
+        if not self._legacy_formatter_patched:
+            self._console_log(
+                "레거시 포맷터 오류 감지(NameError: rationale_block). "
+                "안전 포맷터로 즉시 대체합니다. (Colab 런타임 재시작 권장)"
+            )
+            self._legacy_formatter_patched = True
+        self._format_prediction_message = self._safe_format_prediction_message
+        return True
 
     def _format_percent(self, value: Any) -> str:
         if isinstance(value, str) and value.strip().endswith("%"):
@@ -507,11 +528,14 @@ class KakaoColabPredictionBot:
                 try:
                     message = self._format_prediction_message(cached_row)
                 except Exception as exc:
-                    self._console_log(
-                        f"{display_code} 예측 완료 메시지 포맷 오류({type(exc).__name__}): {exc}. 원문 사유로 대체합니다."
-                    )
-                    raw_reason = str(cached_row.get("예측 이유", "예측 이유 정보가 없습니다."))
-                    message = f"[{display_code}] 예측 완료\n사유: {raw_reason}"
+                    if self._maybe_patch_legacy_rationale_bug(exc):
+                        message = self._safe_format_prediction_message(cached_row)
+                    else:
+                        self._console_log(
+                            f"{display_code} 예측 완료 메시지 포맷 오류({type(exc).__name__}): {exc}. 원문 사유로 대체합니다."
+                        )
+                        raw_reason = str(cached_row.get("예측 이유", "예측 이유 정보가 없습니다."))
+                        message = f"[{display_code}] 예측 완료\n사유: {raw_reason}"
                 self._console_log(f"{display_code} 예측 완료\n{message}")
             else:
                 self._console_log(f"{display_code} 예측 작업 completed (exit_code=0). 결과 CSV를 확인해주세요.")
