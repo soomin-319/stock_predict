@@ -409,28 +409,6 @@ class KakaoColabPredictionBot:
             f"원문 사유: {reason}"
         )
 
-    def _format_reason_for_display(self, reason: str) -> str:
-        raw = (reason or "").strip()
-        if not raw:
-            return "예측 이유 정보가 없습니다."
-
-        matched: list[str] = []
-        criteria_map = [
-            ("종배수급:", "거래대금 15위 이내"),
-            ("수급조건:", "외국인/기관 각각 1,000억 이상 순매수"),
-            ("주도주확인:", "1·2·3등주 동반 상승(관련 값 존재 시)"),
-            ("추세조건:", "52주 신고가"),
-            ("해외조건:", "나스닥선물 +1% / -1%"),
-            ("중장기조건:", "RSI 30~35(분할매수 관찰), RSI 70 이상(매도 우선)"),
-        ]
-        for key, label in criteria_map:
-            if key in raw:
-                matched.append(label)
-
-        if not matched:
-            return raw
-        return ", \n".join(matched) + " 해당 기준을 충족합니다"
-
     def _maybe_patch_legacy_rationale_bug(self, exc: Exception) -> bool:
         is_legacy_name_error = isinstance(exc, NameError) and "rationale_block" in str(exc)
         if not is_legacy_name_error:
