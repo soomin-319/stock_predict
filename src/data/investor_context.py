@@ -469,3 +469,96 @@ def add_investor_context_with_coverage(df: pd.DataFrame, cfg: InvestorContextCon
         out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0.0)
 
     return out, coverage
+
+
+def collect_context_raw_events(
+    symbols: list[str],
+    start: str,
+    end: str,
+    dart_api_key: str | None = None,
+    dart_corp_map_csv: str | None = None,
+) -> pd.DataFrame:
+    rows: list[dict] = []
+    start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
+
+    for symbol in symbols:
+        try:
+            news_items = _load_yfinance_news_items(symbol)
+        except Exception:
+            news_items = []
+        for item in news_items:
+            dt, title = _parse_news_datetime_and_title(item)
+            if dt is None or dt < start_dt or dt > end_dt:
+                continue
+            content = item.get("content") if isinstance(item.get("content"), dict) else item
+            provider = str(
+                content.get("provider")
+                or content.get("publisher")
+                or item.get("provider")
+                or item.get("publisher")
+                or "yfinance"
+            ).strip()
+            url = (
+                content.get("link")
+                or content.get("url")
+                or item.get("link")
+                or item.get("url")
+                or ""
+            )
+            if isinstance(content.get("canonicalUrl"), dict):
+                url = content.get("canonicalUrl", {}).get("url") or url
+            rows.append(
+                {
+                    "Date": dt.strftime("%Y-%m-%d"),
+                    "Symbol": symbol,
+                    "source_type": "news",
+                    "title": title,
+                    "published_at": dt.isoformat(),
+                    "provider": provider,
+                    "url": str(url or ""),
+                    "raw_id": str(item.get("id") or ""),
+                }
+            )
+
+    if dart_api_key:
+        corp_map = _load_dart_corp_map(dart_corp_map_csv)
+        for symbol in symbols:
+            corp = corp_map.get(symbol)
+            if not corp:
+                continue
+            try:
+                payload = _dart_list(dart_api_key, corp, start, end)
+                items = payload.get("list", []) if isinstance(payload, dict) else []
+            except Exception:
+                items = []
+            for item in items:
+                rcept_dt = str(item.get("rcept_dt") or "").strip()
+                if len(rcept_dt) != 8:
+                    continue
+                dt = pd.to_datetime(rcept_dt, format="%Y%m%d", errors="coerce")
+                if pd.isna(dt):
+                    continue
+                dt = dt.normalize()
+                if dt < start_dt or dt > end_dt:
+                    continue
+                rcept_no = str(item.get("rcept_no") or "").strip()
+                dart_url = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}" if rcept_no else ""
+                rows.append(
+                    {
+                        "Date": dt.strftime("%Y-%m-%d"),
+                        "Symbol": symbol,
+                        "source_type": "disclosure",
+                        "title": str(item.get("report_nm") or "").strip(),
+                        "published_at": dt.isoformat(),
+                        "provider": "DART",
+                        "url": dart_url,
+                        "raw_id": rcept_no,
+                    }
+                )
+
+    if not rows:
+        return pd.DataFrame(columns=["Date", "Symbol", "source_type", "title", "published_at", "provider", "url", "raw_id"])
+
+    out = pd.DataFrame(rows).drop_duplicates(subset=["Date", "Symbol", "source_type", "title", "raw_id"]).reset_index(drop=True)
+    out = out.sort_values(["Date", "Symbol", "source_type", "title"]).reset_index(drop=True)
+    return out

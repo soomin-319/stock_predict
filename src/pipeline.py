@@ -19,7 +19,7 @@ from src.data.cleaners import clean_ohlcv
 from src.data.fetch_real_data import append_real_ohlcv_csv, normalize_user_symbols, save_real_ohlcv_csv
 from src.data.krx_universe import get_symbol_name_map
 from src.data.loaders import load_ohlcv_csv
-from src.data.investor_context import InvestorContextConfig, add_investor_context_with_coverage
+from src.data.investor_context import InvestorContextConfig, add_investor_context_with_coverage, collect_context_raw_events
 from src.data.universe import filter_by_universe, load_default_universe_symbols, load_universe_symbols
 from src.domain.signal_policy import (
     build_prediction_policy_frame,
@@ -512,6 +512,22 @@ def run_pipeline(
                 openai_model=openai_model,
             ),
         )
+        try:
+            context_raw_df = collect_context_raw_events(
+                symbols=sorted(data["Symbol"].dropna().astype(str).unique().tolist()),
+                start=data["Date"].min().strftime("%Y-%m-%d"),
+                end=data["Date"].max().strftime("%Y-%m-%d"),
+                dart_api_key=dart_api_key,
+                dart_corp_map_csv=dart_corp_map_csv,
+            )
+        except Exception:
+            context_raw_df = pd.DataFrame(
+                columns=["Date", "Symbol", "source_type", "title", "published_at", "provider", "url", "raw_id"]
+            )
+    else:
+        context_raw_df = pd.DataFrame(
+            columns=["Date", "Symbol", "source_type", "title", "published_at", "provider", "url", "raw_id"]
+        )
 
     _print_progress(5, total_steps, "Building price features")
     feat = build_features(data, cfg.feature)
@@ -657,6 +673,8 @@ def run_pipeline(
 
     simple_path = resolve_output_path("result_simple.csv")
     simple_path = _safe_to_csv(simple_df, simple_path)
+    news_path = resolve_output_path("result_news.csv")
+    news_path = _safe_to_csv(context_raw_df, news_path)
 
     report = {
         "universe_name": cfg.universe.name,
@@ -699,6 +717,7 @@ def run_pipeline(
         "artifacts": {
             "result_detail_csv": str(detail_path),
             "result_simple_csv": str(simple_path),
+            "result_news_csv": str(news_path),
             "figure_dir": str(figure_dir_path),
             **fig_paths,
             "signal_hist": signal_hist,
