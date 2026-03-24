@@ -659,3 +659,26 @@ def test_finalize_process_handles_missing_log_handle(tmp_path: Path, monkeypatch
     bot._finalize_process("005930.KS", 1)
 
     assert any("예측 작업 failed" in log for log in logs)
+
+
+def test_load_cached_result_simple_uses_mtime_cache(monkeypatch, tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = result_dir / "result_simple.csv"
+    csv_path.write_text("종목코드,종목명\n005930,삼성전자\n", encoding="utf-8-sig")
+
+    bot = make_bot(tmp_path)
+    original_read_csv = pd.read_csv
+    calls = {"count": 0}
+
+    def _counting_read_csv(*args, **kwargs):
+        calls["count"] += 1
+        return original_read_csv(*args, **kwargs)
+
+    monkeypatch.setattr(pd, "read_csv", _counting_read_csv)
+
+    out1 = bot._load_cached_result_simple()
+    out2 = bot._load_cached_result_simple()
+
+    assert calls["count"] == 1
+    assert not out1.empty and not out2.empty

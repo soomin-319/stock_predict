@@ -133,6 +133,8 @@ class KakaoColabPredictionBot:
         self._active_processes: dict[str, Any] = {}
         self._job_registry = self._load_registry(self.state_path)
         self._session_registry = self._load_registry(self.session_path)
+        self._result_simple_cache: pd.DataFrame | None = None
+        self._result_simple_cache_mtime_ns: int | None = None
         self._state_lock = threading.RLock()
         self._legacy_formatter_patched = False
         self._bootstrap_formatter_guard()
@@ -388,13 +390,33 @@ class KakaoColabPredictionBot:
 
     def _load_cached_result_simple(self) -> pd.DataFrame:
         if not self.result_simple_path.exists():
+            with self._state_lock:
+                self._result_simple_cache = None
+                self._result_simple_cache_mtime_ns = None
             return pd.DataFrame()
         try:
-            return pd.read_csv(self.result_simple_path, dtype={"종목코드": str}, encoding="utf-8-sig")
+            stat_mtime_ns = self.result_simple_path.stat().st_mtime_ns
+        except OSError:
+            return pd.DataFrame()
+        with self._state_lock:
+            if (
+                self._result_simple_cache is not None
+                and self._result_simple_cache_mtime_ns == stat_mtime_ns
+            ):
+                return self._result_simple_cache.copy()
+        try:
+            loaded = pd.read_csv(self.result_simple_path, dtype={"종목코드": str}, encoding="utf-8-sig")
+            with self._state_lock:
+                self._result_simple_cache = loaded
+                self._result_simple_cache_mtime_ns = stat_mtime_ns
+            return loaded.copy()
         except FileNotFoundError:
             return pd.DataFrame()
         except Exception as exc:
             self._console_log(f"예측 캐시 CSV 로드 실패: {self.result_simple_path} ({exc})")
+            with self._state_lock:
+                self._result_simple_cache = None
+                self._result_simple_cache_mtime_ns = None
             return pd.DataFrame()
 
     def _infer_market_from_symbol(self, symbol: str) -> str:
