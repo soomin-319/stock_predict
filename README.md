@@ -248,8 +248,18 @@ from src.chatbot.kakao_colab_bot import (
     launch_colab_kakao_bot,
 )
 
+# 필수 키
+os.environ["DART_API_KEY"] = "YOUR_DART_API_KEY"
+os.environ["NGROK_AUTHTOKEN"] = "YOUR_NGROK_AUTHTOKEN"
+
+# 선택: 공시/뉴스 LLM 해석 기능(OpenAI)
+# - 설정하면 공시/뉴스 요약 품질 개선에 사용됩니다.
+os.environ["OPENAI_API_KEY"] = "YOUR_OPENAI_API_KEY"
+
 runtime_config = PipelineRuntimeConfig(
     dart_api_key=os.environ["DART_API_KEY"],
+    openai_api_key=os.environ.get("OPENAI_API_KEY"),
+    openai_model="gpt-4o-mini",
     input_csv="data/real_ohlcv.csv",
     report_json="pipeline_report_with_context.json",
     figure_dir="figures_with_context",
@@ -276,8 +286,13 @@ print(ngrok.get_tunnels())
 import os
 from src.chatbot.kakao_colab_bot import PipelineRuntimeConfig, create_app
 
+os.environ["DART_API_KEY"] = "YOUR_DART_API_KEY"
+os.environ["OPENAI_API_KEY"] = "YOUR_OPENAI_API_KEY"  # 공시/뉴스 LLM 요약 사용 시
+
 runtime_config = PipelineRuntimeConfig(
     dart_api_key=os.environ["DART_API_KEY"],
+    openai_api_key=os.environ.get("OPENAI_API_KEY"),
+    openai_model="gpt-4o-mini",
     input_csv="data/real_ohlcv.csv",
     report_json="pipeline_report_with_context.json",
     figure_dir="figures_with_context",
@@ -293,6 +308,8 @@ app.run(host="0.0.0.0", port=8000)
 ```bash
 python -m src.chatbot.kakao_colab_bot \
   --dart-api-key "YOUR_DART_API_KEY" \
+  --openai-api-key "YOUR_OPENAI_API_KEY" \
+  --openai-model "gpt-4o-mini" \
   --input data/real_ohlcv.csv \
   --report-json pipeline_report_with_context.json \
   --figure-dir figures_with_context
