@@ -380,12 +380,6 @@ class KakaoColabPredictionBot:
         predicted_close = self._format_price(row.get("내일 예상 종가"))
         confidence = self._format_confidence(row.get("예측 신뢰도"))
         reason = str(row.get("예측 이유", "예측 이유 정보가 없습니다."))
-        rationale_block = self._build_user_rationale_block(
-            recommendation=recommendation,
-            up_probability=up_probability,
-            predicted_return=predicted_return,
-            reason=reason,
-        )
         return (
             f"[{code} {name}]\n"
             f"권고: {recommendation}\n"
@@ -393,34 +387,8 @@ class KakaoColabPredictionBot:
             f"내일 예측 수익률: {predicted_return}\n"
             f"내일 예측 종가: {predicted_close}\n"
             f"신뢰도: {confidence}\n"
-            f"{rationale_block}\n"
-            f"원문 사유: {reason}"
+            f"사유: {reason}"
         )
-
-    def _build_user_rationale_block(
-        self,
-        recommendation: str,
-        up_probability: str,
-        predicted_return: str,
-        reason: str,
-    ) -> str:
-        action_guide = self._build_action_guide(recommendation)
-        normalized_reason = (reason or "").strip() or "예측 이유 정보가 없습니다."
-        return (
-            "사유(개정 포맷)\n"
-            f"- 결론: {recommendation} 관점 (상승확률 {up_probability}, 기대수익률 {predicted_return})\n"
-            f"- 핵심 근거: {normalized_reason}\n"
-            "- 무효화 조건: 장초반 과도한 갭, 거래대금 급감, 변동성 급등 시 관망\n"
-            f"- 실행 가이드: {action_guide}"
-        )
-
-    def _build_action_guide(self, recommendation: str) -> str:
-        rec = (recommendation or "").strip()
-        if "매수" in rec:
-            return "분할 진입 후 손절/익절 기준을 함께 설정하고 D+2 재평가"
-        if "매도" in rec:
-            return "보유 비중 축소를 우선 검토하고 변동성 안정 후 재진입 판단"
-        return "신규 비중 확대를 보류하고 주요 지표 변화 시점에 재평가"
 
     def _format_percent(self, value: Any) -> str:
         if isinstance(value, str) and value.strip().endswith("%"):

@@ -103,8 +103,6 @@ def test_returns_cached_prediction_message_from_kakao_payload(tmp_path: Path):
     assert "권고: 매수" in text
     assert "[005930 삼성전자]" in text
     assert "상승확률: 78.9%" in text
-    assert "사유(개정 포맷)" in text
-    assert "무효화 조건" in text
     assert response["template"]["quickReplies"][0]["label"] == "최신화"
 
 
