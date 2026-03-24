@@ -379,13 +379,7 @@ class KakaoColabPredictionBot:
         up_probability = self._format_percent(row.get("상승확률(%)"))
         predicted_close = self._format_price(row.get("내일 예상 종가"))
         confidence = self._format_confidence(row.get("예측 신뢰도"))
-        reason = str(row.get("예측 이유", "예측 이유 정보가 없습니다."))
-        rationale_block = self._build_user_rationale_block(
-            recommendation=recommendation,
-            up_probability=up_probability,
-            predicted_return=predicted_return,
-            reason=reason,
-        )
+        reason = self._format_reason_for_display(str(row.get("예측 이유", "예측 이유 정보가 없습니다.")))
         return (
             f"[{code} {name}]\n"
             f"권고: {recommendation}\n"
@@ -414,13 +408,27 @@ class KakaoColabPredictionBot:
             f"- 실행 가이드: {action_guide}"
         )
 
-    def _build_action_guide(self, recommendation: str) -> str:
-        rec = (recommendation or "").strip()
-        if "매수" in rec:
-            return "분할 진입 후 손절/익절 기준을 함께 설정하고 D+2 재평가"
-        if "매도" in rec:
-            return "보유 비중 축소를 우선 검토하고 변동성 안정 후 재진입 판단"
-        return "신규 비중 확대를 보류하고 주요 지표 변화 시점에 재평가"
+    def _format_reason_for_display(self, reason: str) -> str:
+        raw = (reason or "").strip()
+        if not raw:
+            return "예측 이유 정보가 없습니다."
+
+        matched: list[str] = []
+        criteria_map = [
+            ("종배수급:", "거래대금 15위 이내"),
+            ("수급조건:", "외국인/기관 각각 1,000억 이상 순매수"),
+            ("주도주확인:", "1·2·3등주 동반 상승(관련 값 존재 시)"),
+            ("추세조건:", "52주 신고가"),
+            ("해외조건:", "나스닥선물 +1% / -1%"),
+            ("중장기조건:", "RSI 30~35(분할매수 관찰), RSI 70 이상(매도 우선)"),
+        ]
+        for key, label in criteria_map:
+            if key in raw:
+                matched.append(label)
+
+        if not matched:
+            return raw
+        return ", \n".join(matched) + " 해당 기준을 충족합니다"
 
     def _format_percent(self, value: Any) -> str:
         if isinstance(value, str) and value.strip().endswith("%"):
