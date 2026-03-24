@@ -318,7 +318,7 @@ def check_openai_connection(api_key: str | None, model: str) -> bool:
         resp = client.responses.create(
             model=model,
             input="ping",
-            max_output_tokens=5,
+            max_output_tokens=16,
         )
         print("[OPENAI CHECK] 연결 성공")
         print(f"[OPENAI CHECK] model={model}")
