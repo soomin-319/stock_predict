@@ -128,6 +128,10 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert "000660.KS" in command
     assert "--fetch-investor-context" in command
     assert "--disable-news-context" not in command
+    assert "--dart-api-key" in command
+    assert "demo-key" in command
+    assert "--dart-corp-map-csv" in command
+    assert "data/dart_corp_map.csv" in command
     assert "--disable-external" in command
 
     session_path = tmp_path / "result" / "chatbot_sessions.json"

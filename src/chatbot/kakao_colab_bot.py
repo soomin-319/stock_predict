@@ -86,6 +86,10 @@ class PipelineRuntimeConfig:
                 cmd.append("--disable-disclosure-context")
             if not self.enable_investor_news:
                 cmd.append("--disable-news-context")
+            if self.dart_api_key:
+                cmd.extend(["--dart-api-key", self.dart_api_key])
+            if self.dart_corp_map_csv:
+                cmd.extend(["--dart-corp-map-csv", self.dart_corp_map_csv])
             if self.news_scoring_mode:
                 cmd.extend(["--news-scoring-mode", self.news_scoring_mode])
             if self.openai_api_key:
