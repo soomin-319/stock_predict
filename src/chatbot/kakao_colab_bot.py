@@ -405,7 +405,8 @@ class KakaoColabPredictionBot:
             f"내일 예측 수익률: {predicted_return}\n"
             f"내일 예측 종가: {predicted_close}\n"
             f"신뢰도: {confidence}\n"
-            f"사유: {reason}"
+            f"{rationale_block}\n"
+            f"원문 사유: {reason}"
         )
 
     def _format_reason_for_display(self, reason: str) -> str:
