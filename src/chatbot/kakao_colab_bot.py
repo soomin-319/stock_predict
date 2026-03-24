@@ -387,7 +387,25 @@ class KakaoColabPredictionBot:
             f"내일 예측 수익률: {predicted_return}\n"
             f"내일 예측 종가: {predicted_close}\n"
             f"신뢰도: {confidence}\n"
-            f"사유: {reason}"
+            f"{rationale_block}\n"
+            f"원문 사유: {reason}"
+        )
+
+    def _build_user_rationale_block(
+        self,
+        recommendation: str,
+        up_probability: str,
+        predicted_return: str,
+        reason: str,
+    ) -> str:
+        action_guide = self._build_action_guide(recommendation)
+        normalized_reason = (reason or "").strip() or "예측 이유 정보가 없습니다."
+        return (
+            "사유(개정 포맷)\n"
+            f"- 결론: {recommendation} 관점 (상승확률 {up_probability}, 기대수익률 {predicted_return})\n"
+            f"- 핵심 근거: {normalized_reason}\n"
+            "- 무효화 조건: 장초반 과도한 갭, 거래대금 급감, 변동성 급등 시 관망\n"
+            f"- 실행 가이드: {action_guide}"
         )
 
     def _format_reason_for_display(self, reason: str) -> str:
