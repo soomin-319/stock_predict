@@ -230,67 +230,8 @@ def _normalize_news_title(title: str) -> str:
     return re.sub(r"\s+", " ", str(title).strip()).lower()
 
 
-def _resolve_news_ai_settings(cfg: InvestorContextConfig | None) -> tuple[str, str | None, str | None]:
-    if cfg is None:
-        mode = os.getenv("NEWS_SCORING_MODE", "auto")
-        api_key = os.getenv("OPENAI_API_KEY")
-        model = os.getenv("OPENAI_MODEL")
-        return mode.lower(), api_key, model
-
-    mode = str(cfg.news_scoring_mode or os.getenv("NEWS_SCORING_MODE", "auto")).lower()
-    api_key = cfg.openai_api_key if cfg.openai_api_key is not None else os.getenv("OPENAI_API_KEY")
-    model = cfg.openai_model if cfg.openai_model is not None else os.getenv("OPENAI_MODEL")
-    return mode, api_key, model
-
-
-def _score_headline_with_openai(title: str, api_key: str | None, model: str | None) -> tuple[float, float, float] | None:
-    if not api_key or not model or not str(title).strip():
-        return None
-
-    try:
-        from openai import OpenAI
-    except Exception:
-        return None
-
-    prompt = (
-        "You are a financial news analyst. Read the stock-news headline and score its likely short-term price impact "
-        "(1-5 trading days) for the referenced company. Return JSON only with these numeric keys: "
-        "sentiment_score, relevance_score, impact_score. "
-        "sentiment_score must be between 0 and 1 where 0 is strongly bearish, 0.5 is neutral, and 1 is strongly bullish. "
-        "relevance_score must be between 0 and 1 and represent how directly the headline should affect the company's stock price. "
-        "impact_score must be between -1 and 1 and represent the expected stock-price impact direction and magnitude. "
-        "If the headline is ambiguous, lower relevance_score and keep sentiment_score near 0.5."
-    )
-
-    try:
-        client = OpenAI(api_key=api_key)
-        response = client.responses.create(
-            model=model,
-            input=[
-                {"role": "system", "content": [{"type": "input_text", "text": prompt}]},
-                {"role": "user", "content": [{"type": "input_text", "text": str(title)}]},
-            ],
-        )
-        raw = getattr(response, "output_text", "") or ""
-        payload = json.loads(raw)
-        sentiment = float(payload["sentiment_score"])
-        relevance = float(payload["relevance_score"])
-        impact = float(payload["impact_score"])
-    except Exception:
-        return None
-
-    sentiment = max(0.0, min(1.0, sentiment))
-    relevance = max(0.0, min(1.0, relevance))
-    impact = max(-1.0, min(1.0, impact))
-    return sentiment, relevance, impact
-
-
 def _headline_news_features(text: str, cfg: InvestorContextConfig | None = None) -> tuple[float, float, float]:
-    mode, api_key, model = _resolve_news_ai_settings(cfg)
-    if mode in {"auto", "ai"}:
-        ai_result = _score_headline_with_openai(text, api_key=api_key, model=model)
-        if ai_result is not None:
-            return ai_result
+    _ = cfg
     return _headline_news_features_rule_based(text)
 
 

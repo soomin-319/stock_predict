@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 
 import pandas as pd
+from openai import OpenAI
 
 
 @dataclass
@@ -82,7 +83,67 @@ def summarize_symbol_issue(row: pd.Series) -> SymbolIssueSummary:
     )
 
 
-def append_issue_summary_columns(pred_df: pd.DataFrame) -> pd.DataFrame:
+def _build_llm_prompt(symbol: str, symbol_name: str, disclosures: list[str], news_titles: list[str]) -> str:
+    disclosure_text = "\n".join(f"- {x}" for x in disclosures[:10]) or "- 없음"
+    news_text = "\n".join(f"- {x}" for x in news_titles[:15]) or "- 없음"
+    return (
+        f"종목코드: {symbol}\n"
+        f"종목명: {symbol_name}\n\n"
+        "[공시 목록]\n"
+        f"{disclosure_text}\n\n"
+        "[뉴스 목록]\n"
+        f"{news_text}\n\n"
+        "위 정보를 바탕으로 반드시 JSON만 반환하세요.\n"
+        "키는 one_line_summary, disclosure_summary, news_summary, overall_judgment, caution 이어야 합니다.\n"
+        "overall_judgment는 '호재', '악재', '중립' 중 하나만 사용하세요."
+    )
+
+
+def _llm_symbol_issue_summary(
+    *,
+    symbol: str,
+    symbol_name: str,
+    events: pd.DataFrame,
+    api_key: str,
+    model: str,
+) -> SymbolIssueSummary | None:
+    disclosures = events.loc[events["source_type"] == "disclosure", "title"].dropna().astype(str).tolist()
+    news_titles = events.loc[events["source_type"] == "news", "title"].dropna().astype(str).tolist()
+    prompt = _build_llm_prompt(symbol, symbol_name, disclosures, news_titles)
+    client = OpenAI(api_key=api_key)
+    try:
+        response = client.responses.create(
+            model=model,
+            input=prompt,
+            max_output_tokens=300,
+        )
+        raw = getattr(response, "output_text", "") or ""
+        payload = json.loads(raw)
+    except Exception:
+        return None
+
+    judgment = str(payload.get("overall_judgment", "중립")).strip()
+    if judgment not in {"호재", "악재", "중립"}:
+        judgment = "중립"
+    return SymbolIssueSummary(
+        one_line_summary=str(payload.get("one_line_summary", "")).strip() or "오늘 이슈 요약을 생성하지 못했습니다.",
+        disclosure_summary=str(payload.get("disclosure_summary", "")).strip()
+        or "공시 요약을 생성하지 못했습니다.",
+        news_summary=str(payload.get("news_summary", "")).strip() or "뉴스 요약을 생성하지 못했습니다.",
+        overall_judgment=judgment,
+        caution=str(payload.get("caution", "")).strip()
+        or "본 이슈 해석은 예측값 설명용 참고 정보이며, 예측 모델 입력/산출에는 반영되지 않습니다.",
+        source_count=int(len(events)),
+        key_sources=sorted(events["source_type"].dropna().astype(str).unique().tolist()),
+    )
+
+
+def append_issue_summary_columns(
+    pred_df: pd.DataFrame,
+    context_raw_df: pd.DataFrame | None = None,
+    openai_api_key: str | None = None,
+    openai_model: str | None = None,
+) -> pd.DataFrame:
     if pred_df.empty:
         out = pred_df.copy()
         for col in [
@@ -98,7 +159,31 @@ def append_issue_summary_columns(pred_df: pd.DataFrame) -> pd.DataFrame:
         return out
 
     out = pred_df.copy()
-    summaries = out.apply(summarize_symbol_issue, axis=1)
+    context = context_raw_df.copy() if isinstance(context_raw_df, pd.DataFrame) and not context_raw_df.empty else None
+    if context is not None and "Symbol" in context.columns:
+        context["Symbol"] = context["Symbol"].astype(str)
+    use_llm = bool(openai_api_key and openai_model and context is not None and "source_type" in context.columns)
+
+    summaries: list[SymbolIssueSummary] = []
+    for _, row_series in out.iterrows():
+        if use_llm:
+            symbol = str(row_series.get("Symbol", ""))
+            symbol_name = str(row_series.get("종목명", symbol))
+            events = context[context["Symbol"] == symbol]
+            if not events.empty:
+                llm_summary = _llm_symbol_issue_summary(
+                    symbol=symbol,
+                    symbol_name=symbol_name,
+                    events=events,
+                    api_key=str(openai_api_key),
+                    model=str(openai_model),
+                )
+                if llm_summary is not None:
+                    summaries.append(llm_summary)
+                    continue
+        summaries.append(summarize_symbol_issue(row_series))
+
+    summaries = pd.Series(summaries)
     out["오늘 종목 이슈 한줄 요약"] = summaries.map(lambda s: s.one_line_summary)
     out["공시 요약"] = summaries.map(lambda s: s.disclosure_summary)
     out["뉴스 요약"] = summaries.map(lambda s: s.news_summary)

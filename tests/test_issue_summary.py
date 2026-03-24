@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.reports.issue_summary import append_issue_summary_columns
+from src.reports.issue_summary import SymbolIssueSummary, append_issue_summary_columns
 from src.reports.result_formatter import build_result_simple
 
 
@@ -70,3 +70,58 @@ def test_build_result_simple_includes_issue_columns_when_present():
     assert "공시 요약" in simple.columns
     assert simple.loc[0, "종합 판단"] == "중립"
 
+
+def test_append_issue_summary_columns_uses_llm_for_summary_only(monkeypatch):
+    base = pd.DataFrame(
+        [
+            {
+                "Symbol": "005930.KS",
+                "종목명": "삼성전자",
+                "predicted_return": 0.5,
+                "predicted_close": 70000.0,
+                "up_probability": 0.61,
+                "disclosure_score": 0.0,
+                "news_impact_score": 0.0,
+                "news_relevance_score": 0.0,
+                "news_article_count": 0,
+            }
+        ]
+    )
+    events = pd.DataFrame(
+        [
+            {
+                "Date": "2026-03-24",
+                "Symbol": "005930.KS",
+                "source_type": "news",
+                "title": "삼성전자 수주 기대감",
+                "published_at": "2026-03-24T00:00:00",
+                "provider": "yfinance",
+                "url": "",
+                "raw_id": "n1",
+            }
+        ]
+    )
+
+    def _fake_llm(**kwargs):
+        return SymbolIssueSummary(
+            one_line_summary="LLM 한줄 요약",
+            disclosure_summary="LLM 공시 요약",
+            news_summary="LLM 뉴스 요약",
+            overall_judgment="호재",
+            caution="LLM 주의사항",
+            source_count=1,
+            key_sources=["news"],
+        )
+
+    monkeypatch.setattr("src.reports.issue_summary._llm_symbol_issue_summary", _fake_llm)
+
+    out = append_issue_summary_columns(
+        base,
+        context_raw_df=events,
+        openai_api_key="sk-test",
+        openai_model="gpt-4o-mini",
+    )
+
+    assert out.loc[0, "오늘 종목 이슈 한줄 요약"] == "LLM 한줄 요약"
+    assert out.loc[0, "종합 판단"] == "호재"
+    assert out.loc[0, "predicted_return"] == base.loc[0, "predicted_return"]

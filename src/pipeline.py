@@ -622,7 +622,12 @@ def run_pipeline(
     pred_df = pred_df.merge(sym_acc, on="Symbol", how="left")
     pred_df["history_direction_accuracy"] = pred_df["history_direction_accuracy"].fillna(0.5)
     pred_df = finalize_latest_prediction_frame(pred_df, symbol_name_map)
-    pred_df = append_issue_summary_columns(pred_df)
+    pred_df = append_issue_summary_columns(
+        pred_df,
+        context_raw_df=context_raw_df,
+        openai_api_key=openai_api_key,
+        openai_model=openai_model,
+    )
     pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: _format_percentage_text(v, digits=1, unit_interval=True))
     pred_df["예측 이유"] = pred_df["prediction_reason"]
     pred_df["권고"] = pred_df["recommendation"]
