@@ -248,8 +248,18 @@ from src.chatbot.kakao_colab_bot import (
     launch_colab_kakao_bot,
 )
 
+# 필수 키
+os.environ["DART_API_KEY"] = "YOUR_DART_API_KEY"
+os.environ["NGROK_AUTHTOKEN"] = "YOUR_NGROK_AUTHTOKEN"
+
+# 선택: 공시/뉴스 LLM 해석 기능(OpenAI)
+# - 설정하면 공시/뉴스 요약 품질 개선에 사용됩니다.
+os.environ["OPENAI_API_KEY"] = "YOUR_OPENAI_API_KEY"
+
 runtime_config = PipelineRuntimeConfig(
     dart_api_key=os.environ["DART_API_KEY"],
+    openai_api_key=os.environ.get("OPENAI_API_KEY"),
+    openai_model="gpt-4o-mini",
     input_csv="data/real_ohlcv.csv",
     report_json="pipeline_report_with_context.json",
     figure_dir="figures_with_context",
@@ -274,17 +284,159 @@ print(ngrok.get_tunnels())
 ### 코랩에서 웹훅 서버 실행
 ```python
 import os
-from src.chatbot.kakao_colab_bot import PipelineRuntimeConfig, create_app
+import time
+import threading
+
+from flask import request
+from openai import OpenAI
+from pyngrok import ngrok
+import yfinance as yf
+
+from src.chatbot.kakao_colab_bot import (
+    PipelineRuntimeConfig,
+    PyngrokTunnelConfig,
+    create_app,
+    start_pyngrok_tunnel,
+)
+
+# =========================
+# 1) 환경변수 설정
+# =========================
+os.environ["DART_API_KEY"] = "YOUR_DART_API_KEY"
+os.environ["NGROK_AUTHTOKEN"] = "YOUR_NGROK_AUTHTOKEN"
+os.environ["OPENAI_API_KEY"] = "YOUR_OPENAI_API_KEY"  # 공시/뉴스 LLM 요약 사용 시(선택)
+
+PORT = 8000
+OPENAI_MODEL = "gpt-4o-mini"
+TEST_SYMBOL = "005930.KS"  # 뉴스 수집 점검용 심볼
+
+
+def check_yfinance_news(symbol: str) -> bool:
+    print(f"[YF CHECK] symbol={symbol}")
+    try:
+        items = yf.Ticker(symbol).news or []
+    except Exception as exc:
+        print(f"[YF CHECK] 뉴스 요청 실패: {type(exc).__name__}: {exc}")
+        return False
+
+    print(f"[YF CHECK] 수신 기사 수={len(items)}")
+    if not items:
+        print("[YF CHECK] yfinance 뉴스가 비어 있습니다. (기간/심볼/제공상태 영향 가능)")
+        return False
+
+    top = items[0]
+    title = (top.get("title") or "").strip()
+    ts = top.get("providerPublishTime")
+    print(f"[YF CHECK] 최신 제목={title[:100]}")
+    print(f"[YF CHECK] 최신 발행시각(providerPublishTime)={ts}")
+    return True
+
+
+def check_openai_connection(api_key: str | None, model: str) -> bool:
+    if not api_key:
+        print("[OPENAI CHECK] OPENAI_API_KEY가 비어 있어 연결 확인을 건너뜁니다.")
+        return False
+    client = OpenAI(api_key=api_key)
+    try:
+        resp = client.responses.create(
+            model=model,
+            input="ping",
+            max_output_tokens=16,
+        )
+        print("[OPENAI CHECK] 연결 성공")
+        print(f"[OPENAI CHECK] model={model}")
+        print(f"[OPENAI CHECK] response_id={resp.id}")
+        return True
+    except Exception as exc:
+        print("[OPENAI CHECK] 연결 실패")
+        print(f"[OPENAI CHECK] error={type(exc).__name__}: {exc}")
+        return False
+
+
+check_openai_connection(os.environ.get("OPENAI_API_KEY"), OPENAI_MODEL)
+check_yfinance_news(TEST_SYMBOL)
 
 runtime_config = PipelineRuntimeConfig(
-    dart_api_key=os.environ["DART_API_KEY"],
     input_csv="data/real_ohlcv.csv",
     report_json="pipeline_report_with_context.json",
     figure_dir="figures_with_context",
+    dart_api_key=os.environ["DART_API_KEY"],
+    dart_corp_map_csv="data/dart_corp_map.csv",
+    openai_api_key=os.environ.get("OPENAI_API_KEY"),
+    openai_model=OPENAI_MODEL,
 )
 
+# =========================
+# 2) Flask 앱 생성
+# =========================
 app = create_app(runtime_config=runtime_config)
-app.run(host="0.0.0.0", port=8000)
+
+# 카카오에서 들어오는 메시지를 코랩 출력에 같이 보여주기 위한 로그
+@app.before_request
+def log_kakao_message():
+    if request.path == "/kakao/webhook" and request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        user_request = payload.get("userRequest") or {}
+        utterance = (user_request.get("utterance") or "").strip()
+        user = user_request.get("user") or {}
+        user_id = user.get("id") or user.get("userKey") or "anonymous"
+        print(f"[KAKAO MESSAGE] user_id={user_id} | utterance={utterance}")
+
+
+# =========================
+# 3) Flask 서버 실행
+# =========================
+def run_server():
+    app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
+
+
+server_thread = threading.Thread(target=run_server, daemon=True)
+server_thread.start()
+
+time.sleep(2)  # 서버 뜰 시간 잠깐 대기
+
+# =========================
+# 4) pyngrok 공개 HTTPS URL 생성
+# =========================
+public_url = start_pyngrok_tunnel(
+    PyngrokTunnelConfig(
+        port=PORT,
+        auth_token=os.environ.get("NGROK_AUTHTOKEN"),
+    )
+)
+
+webhook_url = f"{public_url}/kakao/webhook"
+health_url = f"{public_url}/health"
+
+print("=" * 80)
+print("Kakao chatbot server is running.")
+print("Public URL :", public_url)
+print("Webhook URL:", webhook_url)
+print("Health URL :", health_url)
+print("Active tunnels:", ngrok.get_tunnels())
+print("=" * 80)
+print("이제 카카오 오픈빌더 스킬 서버 URL에 위 Webhook URL을 넣으세요.")
+print("이 셀을 실행한 상태로 두면, 카카오톡에서 들어오는 메시지를 계속 처리합니다.")
+print("중지하려면 코랩에서 '런타임 > 실행 중단' 또는 셀 인터럽트를 누르세요.")
+print("=" * 80)
+
+# =========================
+# 5) 셀을 계속 살아 있게 유지
+# =========================
+try:
+    while True:
+        time.sleep(60)
+except KeyboardInterrupt:
+    print("Stopping ngrok tunnel...")
+    try:
+        ngrok.disconnect(public_url)
+    except Exception:
+        pass
+    try:
+        ngrok.kill()
+    except Exception:
+        pass
+    print("Stopped.")
 ```
 
 카카오 오픈빌더 스킬 서버의 URL은 `POST /kakao/webhook` 엔드포인트에 연결하면 됩니다. 헬스체크는 `GET /health`입니다.
@@ -293,6 +445,8 @@ app.run(host="0.0.0.0", port=8000)
 ```bash
 python -m src.chatbot.kakao_colab_bot \
   --dart-api-key "YOUR_DART_API_KEY" \
+  --openai-api-key "YOUR_OPENAI_API_KEY" \
+  --openai-model "gpt-4o-mini" \
   --input data/real_ohlcv.csv \
   --report-json pipeline_report_with_context.json \
   --figure-dir figures_with_context
