@@ -627,3 +627,35 @@ def test_kakao_webhook_returns_safe_response_when_handler_raises(tmp_path: Path,
     assert response.status_code == 200
     body = response.get_json()
     assert "예측 메시지 처리 중 오류가 발생했습니다" in body["template"]["outputs"][0]["simpleText"]["text"]
+
+
+def test_start_job_response_returns_error_when_process_runner_raises(tmp_path: Path):
+    class RaisingRunner:
+        def __call__(self, *args, **kwargs):
+            raise RuntimeError("runner failed")
+
+    bot = make_bot(tmp_path, runner=RaisingRunner())
+    response = bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "005930",
+                "user": {"id": "user-runner-fail"},
+            }
+        }
+    )
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "예측 작업 시작 중 오류가 발생했습니다" in text
+
+
+def test_finalize_process_handles_missing_log_handle(tmp_path: Path, monkeypatch):
+    bot = make_bot(tmp_path)
+    bot._active_processes["005930.KS"] = {"log_thread": None}
+    bot._job_registry["005930.KS"] = {"status": "running"}
+
+    logs: list[str] = []
+    monkeypatch.setattr(bot, "_console_log", lambda message: logs.append(message))
+
+    bot._finalize_process("005930.KS", 1)
+
+    assert any("예측 작업 failed" in log for log in logs)
