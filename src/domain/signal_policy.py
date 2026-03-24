@@ -185,56 +185,41 @@ def vectorized_event_signal_boost(pred_df: pd.DataFrame) -> pd.DataFrame:
 
 def prediction_reason(row: pd.Series) -> str:
     reasons: list[str] = []
-
-    up_probability = float(row.get("up_probability", 0.5) or 0.5)
     foreign_net_buy = float(row.get("foreign_net_buy", 0) or 0)
     institution_net_buy = float(row.get("institution_net_buy", 0) or 0)
-    history_acc = float(row.get("history_direction_accuracy", 0.5) or 0.5)
-    uncertainty_score = float(row.get("uncertainty_score", 0.5) or 0.5)
     turnover_rank = float(row.get("turnover_rank_daily", 999) or 999)
     breakout_52w_flag = float(row.get("breakout_52w_flag", 0) or 0)
-    near_52w_high_flag = float(row.get("near_52w_high_flag", 0) or 0)
     nq_ret = float(row.get("nq_f_ret_1d", 0) or 0)
-    liquidity = float(row.get("value_traded", 0) or 0)
-    pred_5d = pd.to_numeric(pd.Series([row.get("predicted_return_5d")]), errors="coerce").iloc[0]
-    pred_20d = pd.to_numeric(pd.Series([row.get("predicted_return_20d")]), errors="coerce").iloc[0]
-    up_prob_5d = pd.to_numeric(pd.Series([row.get("up_probability_5d")]), errors="coerce").iloc[0]
-    up_prob_20d = pd.to_numeric(pd.Series([row.get("up_probability_20d")]), errors="coerce").iloc[0]
+    rsi_14 = pd.to_numeric(pd.Series([row.get("rsi_14")]), errors="coerce").iloc[0]
+    one_hundred_billion_krw = 100_000_000_000.0
 
     if turnover_rank <= 15:
-        reasons.append("수급: 거래대금 상위권이며 거래대금 상위 15위 종목입니다")
-    if foreign_net_buy > 0 and institution_net_buy > 0:
+        reasons.append("종배수급: 거래대금 15위 이내 상위 종목입니다")
+    if foreign_net_buy >= one_hundred_billion_krw and institution_net_buy >= one_hundred_billion_krw:
         reasons.append(
-            f"수급: 외국인 {_format_korean_amount(foreign_net_buy)}, 기관 {_format_korean_amount(institution_net_buy)} 동반 순매수입니다"
+            f"수급조건: 외국인 {_format_korean_amount(foreign_net_buy)}, 기관 {_format_korean_amount(institution_net_buy)}로 각각 1,000억 이상 순매수입니다"
         )
-    if breakout_52w_flag > 0:
-        reasons.append("추세: 52주 고점을 돌파한 흐름입니다")
-    elif near_52w_high_flag > 0:
-        reasons.append("추세: 52주 고점 부근에서 버티는 흐름입니다")
-    if nq_ret >= 0.01:
-        reasons.append("해외 흐름: 나스닥 선물 강세가 우호적입니다")
-    elif nq_ret <= -0.01:
-        reasons.append("해외 경고: 나스닥 선물 약세가 부담입니다")
-    if up_probability >= 0.7:
-        reasons.append(f"확률: 상승 가능성이 {up_probability * 100:.1f}%로 높습니다")
-    elif up_probability >= 0.55:
-        reasons.append(f"확률: 상승 가능성이 {up_probability * 100:.1f}%로 우세합니다")
-    if history_acc >= 0.6:
-        reasons.append(f"신뢰도: 과거 방향 적중률이 {history_acc * 100:.1f}%였습니다")
-    elif uncertainty_score >= 0.7:
-        reasons.append("주의: 불확실성이 높아 비중을 줄이는 편이 좋습니다")
-    if liquidity > 0 and row.get("min_liquidity_threshold") is not None and liquidity < float(row.get("min_liquidity_threshold") or 0):
-        reasons.append("유동성: 거래대금 기준이 낮아 체결 리스크가 있습니다")
-    if not pd.isna(pred_5d) and not pd.isna(pred_20d):
-        reasons.append(f"호라이즌: 5일 {pred_5d:.2f}%, 20일 {pred_20d:.2f}% 기대수익률입니다")
-    if not pd.isna(up_prob_5d) and not pd.isna(up_prob_20d):
-        reasons.append(f"중기확률: 5일 {up_prob_5d * 100:.1f}%, 20일 {up_prob_20d * 100:.1f}%입니다")
-    if str(row.get("coverage_gate_status", "") or "").lower() == "halt":
-        reasons.append("운용게이트: 데이터 커버리지가 낮아 오늘은 거래를 중단합니다")
 
-    if not reasons:
-        reasons.append("종합: 신호·수급·추세가 중립권이라 모델 점수를 중심으로 판단했습니다")
-    return " / ".join(reasons[:4])
+    leader_1 = pd.to_numeric(pd.Series([row.get("leader_1_return")]), errors="coerce").iloc[0]
+    leader_2 = pd.to_numeric(pd.Series([row.get("leader_2_return")]), errors="coerce").iloc[0]
+    leader_3 = pd.to_numeric(pd.Series([row.get("leader_3_return")]), errors="coerce").iloc[0]
+    if not pd.isna(leader_1) and not pd.isna(leader_2) and not pd.isna(leader_3):
+        if leader_1 > 0 and leader_2 > 0 and leader_3 > 0:
+            reasons.append("주도주확인: 1등주 상승과 함께 2·3등주 동반 상승이 확인됩니다")
+
+    if breakout_52w_flag > 0:
+        reasons.append("추세조건: 52주 신고가 종목입니다")
+    if nq_ret >= 0.01:
+        reasons.append("해외조건: 나스닥 선물 +1% 이상으로 종배 우호 환경입니다")
+    elif nq_ret <= -0.01:
+        reasons.append("해외조건: 나스닥 선물 -1% 이하로 리스크 회피(매도) 구간입니다")
+    if not pd.isna(rsi_14):
+        if 30 <= rsi_14 <= 35:
+            reasons.append("중장기조건: RSI 30~35 구간으로 분할매수 관찰 구간입니다")
+        elif rsi_14 >= 70:
+            reasons.append("중장기조건: RSI 70 이상으로 이익실현/매도 우선 구간입니다")
+
+    return " / ".join(reasons)
 
 
 def build_pm_summary_fields(row: pd.Series) -> dict[str, str]:
