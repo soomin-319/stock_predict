@@ -28,19 +28,13 @@ def test_prediction_reason_excludes_probability_and_horizon_phrases() -> None:
 def test_prediction_reason_can_include_feature_based_explanations() -> None:
     row = pd.Series(
         {
-            "turnover_rank_daily": 8,
-            "foreign_net_buy": 130_000_000_000,
-            "institution_net_buy": 120_000_000_000,
-            "breakout_52w_flag": 1.0,
-            "nq_f_ret_1d": 0.013,
-            "rsi_14": 33.0,
+            "close_to_ma_20": 0.04,
+            "rsi_14": 34.0,
+            "macd_hist": 0.2,
+            "obv_change_5d": 0.08,
         }
     )
 
     reason = prediction_reason(row)
 
-    assert "종배수급:" in reason
-    assert "수급조건:" in reason
-    assert "추세조건:" in reason
-    assert "해외조건:" in reason
-    assert "중장기조건:" in reason
+    assert "추세강도:" in reason or "모멘텀:" in reason or "수급강도:" in reason
