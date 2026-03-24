@@ -134,6 +134,20 @@ class KakaoColabPredictionBot:
         self._job_registry = self._load_registry(self.state_path)
         self._session_registry = self._load_registry(self.session_path)
         self._legacy_formatter_patched = False
+        self._bootstrap_formatter_guard()
+
+    def _bootstrap_formatter_guard(self):
+        formatter_code = getattr(self._format_prediction_message, "__code__", None)
+        safe_code = getattr(self._safe_format_prediction_message, "__code__", None)
+        minimal_code = getattr(self._minimal_format_prediction_message, "__code__", None)
+        all_names = set()
+        for code in (formatter_code, safe_code, minimal_code):
+            if code is not None:
+                all_names.update(getattr(code, "co_names", ()))
+                all_names.update(getattr(code, "co_varnames", ()))
+        if "rationale_block" in all_names:
+            self._console_log("초기화 시 레거시 rationale_block 포맷터 감지. 안전 포맷터로 강제 교체합니다.")
+            self._activate_safe_formatter_patch()
 
     def handle_kakao_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         utterance = ((payload.get("userRequest") or {}).get("utterance") or "").strip()
@@ -383,12 +397,15 @@ class KakaoColabPredictionBot:
         return "KOSPI"
 
     def _format_prediction_message(self, row: pd.Series) -> str:
-        return self._safe_format_prediction_message(row)
+        return self._build_prediction_message_from_row(row)
 
     def _safe_format_prediction_message(self, row: pd.Series) -> str:
-        return self._minimal_format_prediction_message(row)
+        return self._build_prediction_message_from_row(row)
 
     def _minimal_format_prediction_message(self, row: pd.Series) -> str:
+        return self._build_prediction_message_from_row(row)
+
+    def _build_prediction_message_from_row(self, row: pd.Series) -> str:
         code = str(row.get("종목코드", "-"))
         name = str(row.get("종목명", "-"))
         recommendation = str(row.get("권고", "-"))
@@ -425,9 +442,14 @@ class KakaoColabPredictionBot:
                 "레거시 포맷터 오류 감지(NameError: rationale_block). "
                 "안전 포맷터로 즉시 대체합니다. (Colab 런타임 재시작 권장)"
             )
-            self._legacy_formatter_patched = True
-        self._format_prediction_message = self._safe_format_prediction_message
+        self._activate_safe_formatter_patch()
         return True
+
+    def _activate_safe_formatter_patch(self):
+        self._legacy_formatter_patched = True
+        self._format_prediction_message = self._build_prediction_message_from_row
+        self._safe_format_prediction_message = self._build_prediction_message_from_row
+        self._minimal_format_prediction_message = self._build_prediction_message_from_row
 
     def _format_percent(self, value: Any) -> str:
         if isinstance(value, str) and value.strip().endswith("%"):
