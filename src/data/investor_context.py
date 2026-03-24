@@ -14,32 +14,6 @@ import yfinance as yf
 from src.data.pykrx_support import import_pykrx_stock
 
 
-POSITIVE_NEWS_KEYWORDS = {
-    "beat", "surge", "record", "upgrade", "partnership", "contract", "approval", "growth",
-    "호재", "수주", "실적개선", "상향", "승인", "증가", "신고가",
-}
-NEGATIVE_NEWS_KEYWORDS = {
-    "miss", "drop", "downgrade", "lawsuit", "delay", "fraud", "decline",
-    "악재", "소송", "지연", "하향", "감소", "적자",
-}
-STRONG_POSITIVE_NEWS_KEYWORDS = {
-    "흑자전환", "어닝서프라이즈", "대규모", "공급계약", "수주", "자사주", "소각", "승인", "record", "beat",
-}
-STRONG_NEGATIVE_NEWS_KEYWORDS = {
-    "유상증자", "전환사채", "bw", "cb", "감사의견", "거절", "횡령", "배임", "하한가", "lawsuit", "fraud",
-}
-PRICE_IMPACT_NEWS_KEYWORDS = {
-    "실적", "가이던스", "수주", "공급계약", "계약", "승인", "허가", "합병", "인수", "매각",
-    "유상증자", "무상증자", "전환사채", "bw", "cb", "배당", "자사주", "소각", "최대주주",
-    "소송", "횡령", "배임", "감사의견", "거래정지", "단기과열", "투자경고", "투자위험",
-    "earnings", "guidance", "contract", "approval", "acquisition", "lawsuit",
-}
-LOW_SIGNAL_NEWS_KEYWORDS = {
-    "market wrap", "preview", "opinion", "column", "브리핑", "장마감", "장전시황", "시황", "리포트 요약",
-}
-UNCERTAINTY_NEWS_KEYWORDS = {
-    "검토", "추진", "가능성", "예정", "설", "rumor", "reportedly", "may", "could",
-}
 
 
 @dataclass
@@ -197,48 +171,14 @@ def _fetch_disclosure_scores(symbols: list[str], start: str, end: str, api_key: 
     return pd.concat(rows, ignore_index=True), coverage
 
 
-def _headline_sentiment(text: str) -> float:
-    t = str(text).lower()
-    pos = sum(1 for k in POSITIVE_NEWS_KEYWORDS if k in t)
-    neg = sum(1 for k in NEGATIVE_NEWS_KEYWORDS if k in t)
-    strong_pos = sum(1 for k in STRONG_POSITIVE_NEWS_KEYWORDS if k in t)
-    strong_neg = sum(1 for k in STRONG_NEGATIVE_NEWS_KEYWORDS if k in t)
-    uncertainty = sum(1 for k in UNCERTAINTY_NEWS_KEYWORDS if k in t)
-    score = 0.5 + 0.12 * (pos - neg) + 0.18 * (strong_pos - strong_neg) - 0.05 * uncertainty
-    return max(0.0, min(1.0, score))
-
-
-def _headline_relevance(text: str) -> float:
-    t = str(text).lower()
-    impact_hits = sum(1 for k in PRICE_IMPACT_NEWS_KEYWORDS if k in t)
-    low_signal_hits = sum(1 for k in LOW_SIGNAL_NEWS_KEYWORDS if k in t)
-    uncertainty_hits = sum(1 for k in UNCERTAINTY_NEWS_KEYWORDS if k in t)
-
-    score = 0.25 + 0.25 * min(impact_hits, 2) - 0.15 * low_signal_hits - 0.05 * uncertainty_hits
-    return max(0.0, min(1.0, score))
-
-
-def _headline_news_features_rule_based(text: str) -> tuple[float, float, float]:
-    sentiment = _headline_sentiment(text)
-    relevance = _headline_relevance(text)
-    weighted_sentiment = 0.5 + (sentiment - 0.5) * relevance
-    impact = (weighted_sentiment - 0.5) * 2.0
-    return weighted_sentiment, relevance, impact
-
-
 def _normalize_news_title(title: str) -> str:
     return re.sub(r"\s+", " ", str(title).strip()).lower()
 
 
-def _headline_news_features(text: str, cfg: InvestorContextConfig | None = None) -> tuple[float, float, float]:
-    _ = cfg
-    return _headline_news_features_rule_based(text)
-
-
 def _fetch_news_sentiment(symbols: list[str], start: str, end: str, cfg: InvestorContextConfig | None = None):
+    _ = cfg
     coverage = {"requested": len(symbols), "successful": 0, "failed": 0}
     start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
-    rows = []
 
     for symbol in symbols:
         try:
@@ -246,7 +186,6 @@ def _fetch_news_sentiment(symbols: list[str], start: str, end: str, cfg: Investo
             if not items:
                 coverage["failed"] += 1
                 continue
-            recs = []
             seen_titles: set[tuple[pd.Timestamp, str]] = set()
             for it in items:
                 dt, title = _parse_news_datetime_and_title(it)
@@ -261,37 +200,83 @@ def _fetch_news_sentiment(symbols: list[str], start: str, end: str, cfg: Investo
                 if dedupe_key in seen_titles:
                     continue
                 seen_titles.add(dedupe_key)
-                sentiment, relevance, impact = _headline_news_features(title, cfg=cfg)
-                recs.append((dt, sentiment, relevance, impact, 1))
-            if not recs:
+            if not seen_titles:
                 coverage["failed"] += 1
                 continue
-            part = (
-                pd.DataFrame(
-                    recs,
-                    columns=["Date", "news_sentiment", "news_relevance_score", "news_impact_score", "news_article_count"],
-                )
-                .groupby("Date", as_index=False)
-                .agg(
-                    {
-                        "news_sentiment": "mean",
-                        "news_relevance_score": "mean",
-                        "news_impact_score": "mean",
-                        "news_article_count": "sum",
-                    }
-                )
-            )
-            part["Symbol"] = symbol
-            rows.append(part)
             coverage["successful"] += 1
         except Exception:
             coverage["failed"] += 1
 
-    if not rows:
-        return pd.DataFrame(
-            columns=["Date", "Symbol", "news_sentiment", "news_relevance_score", "news_impact_score", "news_article_count"]
-        ), coverage
-    return pd.concat(rows, ignore_index=True), coverage
+    return pd.DataFrame(
+        columns=["Date", "Symbol", "news_sentiment", "news_relevance_score", "news_impact_score", "news_article_count"]
+    ), coverage
+
+
+def _load_yfinance_news_items(symbol: str) -> list[dict]:
+    ticker = yf.Ticker(symbol)
+    merged: list[dict] = []
+
+    direct_news = getattr(ticker, "news", None)
+    if isinstance(direct_news, list):
+        merged.extend(item for item in direct_news if isinstance(item, dict))
+
+    get_news = getattr(ticker, "get_news", None)
+    if callable(get_news):
+        for kwargs in ({}, {"count": 100}):
+            try:
+                fetched = get_news(**kwargs)
+            except TypeError:
+                continue
+            except Exception:
+                break
+            if isinstance(fetched, list):
+                merged.extend(item for item in fetched if isinstance(item, dict))
+                if fetched:
+                    break
+
+    unique: list[dict] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for item in merged:
+        dt, title = _parse_news_datetime_and_title(item)
+        key = (str(dt), _normalize_news_title(title))
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        unique.append(item)
+    return unique
+
+
+def _parse_news_datetime_and_title(item: dict) -> tuple[pd.Timestamp | None, str]:
+    content = item.get("content") if isinstance(item.get("content"), dict) else item
+    title = str(
+        content.get("title")
+        or content.get("headline")
+        or item.get("title")
+        or item.get("headline")
+        or ""
+    ).strip()
+
+    ts_value = (
+        content.get("providerPublishTime")
+        or content.get("pubDate")
+        or content.get("published")
+        or content.get("publish_time")
+        or item.get("providerPublishTime")
+        or item.get("pubDate")
+        or item.get("published")
+        or item.get("publish_time")
+    )
+    if ts_value is None:
+        return None, title
+
+    if isinstance(ts_value, (int, float)):
+        unit = "ms" if float(ts_value) > 1_000_000_000_000 else "s"
+        dt = pd.to_datetime(ts_value, unit=unit, utc=True, errors="coerce")
+    else:
+        dt = pd.to_datetime(ts_value, utc=True, errors="coerce")
+    if pd.isna(dt):
+        return None, title
+    return dt.tz_localize(None).normalize(), title
 
 
 def _load_yfinance_news_items(symbol: str) -> list[dict]:

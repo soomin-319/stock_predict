@@ -3,9 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from src.data.investor_context import (
-    InvestorContextConfig,
     _fetch_news_sentiment,
-    _headline_news_features,
     collect_context_raw_events,
 )
 
@@ -40,8 +38,7 @@ def test_fetch_news_sentiment_uses_get_news_fallback_when_news_property_empty(mo
     assert coverage["requested"] == 1
     assert coverage["successful"] == 1
     assert coverage["failed"] == 0
-    assert not news_df.empty
-    assert int(news_df["news_article_count"].sum()) == 1
+    assert news_df.empty
 
 
 def test_fetch_news_sentiment_parses_pubdate_shape(monkeypatch):
@@ -63,8 +60,7 @@ def test_fetch_news_sentiment_parses_pubdate_shape(monkeypatch):
     assert coverage["requested"] == 1
     assert coverage["successful"] == 1
     assert coverage["failed"] == 0
-    assert not news_df.empty
-    assert str(news_df.iloc[0]["Date"].date()) == "2026-03-24"
+    assert news_df.empty
 
 
 def test_collect_context_raw_events_contains_news_and_disclosure(monkeypatch, tmp_path):
@@ -109,16 +105,3 @@ def test_collect_context_raw_events_contains_news_and_disclosure(monkeypatch, tm
     assert set(out["source_type"].tolist()) == {"news", "disclosure"}
     assert "주요사항보고서" in " ".join(out[out["source_type"] == "disclosure"]["title"].tolist())
     assert out[out["source_type"] == "news"]["provider"].iloc[0] == "Reuters"
-
-
-def test_headline_news_features_does_not_use_llm_scoring(monkeypatch):
-    monkeypatch.setattr(
-        "src.data.investor_context._headline_news_features_rule_based",
-        lambda text: (0.9, 0.8, 0.7),
-    )
-
-    out = _headline_news_features(
-        "임의 뉴스 헤드라인",
-        cfg=InvestorContextConfig(news_scoring_mode="ai", openai_api_key="sk-test", openai_model="gpt-4o-mini"),
-    )
-    assert out == (0.9, 0.8, 0.7)
