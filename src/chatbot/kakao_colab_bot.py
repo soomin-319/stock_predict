@@ -201,11 +201,7 @@ class KakaoColabPredictionBot:
                     self._console_log(
                         f"{display_code} 응답 메시지 포맷 오류({type(exc).__name__}): {exc}. 원문 사유로 대체합니다."
                     )
-                    raw_reason = str(cached_row.get("예측 이유", "예측 이유 정보가 없습니다."))
-                    message = (
-                        f"[{display_code} {str(cached_row.get('종목명', '-'))}]\n"
-                        f"사유: {raw_reason}"
-                    )
+                    message = self._minimal_format_prediction_message(cached_row)
             return self._build_response(
                 message,
                 quick_replies=[
@@ -390,6 +386,9 @@ class KakaoColabPredictionBot:
         return self._safe_format_prediction_message(row)
 
     def _safe_format_prediction_message(self, row: pd.Series) -> str:
+        return self._minimal_format_prediction_message(row)
+
+    def _minimal_format_prediction_message(self, row: pd.Series) -> str:
         code = str(row.get("종목코드", "-"))
         name = str(row.get("종목명", "-"))
         recommendation = str(row.get("권고", "-"))
@@ -408,6 +407,13 @@ class KakaoColabPredictionBot:
             f"{rationale_block}\n"
             f"원문 사유: {reason}"
         )
+
+    # Backward-compatible shim for legacy runtime objects that still reference this method.
+    def _format_reason_for_display(self, reason: str) -> str:
+        raw = (reason or "").strip()
+        if not raw:
+            return "예측 이유 정보가 없습니다."
+        return raw
 
     def _maybe_patch_legacy_rationale_bug(self, exc: Exception) -> bool:
         is_legacy_name_error = isinstance(exc, NameError) and "rationale_block" in str(exc)
@@ -512,8 +518,7 @@ class KakaoColabPredictionBot:
                         self._console_log(
                             f"{display_code} 예측 완료 메시지 포맷 오류({type(exc).__name__}): {exc}. 원문 사유로 대체합니다."
                         )
-                        raw_reason = str(cached_row.get("예측 이유", "예측 이유 정보가 없습니다."))
-                        message = f"[{display_code}] 예측 완료\n사유: {raw_reason}"
+                        message = self._minimal_format_prediction_message(cached_row)
                 self._console_log(f"{display_code} 예측 완료\n{message}")
             else:
                 self._console_log(f"{display_code} 예측 작업 completed (exit_code=0). 결과 CSV를 확인해주세요.")
