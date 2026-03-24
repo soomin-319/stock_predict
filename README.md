@@ -288,6 +288,7 @@ import time
 import threading
 
 from flask import request
+from openai import OpenAI
 from pyngrok import ngrok
 
 from src.chatbot.kakao_colab_bot import (
@@ -305,6 +306,31 @@ os.environ["NGROK_AUTHTOKEN"] = "YOUR_NGROK_AUTHTOKEN"
 os.environ["OPENAI_API_KEY"] = "YOUR_OPENAI_API_KEY"  # 공시/뉴스 LLM 요약 사용 시(선택)
 
 PORT = 8000
+OPENAI_MODEL = "gpt-4o-mini"
+
+
+def check_openai_connection(api_key: str | None, model: str) -> bool:
+    if not api_key:
+        print("[OPENAI CHECK] OPENAI_API_KEY가 비어 있어 연결 확인을 건너뜁니다.")
+        return False
+    client = OpenAI(api_key=api_key)
+    try:
+        resp = client.responses.create(
+            model=model,
+            input="ping",
+            max_output_tokens=5,
+        )
+        print("[OPENAI CHECK] 연결 성공")
+        print(f"[OPENAI CHECK] model={model}")
+        print(f"[OPENAI CHECK] response_id={resp.id}")
+        return True
+    except Exception as exc:
+        print("[OPENAI CHECK] 연결 실패")
+        print(f"[OPENAI CHECK] error={type(exc).__name__}: {exc}")
+        return False
+
+
+check_openai_connection(os.environ.get("OPENAI_API_KEY"), OPENAI_MODEL)
 
 runtime_config = PipelineRuntimeConfig(
     input_csv="data/real_ohlcv.csv",
@@ -313,7 +339,7 @@ runtime_config = PipelineRuntimeConfig(
     dart_api_key=os.environ["DART_API_KEY"],
     dart_corp_map_csv="data/dart_corp_map.csv",
     openai_api_key=os.environ.get("OPENAI_API_KEY"),
-    openai_model="gpt-4o-mini",
+    openai_model=OPENAI_MODEL,
 )
 
 # =========================
