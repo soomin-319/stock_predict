@@ -133,6 +133,21 @@ class KakaoColabPredictionBot:
         self._active_processes: dict[str, Any] = {}
         self._job_registry = self._load_registry(self.state_path)
         self._session_registry = self._load_registry(self.session_path)
+        self._legacy_formatter_patched = False
+        self._bootstrap_formatter_guard()
+
+    def _bootstrap_formatter_guard(self):
+        formatter_code = getattr(self._format_prediction_message, "__code__", None)
+        safe_code = getattr(self._safe_format_prediction_message, "__code__", None)
+        minimal_code = getattr(self._minimal_format_prediction_message, "__code__", None)
+        all_names = set()
+        for code in (formatter_code, safe_code, minimal_code):
+            if code is not None:
+                all_names.update(getattr(code, "co_names", ()))
+                all_names.update(getattr(code, "co_varnames", ()))
+        if "rationale_block" in all_names:
+            self._console_log("초기화 시 레거시 rationale_block 포맷터 감지. 안전 포맷터로 강제 교체합니다.")
+            self._activate_safe_formatter_patch()
 
     def handle_kakao_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         utterance = ((payload.get("userRequest") or {}).get("utterance") or "").strip()
@@ -191,8 +206,18 @@ class KakaoColabPredictionBot:
 
         cached_row = None if force_refresh else self._find_cached_prediction(symbol)
         if cached_row is not None:
+            try:
+                message = self._format_prediction_message(cached_row)
+            except Exception as exc:
+                if self._maybe_patch_legacy_rationale_bug(exc):
+                    message = self._safe_format_prediction_message(cached_row)
+                else:
+                    self._console_log(
+                        f"{display_code} 응답 메시지 포맷 오류({type(exc).__name__}): {exc}. 원문 사유로 대체합니다."
+                    )
+                    message = self._minimal_format_prediction_message(cached_row)
             return self._build_response(
-                self._format_prediction_message(cached_row),
+                message,
                 quick_replies=[
                     ("최신화", "최신화"),
                     ("결과 확인", "결과"),
@@ -372,6 +397,15 @@ class KakaoColabPredictionBot:
         return "KOSPI"
 
     def _format_prediction_message(self, row: pd.Series) -> str:
+        return self._build_prediction_message_from_row(row)
+
+    def _safe_format_prediction_message(self, row: pd.Series) -> str:
+        return self._build_prediction_message_from_row(row)
+
+    def _minimal_format_prediction_message(self, row: pd.Series) -> str:
+        return self._build_prediction_message_from_row(row)
+
+    def _build_prediction_message_from_row(self, row: pd.Series) -> str:
         code = str(row.get("종목코드", "-"))
         name = str(row.get("종목명", "-"))
         recommendation = str(row.get("권고", "-"))
@@ -389,6 +423,32 @@ class KakaoColabPredictionBot:
             f"신뢰도: {confidence}\n"
             f"사유: {reason}"
         )
+
+    # Backward-compatible shim for legacy runtime objects that still reference this method.
+    def _format_reason_for_display(self, reason: str) -> str:
+        raw = (reason or "").strip()
+        if not raw:
+            return "예측 이유 정보가 없습니다."
+        return raw
+
+    def _maybe_patch_legacy_rationale_bug(self, exc: Exception) -> bool:
+        is_legacy_name_error = isinstance(exc, NameError) and "rationale_block" in str(exc)
+        if not is_legacy_name_error:
+            return False
+
+        if not self._legacy_formatter_patched:
+            self._console_log(
+                "레거시 포맷터 오류 감지(NameError: rationale_block). "
+                "안전 포맷터로 즉시 대체합니다. (Colab 런타임 재시작 권장)"
+            )
+        self._activate_safe_formatter_patch()
+        return True
+
+    def _activate_safe_formatter_patch(self):
+        self._legacy_formatter_patched = True
+        self._format_prediction_message = self._build_prediction_message_from_row
+        self._safe_format_prediction_message = self._build_prediction_message_from_row
+        self._minimal_format_prediction_message = self._build_prediction_message_from_row
 
     def _format_percent(self, value: Any) -> str:
         if isinstance(value, str) and value.strip().endswith("%"):
@@ -470,7 +530,17 @@ class KakaoColabPredictionBot:
         if status == "completed":
             cached_row = self._find_cached_prediction(symbol)
             if cached_row is not None:
-                self._console_log(f"{display_code} 예측 완료\n{self._format_prediction_message(cached_row)}")
+                try:
+                    message = self._format_prediction_message(cached_row)
+                except Exception as exc:
+                    if self._maybe_patch_legacy_rationale_bug(exc):
+                        message = self._safe_format_prediction_message(cached_row)
+                    else:
+                        self._console_log(
+                            f"{display_code} 예측 완료 메시지 포맷 오류({type(exc).__name__}): {exc}. 원문 사유로 대체합니다."
+                        )
+                        message = self._minimal_format_prediction_message(cached_row)
+                self._console_log(f"{display_code} 예측 완료\n{message}")
             else:
                 self._console_log(f"{display_code} 예측 작업 completed (exit_code=0). 결과 CSV를 확인해주세요.")
         else:
@@ -632,7 +702,16 @@ def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: Pipel
     @app.post("/kakao/webhook")
     def kakao_webhook():
         payload = request.get_json(silent=True) or {}
-        return jsonify(service.handle_kakao_payload(payload))
+        try:
+            return jsonify(service.handle_kakao_payload(payload))
+        except Exception as exc:
+            service._console_log(f"웹훅 처리 오류({type(exc).__name__}): {exc}")
+            return jsonify(
+                service._build_response(
+                    "예측 메시지 처리 중 오류가 발생했습니다. 같은 종목코드를 다시 입력해주세요.",
+                    quick_replies=[("도움말", "도움말"), ("다시 시도", "결과")],
+                )
+            )
 
     return app
 
