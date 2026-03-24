@@ -442,7 +442,10 @@ class KakaoColabPredictionBot:
         up_probability = self._format_percent(row.get("상승확률(%)"))
         predicted_close = self._format_price(row.get("내일 예상 종가"))
         confidence = self._format_confidence(row.get("예측 신뢰도"))
-        reason = self._format_reason_for_display(str(row.get("예측 이유", "예측 이유 정보가 없습니다.")))
+        reason_lines = self._format_reason_for_display(str(row.get("예측 이유", "예측 이유 정보가 없습니다.")))
+        reason = " / ".join(reason_lines)
+        rationale_block = self._build_rationale_block(reason_lines)
+        issue_block = self._build_issue_summary_block(row)
         return (
             f"[{code} {name}]\n"
             f"권고: {recommendation}\n"
@@ -450,16 +453,49 @@ class KakaoColabPredictionBot:
             f"내일 예측 수익률: {predicted_return}\n"
             f"내일 예측 종가: {predicted_close}\n"
             f"신뢰도: {confidence}\n"
-            f"{rationale_block}\n"
+            f"{rationale_block}"
+            f"{issue_block}\n"
             f"원문 사유: {reason}"
         )
 
     # Backward-compatible shim for legacy runtime objects that still reference this method.
-    def _format_reason_for_display(self, reason: str) -> str:
+    def _format_reason_for_display(self, reason: str) -> list[str]:
         raw = (reason or "").strip()
         if not raw:
-            return "예측 이유 정보가 없습니다."
-        return raw
+            return ["예측 이유 정보가 없습니다."]
+        normalized = raw.replace("\n", " / ")
+        parts = [part.strip() for part in normalized.split("/") if part.strip()]
+        return parts or ["예측 이유 정보가 없습니다."]
+
+    def _build_rationale_block(self, reason_lines: list[str]) -> str:
+        bullets = "\n".join(f"- 사유: {line}" for line in reason_lines)
+        return "\n".join(
+            [
+                "사유(개정 포맷)",
+                bullets,
+                "무효화 조건: 장중 급격한 뉴스/수급 변화가 발생하면 해석이 달라질 수 있습니다.",
+            ]
+        )
+
+    def _build_issue_summary_block(self, row: pd.Series) -> str:
+        issue_fields = [
+            ("오늘 종목 이슈 한줄 요약", "오늘 이슈"),
+            ("공시 요약", "공시 요약"),
+            ("뉴스 요약", "뉴스 요약"),
+            ("종합 판단", "종합 판단"),
+            ("주의사항", "주의사항"),
+        ]
+        lines: list[str] = []
+        for column, label in issue_fields:
+            raw = row.get(column)
+            if pd.isna(raw) if not isinstance(raw, str) else False:
+                continue
+            text = str(raw).strip()
+            if text and text != "-":
+                lines.append(f"{label}: {text}")
+        if not lines:
+            return ""
+        return "\n" + "\n".join(lines)
 
     def _maybe_patch_legacy_rationale_bug(self, exc: Exception) -> bool:
         is_legacy_name_error = isinstance(exc, NameError) and "rationale_block" in str(exc)
