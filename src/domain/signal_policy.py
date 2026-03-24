@@ -186,7 +186,6 @@ def vectorized_event_signal_boost(pred_df: pd.DataFrame) -> pd.DataFrame:
 def prediction_reason(row: pd.Series) -> str:
     reasons: list[str] = []
 
-    up_probability = float(row.get("up_probability", 0.5) or 0.5)
     foreign_net_buy = float(row.get("foreign_net_buy", 0) or 0)
     institution_net_buy = float(row.get("institution_net_buy", 0) or 0)
     history_acc = float(row.get("history_direction_accuracy", 0.5) or 0.5)
@@ -196,10 +195,10 @@ def prediction_reason(row: pd.Series) -> str:
     near_52w_high_flag = float(row.get("near_52w_high_flag", 0) or 0)
     nq_ret = float(row.get("nq_f_ret_1d", 0) or 0)
     liquidity = float(row.get("value_traded", 0) or 0)
-    pred_5d = pd.to_numeric(pd.Series([row.get("predicted_return_5d")]), errors="coerce").iloc[0]
-    pred_20d = pd.to_numeric(pd.Series([row.get("predicted_return_20d")]), errors="coerce").iloc[0]
-    up_prob_5d = pd.to_numeric(pd.Series([row.get("up_probability_5d")]), errors="coerce").iloc[0]
-    up_prob_20d = pd.to_numeric(pd.Series([row.get("up_probability_20d")]), errors="coerce").iloc[0]
+    close_to_ma_20 = pd.to_numeric(pd.Series([row.get("close_to_ma_20")]), errors="coerce").iloc[0]
+    rsi_14 = pd.to_numeric(pd.Series([row.get("rsi_14")]), errors="coerce").iloc[0]
+    macd_hist = pd.to_numeric(pd.Series([row.get("macd_hist")]), errors="coerce").iloc[0]
+    obv_change_5d = pd.to_numeric(pd.Series([row.get("obv_change_5d")]), errors="coerce").iloc[0]
 
     if turnover_rank <= 15:
         reasons.append("수급: 거래대금 상위권이며 거래대금 상위 15위 종목입니다")
@@ -215,20 +214,32 @@ def prediction_reason(row: pd.Series) -> str:
         reasons.append("해외 흐름: 나스닥 선물 강세가 우호적입니다")
     elif nq_ret <= -0.01:
         reasons.append("해외 경고: 나스닥 선물 약세가 부담입니다")
-    if up_probability >= 0.7:
-        reasons.append(f"확률: 상승 가능성이 {up_probability * 100:.1f}%로 높습니다")
-    elif up_probability >= 0.55:
-        reasons.append(f"확률: 상승 가능성이 {up_probability * 100:.1f}%로 우세합니다")
+    if not pd.isna(close_to_ma_20):
+        if close_to_ma_20 >= 0.03:
+            reasons.append("추세강도: 종가가 20일 평균 대비 높아 상승 추세가 유지 중입니다")
+        elif close_to_ma_20 <= -0.03:
+            reasons.append("추세경고: 종가가 20일 평균을 하회해 단기 약세 압력이 있습니다")
+    if not pd.isna(rsi_14):
+        if 30 <= rsi_14 <= 40:
+            reasons.append("모멘텀: RSI가 과매도 구간에서 회복 중이라 반등 여지가 있습니다")
+        elif rsi_14 >= 70:
+            reasons.append("모멘텀 경고: RSI 과열권으로 단기 변동성 확대에 주의가 필요합니다")
+    if not pd.isna(macd_hist):
+        if macd_hist > 0:
+            reasons.append("모멘텀: MACD 히스토그램이 플러스라 단기 추세가 우호적입니다")
+        elif macd_hist < 0:
+            reasons.append("모멘텀 경고: MACD 히스토그램이 마이너스라 탄력 둔화 신호가 있습니다")
+    if not pd.isna(obv_change_5d):
+        if obv_change_5d >= 0.05:
+            reasons.append("수급강도: OBV 5일 변화가 커 매수 유입이 강화되는 흐름입니다")
+        elif obv_change_5d <= -0.05:
+            reasons.append("수급경고: OBV 5일 변화가 약해 수급 둔화 가능성이 있습니다")
     if history_acc >= 0.6:
         reasons.append(f"신뢰도: 과거 방향 적중률이 {history_acc * 100:.1f}%였습니다")
     elif uncertainty_score >= 0.7:
         reasons.append("주의: 불확실성이 높아 비중을 줄이는 편이 좋습니다")
     if liquidity > 0 and row.get("min_liquidity_threshold") is not None and liquidity < float(row.get("min_liquidity_threshold") or 0):
         reasons.append("유동성: 거래대금 기준이 낮아 체결 리스크가 있습니다")
-    if not pd.isna(pred_5d) and not pd.isna(pred_20d):
-        reasons.append(f"호라이즌: 5일 {pred_5d:.2f}%, 20일 {pred_20d:.2f}% 기대수익률입니다")
-    if not pd.isna(up_prob_5d) and not pd.isna(up_prob_20d):
-        reasons.append(f"중기확률: 5일 {up_prob_5d * 100:.1f}%, 20일 {up_prob_20d * 100:.1f}%입니다")
     if str(row.get("coverage_gate_status", "") or "").lower() == "halt":
         reasons.append("운용게이트: 데이터 커버리지가 낮아 오늘은 거래를 중단합니다")
 
