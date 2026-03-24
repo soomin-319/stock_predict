@@ -259,6 +259,45 @@ def test_cached_prediction_message_formats_price_string_from_result_simple_csv(t
     assert "내일 예측 종가: 71,200원" in text
 
 
+def test_cached_prediction_message_formats_rule_based_reason_labels(tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "종목코드": "005930",
+                "종목명": "삼성전자",
+                "권고": "매수",
+                "내일 예상 종가": 71200,
+                "내일 예상 수익률(%)": "1.234%",
+                "상승확률(%)": "78.9%",
+                "예측 신뢰도": "88.0%",
+                "예측 이유": (
+                    "종배수급: 거래대금 15위 이내 상위 종목입니다 / "
+                    "수급조건: 외국인 1,200억, 기관 1,100억 순매수입니다 / "
+                    "해외조건: 나스닥 선물 +1% 이상"
+                ),
+            }
+        ]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "005930",
+                "user": {"id": "user-reason-format"},
+            }
+        }
+    )
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "사유: 거래대금 15위 이내" in text
+    assert "외국인/기관 각각 1,000억 이상 순매수" in text
+    assert "나스닥선물 +1% / -1%" in text
+    assert "해당 기준을 충족합니다" in text
+
+
 def test_name_query_with_exact_match_starts_prediction(tmp_path: Path, monkeypatch):
     runner = RecordingRunner()
     bot = make_bot(tmp_path, runner=runner)
