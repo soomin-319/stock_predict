@@ -290,7 +290,6 @@ import threading
 from flask import request
 from openai import OpenAI
 from pyngrok import ngrok
-import yfinance as yf
 
 from src.chatbot.kakao_colab_bot import (
     PipelineRuntimeConfig,
@@ -308,28 +307,6 @@ os.environ["OPENAI_API_KEY"] = "YOUR_OPENAI_API_KEY"  # 공시/뉴스 LLM 요약
 
 PORT = 8000
 OPENAI_MODEL = "gpt-4o-mini"
-TEST_SYMBOL = "005930.KS"  # 뉴스 수집 점검용 심볼
-
-
-def check_yfinance_news(symbol: str) -> bool:
-    print(f"[YF CHECK] symbol={symbol}")
-    try:
-        items = yf.Ticker(symbol).news or []
-    except Exception as exc:
-        print(f"[YF CHECK] 뉴스 요청 실패: {type(exc).__name__}: {exc}")
-        return False
-
-    print(f"[YF CHECK] 수신 기사 수={len(items)}")
-    if not items:
-        print("[YF CHECK] yfinance 뉴스가 비어 있습니다. (기간/심볼/제공상태 영향 가능)")
-        return False
-
-    top = items[0]
-    title = (top.get("title") or "").strip()
-    ts = top.get("providerPublishTime")
-    print(f"[YF CHECK] 최신 제목={title[:100]}")
-    print(f"[YF CHECK] 최신 발행시각(providerPublishTime)={ts}")
-    return True
 
 
 def check_openai_connection(api_key: str | None, model: str) -> bool:
@@ -354,7 +331,6 @@ def check_openai_connection(api_key: str | None, model: str) -> bool:
 
 
 check_openai_connection(os.environ.get("OPENAI_API_KEY"), OPENAI_MODEL)
-check_yfinance_news(TEST_SYMBOL)
 
 runtime_config = PipelineRuntimeConfig(
     input_csv="data/real_ohlcv.csv",

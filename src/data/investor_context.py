@@ -9,7 +9,6 @@ from urllib.parse import urlencode
 from urllib.request import urlopen
 
 import pandas as pd
-import yfinance as yf
 
 from src.data.pykrx_support import import_pykrx_stock
 
@@ -171,112 +170,14 @@ def _fetch_disclosure_scores(symbols: list[str], start: str, end: str, api_key: 
     return pd.concat(rows, ignore_index=True), coverage
 
 
-def _normalize_news_title(title: str) -> str:
-    return re.sub(r"\s+", " ", str(title).strip()).lower()
-
-
 def _fetch_news_sentiment(symbols: list[str], start: str, end: str, cfg: InvestorContextConfig | None = None):
-    _ = cfg
-    coverage = {"requested": len(symbols), "successful": 0, "failed": 0}
-    start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
-
-    for symbol in symbols:
-        try:
-            items = _load_yfinance_news_items(symbol)
-            if not items:
-                coverage["failed"] += 1
-                continue
-            seen_titles: set[tuple[pd.Timestamp, str]] = set()
-            for it in items:
-                dt, title = _parse_news_datetime_and_title(it)
-                if dt is None:
-                    continue
-                if dt < start_dt or dt > end_dt:
-                    continue
-                normalized_title = _normalize_news_title(title)
-                if not normalized_title:
-                    continue
-                dedupe_key = (dt, normalized_title)
-                if dedupe_key in seen_titles:
-                    continue
-                seen_titles.add(dedupe_key)
-            if not seen_titles:
-                coverage["failed"] += 1
-                continue
-            coverage["successful"] += 1
-        except Exception:
-            coverage["failed"] += 1
-
+    _ = (symbols, start, end, cfg)
+    # 뉴스 점수화/뉴스 수집 기능은 제거되었습니다.
+    # 컬럼 호환성 유지를 위해 빈 프레임과 0-coverage를 반환합니다.
+    coverage = {"requested": 0, "successful": 0, "failed": 0}
     return pd.DataFrame(
         columns=["Date", "Symbol", "news_sentiment", "news_relevance_score", "news_impact_score", "news_article_count"]
     ), coverage
-
-
-def _load_yfinance_news_items(symbol: str) -> list[dict]:
-    ticker = yf.Ticker(symbol)
-    merged: list[dict] = []
-
-    direct_news = getattr(ticker, "news", None)
-    if isinstance(direct_news, list):
-        merged.extend(item for item in direct_news if isinstance(item, dict))
-
-    get_news = getattr(ticker, "get_news", None)
-    if callable(get_news):
-        for kwargs in ({}, {"count": 100}):
-            try:
-                fetched = get_news(**kwargs)
-            except TypeError:
-                continue
-            except Exception:
-                break
-            if isinstance(fetched, list):
-                merged.extend(item for item in fetched if isinstance(item, dict))
-                if fetched:
-                    break
-
-    unique: list[dict] = []
-    seen_keys: set[tuple[str, str]] = set()
-    for item in merged:
-        dt, title = _parse_news_datetime_and_title(item)
-        key = (str(dt), _normalize_news_title(title))
-        if key in seen_keys:
-            continue
-        seen_keys.add(key)
-        unique.append(item)
-    return unique
-
-
-def _parse_news_datetime_and_title(item: dict) -> tuple[pd.Timestamp | None, str]:
-    content = item.get("content") if isinstance(item.get("content"), dict) else item
-    title = str(
-        content.get("title")
-        or content.get("headline")
-        or item.get("title")
-        or item.get("headline")
-        or ""
-    ).strip()
-
-    ts_value = (
-        content.get("providerPublishTime")
-        or content.get("pubDate")
-        or content.get("published")
-        or content.get("publish_time")
-        or item.get("providerPublishTime")
-        or item.get("pubDate")
-        or item.get("published")
-        or item.get("publish_time")
-    )
-    if ts_value is None:
-        return None, title
-
-    if isinstance(ts_value, (int, float)):
-        unit = "ms" if float(ts_value) > 1_000_000_000_000 else "s"
-        dt = pd.to_datetime(ts_value, unit=unit, utc=True, errors="coerce")
-    else:
-        dt = pd.to_datetime(ts_value, utc=True, errors="coerce")
-    if pd.isna(dt):
-        return None, title
-    return dt.tz_localize(None).normalize(), title
 
 
 def add_investor_context_with_coverage(df: pd.DataFrame, cfg: InvestorContextConfig) -> tuple[pd.DataFrame, dict]:
@@ -339,45 +240,6 @@ def collect_context_raw_events(
 ) -> pd.DataFrame:
     rows: list[dict] = []
     start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
-
-    for symbol in symbols:
-        try:
-            news_items = _load_yfinance_news_items(symbol)
-        except Exception:
-            news_items = []
-        for item in news_items:
-            dt, title = _parse_news_datetime_and_title(item)
-            if dt is None or dt < start_dt or dt > end_dt:
-                continue
-            content = item.get("content") if isinstance(item.get("content"), dict) else item
-            provider = str(
-                content.get("provider")
-                or content.get("publisher")
-                or item.get("provider")
-                or item.get("publisher")
-                or "yfinance"
-            ).strip()
-            url = (
-                content.get("link")
-                or content.get("url")
-                or item.get("link")
-                or item.get("url")
-                or ""
-            )
-            if isinstance(content.get("canonicalUrl"), dict):
-                url = content.get("canonicalUrl", {}).get("url") or url
-            rows.append(
-                {
-                    "Date": dt.strftime("%Y-%m-%d"),
-                    "Symbol": symbol,
-                    "source_type": "news",
-                    "title": title,
-                    "published_at": dt.isoformat(),
-                    "provider": provider,
-                    "url": str(url or ""),
-                    "raw_id": str(item.get("id") or ""),
-                }
-            )
 
     if dart_api_key:
         corp_map = _load_dart_corp_map(dart_corp_map_csv)
