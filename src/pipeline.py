@@ -440,6 +440,8 @@ def run_pipeline(
     news_scoring_mode: str = "auto",
     openai_api_key: str | None = None,
     openai_model: str | None = None,
+    naver_client_id: str | None = None,
+    naver_client_secret: str | None = None,
     min_value_traded: float | None = None,
     turnover_limit: float | None = None,
     min_up_probability: float | None = None,
@@ -510,15 +512,22 @@ def run_pipeline(
                 news_scoring_mode=news_scoring_mode,
                 openai_api_key=openai_api_key,
                 openai_model=openai_model,
+                naver_client_id=naver_client_id,
+                naver_client_secret=naver_client_secret,
             ),
         )
         try:
+            context_symbols = sorted(data["Symbol"].dropna().astype(str).unique().tolist())
+            context_symbol_name_map = get_symbol_name_map(context_symbols)
             context_raw_df = collect_context_raw_events(
-                symbols=sorted(data["Symbol"].dropna().astype(str).unique().tolist()),
+                symbols=context_symbols,
                 start=data["Date"].min().strftime("%Y-%m-%d"),
                 end=data["Date"].max().strftime("%Y-%m-%d"),
                 dart_api_key=dart_api_key,
                 dart_corp_map_csv=dart_corp_map_csv,
+                symbol_name_map=context_symbol_name_map,
+                naver_client_id=naver_client_id,
+                naver_client_secret=naver_client_secret,
             )
         except Exception:
             context_raw_df = pd.DataFrame(
@@ -766,6 +775,8 @@ def build_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--news-scoring-mode", default="auto", choices=["auto", "rule", "ai"], help="News scoring mode")
     parser.add_argument("--openai-api-key", default=None, help="OpenAI API key for AI news scoring")
     parser.add_argument("--openai-model", default=None, help="OpenAI model for AI news scoring")
+    parser.add_argument("--naver-client-id", default=None, help="Naver News Search API client id")
+    parser.add_argument("--naver-client-secret", default=None, help="Naver News Search API client secret")
     parser.add_argument("--dart-api-key", default=None, help="Deprecated legacy option kept for compatibility")
     parser.add_argument("--dart-corp-map-csv", default=None, help="Deprecated legacy option kept for compatibility")
     parser.add_argument("--config-json", default=None, help="Optional JSON file overriding nested AppConfig values")
@@ -855,6 +866,8 @@ def main():
         news_scoring_mode=args.news_scoring_mode,
         openai_api_key=args.openai_api_key,
         openai_model=args.openai_model,
+        naver_client_id=args.naver_client_id,
+        naver_client_secret=args.naver_client_secret,
         min_value_traded=args.min_value_traded,
         turnover_limit=args.turnover_limit,
         min_up_probability=args.min_up_probability,

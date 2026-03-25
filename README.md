@@ -304,6 +304,8 @@ from src.chatbot.kakao_colab_bot import (
 os.environ["DART_API_KEY"] = "YOUR_DART_API_KEY"
 os.environ["NGROK_AUTHTOKEN"] = "YOUR_NGROK_AUTHTOKEN"
 os.environ["OPENAI_API_KEY"] = "YOUR_OPENAI_API_KEY"  # 공시/뉴스 LLM 요약 사용 시(선택)
+os.environ["NAVER_CLIENT_ID"] = "YOUR_NAVER_CLIENT_ID"  # 네이버 뉴스 API(선택)
+os.environ["NAVER_CLIENT_SECRET"] = "YOUR_NAVER_CLIENT_SECRET"  # 네이버 뉴스 API(선택)
 
 PORT = 8000
 OPENAI_MODEL = "gpt-4o-mini"
@@ -340,6 +342,8 @@ runtime_config = PipelineRuntimeConfig(
     dart_corp_map_csv="data/dart_corp_map.csv",
     openai_api_key=os.environ.get("OPENAI_API_KEY"),
     openai_model=OPENAI_MODEL,
+    naver_client_id=os.environ.get("NAVER_CLIENT_ID"),
+    naver_client_secret=os.environ.get("NAVER_CLIENT_SECRET"),
 )
 
 # =========================
@@ -423,6 +427,8 @@ python -m src.chatbot.kakao_colab_bot \
   --dart-api-key "YOUR_DART_API_KEY" \
   --openai-api-key "YOUR_OPENAI_API_KEY" \
   --openai-model "gpt-4o-mini" \
+  --naver-client-id "YOUR_NAVER_CLIENT_ID" \
+  --naver-client-secret "YOUR_NAVER_CLIENT_SECRET" \
   --input data/real_ohlcv.csv \
   --report-json pipeline_report_with_context.json \
   --figure-dir figures_with_context

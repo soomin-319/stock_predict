@@ -63,6 +63,8 @@ class PipelineRuntimeConfig:
     news_scoring_mode: str = "auto"
     openai_api_key: str | None = None
     openai_model: str | None = None
+    naver_client_id: str | None = None
+    naver_client_secret: str | None = None
     use_external: bool = False
     bootstrap_default_symbols: bool = True
     real_start: str = "2018-01-01"
@@ -96,6 +98,10 @@ class PipelineRuntimeConfig:
                 cmd.extend(["--openai-api-key", self.openai_api_key])
             if self.openai_model:
                 cmd.extend(["--openai-model", self.openai_model])
+            if self.naver_client_id:
+                cmd.extend(["--naver-client-id", self.naver_client_id])
+            if self.naver_client_secret:
+                cmd.extend(["--naver-client-secret", self.naver_client_secret])
         if not self.use_external:
             cmd.append("--disable-external")
         if self.report_json:
@@ -979,6 +985,10 @@ def main():
     parser.add_argument("--figure-dir", default="figures_with_context")
     parser.add_argument("--dart-api-key", default=None)
     parser.add_argument("--dart-corp-map-csv", default="data/dart_corp_map.csv")
+    parser.add_argument("--openai-api-key", default=None)
+    parser.add_argument("--openai-model", default=None)
+    parser.add_argument("--naver-client-id", default=None)
+    parser.add_argument("--naver-client-secret", default=None)
     parser.add_argument("--use-pyngrok", action="store_true")
     parser.add_argument("--ngrok-auth-token", default=None)
     parser.add_argument("--ngrok-domain", default=None)
@@ -990,6 +1000,10 @@ def main():
         figure_dir=args.figure_dir,
         dart_api_key=args.dart_api_key,
         dart_corp_map_csv=args.dart_corp_map_csv,
+        openai_api_key=args.openai_api_key,
+        openai_model=args.openai_model,
+        naver_client_id=args.naver_client_id,
+        naver_client_secret=args.naver_client_secret,
     )
     if args.use_pyngrok:
         launched = launch_colab_kakao_bot(

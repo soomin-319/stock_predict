@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import pandas as pd
 
@@ -26,6 +26,8 @@ class InvestorContextConfig:
     news_scoring_mode: str = "auto"
     openai_api_key: str | None = None
     openai_model: str | None = None
+    naver_client_id: str | None = None
+    naver_client_secret: str | None = None
 
 
 def _symbol_to_ticker(symbol: str) -> str | None:
@@ -180,6 +182,82 @@ def _fetch_news_sentiment(symbols: list[str], start: str, end: str, cfg: Investo
     ), coverage
 
 
+def _strip_html(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", str(text or "")).strip()
+
+
+def _build_news_queries(symbol_name: str) -> list[str]:
+    name = str(symbol_name or "").strip()
+    if not name:
+        return []
+    keywords = ["주가", "실적", "공시", "계약", "전망"]
+    return [name] + [f"{name} {kw}" for kw in keywords]
+
+
+def _fetch_naver_news_items(
+    *,
+    symbol: str,
+    symbol_name: str,
+    start_dt: pd.Timestamp,
+    end_dt: pd.Timestamp,
+    client_id: str | None,
+    client_secret: str | None,
+) -> list[dict]:
+    if not client_id or not client_secret:
+        return []
+    rows: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for query in _build_news_queries(symbol_name):
+        params = urlencode({"query": query, "display": 50, "start": 1, "sort": "date"})
+        req = Request(
+            f"https://openapi.naver.com/v1/search/news.json?{params}",
+            headers={
+                "X-Naver-Client-Id": client_id,
+                "X-Naver-Client-Secret": client_secret,
+            },
+        )
+        try:
+            with urlopen(req, timeout=15) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            continue
+
+        for item in payload.get("items", []) if isinstance(payload, dict) else []:
+            title = _strip_html(item.get("title", ""))
+            description = _strip_html(item.get("description", ""))
+            pub_raw = str(item.get("pubDate", "")).strip()
+            pub_dt = pd.to_datetime(pub_raw, utc=True, errors="coerce")
+            if pd.isna(pub_dt):
+                continue
+            pub_dt = pub_dt.tz_localize(None)
+            if pub_dt < start_dt or pub_dt > (end_dt + pd.Timedelta(days=1)):
+                continue
+            if symbol_name and symbol_name not in f"{title} {description}":
+                continue
+            origin = str(item.get("originallink") or item.get("link") or "").strip()
+            dedupe_key = (origin, title)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            rows.append(
+                {
+                    "Date": pub_dt.normalize().strftime("%Y-%m-%d"),
+                    "Symbol": symbol,
+                    "source_type": "news",
+                    "title": title,
+                    "body": description,
+                    "published_at": pub_dt.isoformat(),
+                    "provider": "naver_news_api",
+                    "url": str(item.get("originallink") or item.get("link") or ""),
+                    "raw_id": origin,
+                    "query": query,
+                    "symbol_name": symbol_name,
+                    "source": "naver_news_api",
+                }
+            )
+    return rows
+
+
 def add_investor_context_with_coverage(df: pd.DataFrame, cfg: InvestorContextConfig) -> tuple[pd.DataFrame, dict]:
     if df.empty or not cfg.enabled:
         return _empty_context(df)
@@ -237,9 +315,25 @@ def collect_context_raw_events(
     end: str,
     dart_api_key: str | None = None,
     dart_corp_map_csv: str | None = None,
+    symbol_name_map: dict[str, str] | None = None,
+    naver_client_id: str | None = None,
+    naver_client_secret: str | None = None,
 ) -> pd.DataFrame:
     rows: list[dict] = []
     start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
+
+    for symbol in symbols:
+        symbol_name = (symbol_name_map or {}).get(symbol, "")
+        rows.extend(
+            _fetch_naver_news_items(
+                symbol=symbol,
+                symbol_name=symbol_name,
+                start_dt=start_dt,
+                end_dt=end_dt,
+                client_id=naver_client_id,
+                client_secret=naver_client_secret,
+            )
+        )
 
     if dart_api_key:
         corp_map = _load_dart_corp_map(dart_corp_map_csv)
@@ -270,15 +364,34 @@ def collect_context_raw_events(
                         "Symbol": symbol,
                         "source_type": "disclosure",
                         "title": str(item.get("report_nm") or "").strip(),
+                        "body": "",
                         "published_at": dt.isoformat(),
                         "provider": "DART",
                         "url": dart_url,
                         "raw_id": rcept_no,
+                        "query": "",
+                        "symbol_name": (symbol_name_map or {}).get(symbol, ""),
+                        "source": "dart",
                     }
                 )
 
     if not rows:
-        return pd.DataFrame(columns=["Date", "Symbol", "source_type", "title", "published_at", "provider", "url", "raw_id"])
+        return pd.DataFrame(
+            columns=[
+                "Date",
+                "Symbol",
+                "source_type",
+                "title",
+                "body",
+                "published_at",
+                "provider",
+                "url",
+                "raw_id",
+                "query",
+                "symbol_name",
+                "source",
+            ]
+        )
 
     out = pd.DataFrame(rows).drop_duplicates(subset=["Date", "Symbol", "source_type", "title", "raw_id"]).reset_index(drop=True)
     out = out.sort_values(["Date", "Symbol", "source_type", "title"]).reset_index(drop=True)
