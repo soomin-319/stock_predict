@@ -1,6 +1,11 @@
 import pandas as pd
 
-from src.reports.issue_summary import SymbolIssueSummary, _build_structured_events, append_issue_summary_columns
+from src.reports.issue_summary import (
+    SymbolIssueSummary,
+    _build_structured_events,
+    _extract_json_dict,
+    append_issue_summary_columns,
+)
 from src.reports.result_formatter import build_result_simple
 
 
@@ -184,3 +189,10 @@ def test_append_issue_summary_columns_uses_default_model_when_only_openai_key(mo
 
     assert captured["model"] == "gpt-4o-mini"
     assert out.loc[0, "오늘 종목 이슈 한줄 요약"] == "ok"
+
+
+def test_extract_json_dict_parses_wrapped_json():
+    raw = "```json\n{\"overall_judgment\":\"호재\",\"one_line_summary\":\"ok\"}\n```"
+    out = _extract_json_dict(raw)
+    assert isinstance(out, dict)
+    assert out["overall_judgment"] == "호재"

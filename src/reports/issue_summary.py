@@ -100,6 +100,25 @@ def _build_llm_prompt(symbol: str, symbol_name: str, disclosures: list[str], new
     )
 
 
+def _extract_json_dict(text: str) -> dict | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        pass
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if not match:
+        return None
+    try:
+        parsed = json.loads(match.group(0))
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
 def _categorize_disclosure_title(title: str) -> str:
     t = str(title)
     if any(k in t for k in ("공급계약", "계약")):
@@ -212,7 +231,20 @@ def _llm_symbol_issue_summary(
             max_output_tokens=300,
         )
         raw = getattr(response, "output_text", "") or ""
-        payload = json.loads(raw)
+        payload = _extract_json_dict(raw)
+        if payload is None:
+            chat_resp = client.chat.completions.create(
+                model=model,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": "Return JSON only."},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            chat_raw = (chat_resp.choices[0].message.content or "").strip()
+            payload = _extract_json_dict(chat_raw)
+        if payload is None:
+            raise ValueError("LLM JSON 파싱 실패")
     except Exception as exc:
         print(f"[ISSUE SUMMARY] LLM 요약 실패 ({symbol}): {type(exc).__name__}: {exc}")
         return None
