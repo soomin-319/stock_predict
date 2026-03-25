@@ -915,7 +915,22 @@ def start_pyngrok_tunnel(tunnel_config: PyngrokTunnelConfig | None = None) -> st
     if config.domain:
         connect_kwargs["domain"] = config.domain
 
-    listener = ngrok.connect(**connect_kwargs)
+    try:
+        listener = ngrok.connect(**connect_kwargs)
+    except Exception as exc:
+        msg = str(exc)
+        already_online = "ERR_NGROK_334" in msg or "already online" in msg.lower()
+        if not already_online:
+            raise
+
+        endpoint_match = re.search(r"'(https://[^']+)'", msg)
+        endpoint_url = endpoint_match.group(1) if endpoint_match else None
+        if endpoint_url:
+            try:
+                ngrok.disconnect(endpoint_url)
+            except Exception:
+                pass
+        listener = ngrok.connect(**connect_kwargs)
     return str(listener.public_url).rstrip("/")
 
 

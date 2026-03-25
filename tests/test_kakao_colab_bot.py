@@ -485,6 +485,35 @@ def test_start_pyngrok_tunnel_returns_public_url(monkeypatch):
     assert calls["kwargs"]["proto"] == "http"
 
 
+def test_start_pyngrok_tunnel_disconnects_existing_endpoint_on_err_ngrok_334(monkeypatch):
+    calls = {"connect_count": 0, "disconnected": None}
+
+    class FakeListener:
+        public_url = "https://new.ngrok-free.app/"
+
+    class FakeNgrok:
+        def connect(self, **kwargs):
+            calls["connect_count"] += 1
+            if calls["connect_count"] == 1:
+                raise RuntimeError(
+                    "failed to start tunnel: The endpoint 'https://occupied.ngrok-free.dev' is already online. ERR_NGROK_334"
+                )
+            return FakeListener()
+
+        def disconnect(self, url):
+            calls["disconnected"] = url
+
+    fake_module = ModuleType("pyngrok")
+    fake_module.ngrok = FakeNgrok()
+    monkeypatch.setitem(sys.modules, "pyngrok", fake_module)
+
+    public_url = start_pyngrok_tunnel(PyngrokTunnelConfig(port=8000))
+
+    assert public_url == "https://new.ngrok-free.app"
+    assert calls["connect_count"] == 2
+    assert calls["disconnected"] == "https://occupied.ngrok-free.dev"
+
+
 def test_prewarm_prediction_cache_runs_colab_pipeline(monkeypatch, tmp_path: Path):
     captured = {}
 
