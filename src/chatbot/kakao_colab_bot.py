@@ -79,6 +79,8 @@ class PipelineRuntimeConfig:
             self.input_csv,
             "--add-symbols",
             symbol,
+            "--issue-summary-symbols",
+            symbol,
         ]
         if self.fetch_investor_context:
             cmd.append("--fetch-investor-context")
@@ -978,6 +980,7 @@ def prewarm_prediction_cache(runtime_config: PipelineRuntimeConfig | None = None
         dart_corp_map_csv=cfg.dart_corp_map_csv,
         bootstrap_default_symbols=cfg.bootstrap_default_symbols,
         real_start=cfg.real_start,
+        enable_issue_summary=False,
     )
     _write_prewarm_meta(meta_path, {"signature": signature, "signature_hash": signature_hash})
     print(f"[KAKAO BOT] 기본 심볼 예측 캐시 준비 완료: {outputs.get('result_simple_csv', '')}")

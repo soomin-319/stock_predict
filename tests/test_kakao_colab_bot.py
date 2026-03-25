@@ -127,6 +127,7 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert len(runner.calls) == 1
     command = runner.calls[0]["command"]
     assert "--add-symbols" in command
+    assert "--issue-summary-symbols" in command
     assert "000660.KS" in command
     assert "--fetch-investor-context" in command
     assert "--disable-news-context" not in command
@@ -584,6 +585,7 @@ def test_prewarm_prediction_cache_runs_colab_pipeline(monkeypatch, tmp_path: Pat
     assert captured["use_investor_context"] is True
     assert captured["bootstrap_default_symbols"] is True
     assert captured["real_start"] == "2020-01-01"
+    assert captured["enable_issue_summary"] is False
     assert out["result_simple_csv"].endswith("result/result_simple.csv")
 
 

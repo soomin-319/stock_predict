@@ -191,6 +191,44 @@ def test_append_issue_summary_columns_uses_default_model_when_only_openai_key(mo
     assert out.loc[0, "오늘 종목 이슈 한줄 요약"] == "ok"
 
 
+def test_append_issue_summary_columns_limits_summary_to_requested_symbols(monkeypatch):
+    base = pd.DataFrame(
+        [
+            {"Symbol": "005930.KS", "종목명": "삼성전자"},
+            {"Symbol": "000660.KS", "종목명": "SK하이닉스"},
+        ]
+    )
+    events = pd.DataFrame(
+        [
+            {"Symbol": "005930.KS", "source_type": "news", "title": "테스트", "Date": "2026-03-24"},
+            {"Symbol": "000660.KS", "source_type": "news", "title": "테스트2", "Date": "2026-03-24"},
+        ]
+    )
+
+    monkeypatch.setattr(
+        "src.reports.issue_summary._llm_symbol_issue_summary",
+        lambda **kwargs: SymbolIssueSummary(
+            one_line_summary="요약 생성",
+            disclosure_summary="[공시 요약]\n- 없음",
+            news_summary="[뉴스 요약]\n- 있음",
+            overall_judgment="중립",
+            caution="c",
+            source_count=1,
+            key_sources=["news"],
+        ),
+    )
+
+    out = append_issue_summary_columns(
+        base,
+        context_raw_df=events,
+        openai_api_key="sk-test",
+        summarize_symbols=["005930.KS"],
+    )
+
+    assert out.loc[0, "오늘 종목 이슈 한줄 요약"] == "요약 생성"
+    assert out.loc[1, "오늘 종목 이슈 한줄 요약"] == "요약 비활성화"
+
+
 def test_extract_json_dict_parses_wrapped_json():
     raw = "```json\n{\"overall_judgment\":\"호재\",\"one_line_summary\":\"ok\"}\n```"
     out = _extract_json_dict(raw)
