@@ -19,6 +19,110 @@ class SymbolIssueSummary:
     key_sources: list[str]
 
 
+DISCLOSURE_SUMMARY_PROMPT = """너는 한국 주식시장 종목 관련 공시를 투자 전문가에게 전달하기 위한 참고용 요약 AI다.
+
+역할:
+- 입력된 공시 문서를 바탕으로, 해당 종목과 관련된 핵심 사실을 객관적으로 정리한다.
+- 이 요약은 주가 예측값을 생성하거나 수정하기 위한 것이 아니라, 사용자가 참고할 수 있는 설명 자료를 제공하기 위한 것이다.
+- 따라서 투자 권유, 주가 방향 예측, 가치판단, 감정적 해석은 하지 않는다.
+
+목표:
+- 공시 원문에 기재된 핵심 사실, 수치, 일정, 당사자, 변경사항을 빠짐없이 정리한다.
+- 투자 전문가가 실무적으로 중요하게 볼 항목을 우선 정리한다.
+- 공시의 제목보다 실제 본문과 수치 정보를 우선 기준으로 사용한다.
+- 공시가 정정인지 신규인지, 반복 보고인지 여부를 구분한다.
+
+반드시 지켜야 할 규칙:
+1. 입력으로 제공된 공시 정보만 사용하라.
+2. 원문에 없는 사실, 추정, 배경설명, 전망을 추가하지 마라.
+3. "호재", "악재", "긍정적", "부정적", "상승", "하락", "매수", "매도" 같은 투자 판단 표현을 사용하지 마라.
+4. "시장에 영향을 줄 수 있다", "주가가 반응할 수 있다" 같은 추정 표현을 사용하지 마라.
+5. 공시 제목보다 본문과 수치 정보를 우선적으로 반영하라.
+6. 금액, 비율, 기간, 계약 상대방, 발행 조건, 일정, 변경 전후 내용을 정확히 정리하라.
+7. 정정공시일 경우 무엇이 변경되었는지 명확히 구분하라.
+8. 단순 반복 문구나 법적 서술은 축약하되, 핵심 의무, 조건, 수치는 누락하지 마라.
+9. 원문에 명확히 적혀 있지 않은 사항은 쓰지 마라.
+10. 각 bullet은 반드시 한 문장으로 작성하라.
+11. 각 bullet은 짧고 명확하게 작성하라.
+12. 중복되는 내용은 하나로 합쳐라.
+13. 출력은 반드시 아래 형식을 따르라.
+14. 한국어로 작성하라.
+
+출력 형식:
+[공시 요약]
+- 공시 핵심 내용 1문장
+- 공시 핵심 내용 1문장
+- 공시 핵심 내용 1문장
+- 필요 시 추가
+
+출력 규칙:
+- bullet마다 한 가지 핵심 사실만 적어라.
+- 한 bullet 안에 서로 다른 사실을 과도하게 묶지 마라.
+- 문장은 가능한 한 짧게 유지하라.
+- 사실, 수치, 일정, 변경사항, 상대방, 조건이 있으면 우선 반영하라.
+- 해석하지 말고 정리만 하라.
+- 핵심 내용이 없으면 아래처럼 출력하라:
+  [공시 요약]
+  - 확인된 핵심 공시 내용 없음
+
+이제 아래 입력된 공시 문서를 위 형식에 맞춰 요약하라."""
+
+
+NEWS_SUMMARY_PROMPT = """너는 한국 주식시장 종목 관련 뉴스를 투자 전문가에게 전달하기 위한 참고용 요약 AI다.
+
+역할:
+- 입력된 뉴스 기사들을 바탕으로, 해당 종목과 관련된 핵심 사실을 객관적으로 정리한다.
+- 이 요약은 주가 예측값을 생성하거나 수정하기 위한 것이 아니라, 사용자가 참고할 수 있는 설명 자료를 제공하기 위한 것이다.
+- 따라서 투자 권유, 매수/매도 판단, 주가 방향 예측, 감정적 해석은 하지 않는다.
+
+목표:
+- 여러 뉴스 기사에서 종목과 직접 관련된 핵심 사실만 추려 요약한다.
+- 중복 보도는 하나의 이슈로 묶는다.
+- 기사 수가 많아도 실제 정보량이 적을 수 있음을 반영한다.
+- 투자 전문가가 빠르게 읽고 상황을 파악할 수 있도록, 과장 없이 사실 중심으로 정리한다.
+
+반드시 지켜야 할 규칙:
+1. 입력으로 제공된 기사 정보만 사용하라.
+2. 원문에 없는 사실, 숫자, 배경, 의도, 전망을 추가하지 마라.
+3. "호재", "악재", "긍정적", "부정적", "상승", "하락", "매수", "매도" 같은 투자 판단 표현을 사용하지 마라.
+4. "영향을 줄 수 있다", "시장이 이렇게 볼 수 있다" 같은 추정 표현도 사용하지 마라.
+5. 기사 제목이 자극적이어도 중립적 표현으로 바꿔라.
+6. 같은 내용을 반복 보도한 기사는 하나의 이슈로 통합하라.
+7. 기업 직접 이슈와 업종/시장 일반 이슈를 구분하라.
+8. 사실 기사와 전망/의견성 기사를 구분하라.
+9. 원문에 명확히 적혀 있지 않은 내용은 쓰지 마라.
+10. 각 bullet은 반드시 한 문장으로 작성하라.
+11. 각 bullet은 짧고 명확하게 작성하라.
+12. 중복되는 내용은 하나로 합쳐라.
+13. 출력은 반드시 아래 형식을 따르라.
+14. 한국어로 작성하라.
+
+뉴스 정리 원칙:
+- 뉴스는 공시와 달리 기자의 서술과 재가공이 포함될 수 있으므로, 확인된 사실 위주로 정리하라.
+- 여러 기사에 공통으로 등장하는 사실을 우선 정리하라.
+- 기사별 표현 차이가 크면 공통 사실만 남겨라.
+- 단순 전망, 기대, 우려, 평가 표현은 핵심 사실이 아닐 경우 제외하라.
+
+출력 형식:
+[뉴스 요약]
+- 뉴스 핵심 내용 1문장
+- 뉴스 핵심 내용 1문장
+- 뉴스 핵심 내용 1문장
+- 필요 시 추가
+
+출력 규칙:
+- bullet마다 한 가지 핵심 사실만 적어라.
+- 한 bullet 안에 서로 다른 사실을 과도하게 묶지 마라.
+- 문장은 가능한 한 짧게 유지하라.
+- 같은 이슈가 반복 보도되면 "복수 기사에서 ~" 형태로 정리할 수 있다.
+- 해석하지 말고 정리만 하라.
+- 핵심 내용이 없으면 아래처럼 출력하라:
+  [뉴스 요약]
+  - 확인된 핵심 뉴스 내용 없음
+
+이제 아래 입력된 뉴스 기사들을 위 형식에 맞춰 요약하라."""
+
+
 def _overall_judgment(disclosure_score: float, news_impact_score: float, news_count: int) -> str:
     weighted = disclosure_score * 0.55 + ((news_impact_score + 1.0) / 2.0) * 0.45
     if news_count <= 0 and disclosure_score <= 0:
@@ -148,6 +252,29 @@ def _call_llm_json(client: OpenAI, model: str, prompt: str, max_output_tokens: i
         return None
 
 
+def _call_llm_text(client: OpenAI, model: str, prompt: str, max_output_tokens: int = 500) -> str | None:
+    try:
+        response = client.responses.create(model=model, input=prompt, max_output_tokens=max_output_tokens)
+        text = str(getattr(response, "output_text", "") or "").strip()
+        if text:
+            return text
+    except Exception:
+        pass
+
+    try:
+        chat_resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "입력 데이터만 기반으로 간결한 한국어 요약을 반환하세요."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        text = str(chat_resp.choices[0].message.content or "").strip()
+        return text or None
+    except Exception:
+        return None
+
+
 def _categorize_disclosure_title(title: str) -> str:
     t = str(title)
     if any(k in t for k in ("공급계약", "계약")):
@@ -242,68 +369,56 @@ def _llm_symbol_issue_summary(
     model: str,
 ) -> SymbolIssueSummary | None:
     structured_payload = _build_structured_events(symbol, symbol_name, events)
-
-    raw_news_count = int((events["source_type"] == "news").sum()) if "source_type" in events.columns else 0
-    dedup_news_count = int(sum(int(c.get("article_count", 0)) for c in structured_payload.get("news_clusters", [])))
-    cluster_count = int(len(structured_payload.get("news_clusters", [])))
-
-    stage1_prompt = (
-        "너는 한국 주식시장 뉴스/공시를 해석하는 금융 보조 AI다.\n"
-        "입력 데이터만 사용하고 원문에 없는 사실/숫자를 만들지 마라.\n"
-        "투자 권유(매수/매도 추천)나 확정적 주가 예측 표현을 금지한다.\n"
-        "아래 구조화 데이터로 핵심 사실을 추출해 JSON만 반환하라.\n"
-        "키는 article_facts 이고 각 원소는 topic, fact_type(fact/forecast/opinion), evidence_strength(high/medium/low), contains_new_fact(true/false), is_repackaged_story(true/false) 를 포함한다.\n\n"
-        f"{json.dumps(structured_payload, ensure_ascii=False)}"
-    )
     client = OpenAI(api_key=api_key)
-    stage1 = _call_llm_json(client, model, stage1_prompt, max_output_tokens=500)
-    if stage1 is None:
-        stage1 = {"article_facts": []}
 
-    stage2_prompt = (
-        "너는 한국 주식 종목 뉴스/공시 해석 AI다.\n"
-        "입력으로 제공된 데이터만 사용하고 과장/권유 표현 없이 신중하게 요약하라.\n"
-        "공시 사실이 뉴스 해석보다 우선한다.\n"
-        "반드시 JSON만 반환하라.\n"
-        "필드: headline, key_topics, news_summary, overall_signal(positive/negative/neutral), risk_note, evidence_count.\n"
-        f"raw_news_count={raw_news_count}, deduplicated_news_count={dedup_news_count}, cluster_count={cluster_count}\n\n"
-        "[구조화 데이터]\n"
-        f"{json.dumps(structured_payload, ensure_ascii=False)}\n\n"
-        "[1단계 핵심사실]\n"
-        f"{json.dumps(stage1, ensure_ascii=False)}"
+    disclosures = structured_payload.get("disclosures", [])
+    disclosure_payload = json.dumps(
+        {
+            "symbol": symbol,
+            "symbol_name": symbol_name,
+            "date_kst": structured_payload.get("date_kst", ""),
+            "disclosures": disclosures,
+        },
+        ensure_ascii=False,
     )
+    news_payload = json.dumps(
+        {
+            "symbol": symbol,
+            "symbol_name": symbol_name,
+            "date_kst": structured_payload.get("date_kst", ""),
+            "news_clusters": structured_payload.get("news_clusters", []),
+        },
+        ensure_ascii=False,
+    )
+
     try:
-        payload = _call_llm_json(client, model, stage2_prompt, max_output_tokens=500)
-        if payload is None:
-            raise ValueError("LLM JSON 파싱 실패")
+        disclosure_summary = _call_llm_text(
+            client,
+            model,
+            f"{DISCLOSURE_SUMMARY_PROMPT}\n\n[입력 공시 데이터]\n{disclosure_payload}",
+            max_output_tokens=700,
+        )
+        news_summary = _call_llm_text(
+            client,
+            model,
+            f"{NEWS_SUMMARY_PROMPT}\n\n[입력 뉴스 데이터]\n{news_payload}",
+            max_output_tokens=700,
+        )
     except Exception as exc:
         print(f"[ISSUE SUMMARY] LLM 요약 실패 ({symbol}): {type(exc).__name__}: {exc}")
         return None
 
-    signal = str(payload.get("overall_signal", "neutral")).strip().lower()
-    judgment = "중립"
-    if signal in {"positive", "bullish", "호재"}:
-        judgment = "호재"
-    elif signal in {"negative", "bearish", "악재"}:
-        judgment = "악재"
-
-    key_topics = payload.get("key_topics", [])
-    if isinstance(key_topics, list):
-        topics_text = ", ".join(str(x) for x in key_topics[:4] if str(x).strip())
-    else:
-        topics_text = ""
+    disclosure_summary = disclosure_summary or "[공시 요약]\n- 확인된 핵심 공시 내용 없음"
+    news_summary = news_summary or "[뉴스 요약]\n- 확인된 핵심 뉴스 내용 없음"
+    source_count = int(len(disclosures)) + int(len(structured_payload.get("news_clusters", [])))
 
     return SymbolIssueSummary(
-        one_line_summary=str(payload.get("headline", "")).strip() or "오늘 이슈 요약을 생성하지 못했습니다.",
-        disclosure_summary=(
-            str(payload.get("disclosure_summary", "")).strip()
-            or (f"공시 핵심 이슈: {topics_text}" if topics_text else "당일 공시 관련 핵심 이슈를 요약했습니다.")
-        ),
-        news_summary=str(payload.get("news_summary", "")).strip() or "뉴스 요약을 생성하지 못했습니다.",
-        overall_judgment=judgment,
-        caution=str(payload.get("risk_note", "")).strip()
-        or "본 이슈 해석은 예측값 설명용 참고 정보이며, 예측 모델 입력/산출에는 반영되지 않습니다.",
-        source_count=int(payload.get("evidence_count", len(events)) or len(events)),
+        one_line_summary="요청 종목의 공시/뉴스 요약을 생성했습니다.",
+        disclosure_summary=disclosure_summary,
+        news_summary=news_summary,
+        overall_judgment="중립",
+        caution="본 요약은 참고용 정보이며 예측값 생성/수정에는 사용되지 않습니다.",
+        source_count=source_count,
         key_sources=sorted(events["source_type"].dropna().astype(str).unique().tolist()),
     )
 
@@ -313,6 +428,7 @@ def append_issue_summary_columns(
     context_raw_df: pd.DataFrame | None = None,
     openai_api_key: str | None = None,
     openai_model: str | None = None,
+    summarize_symbols: list[str] | set[str] | None = None,
 ) -> pd.DataFrame:
     if pred_df.empty:
         out = pred_df.copy()
@@ -334,11 +450,26 @@ def append_issue_summary_columns(
         context["Symbol"] = context["Symbol"].astype(str)
     resolved_model = openai_model or ("gpt-5" if openai_api_key else None)
     use_llm = bool(openai_api_key and resolved_model and context is not None and "source_type" in context.columns)
+    target_symbols = {str(s) for s in (summarize_symbols or []) if str(s).strip()}
 
     summaries: list[SymbolIssueSummary] = []
     for _, row_series in out.iterrows():
+        symbol = str(row_series.get("Symbol", ""))
+        if target_symbols and symbol not in target_symbols:
+            summaries.append(
+                SymbolIssueSummary(
+                    one_line_summary="요약 비활성화",
+                    disclosure_summary="[공시 요약]\n- 요청 종목에 대해서만 요약을 생성합니다.",
+                    news_summary="[뉴스 요약]\n- 요청 종목에 대해서만 요약을 생성합니다.",
+                    overall_judgment="중립",
+                    caution="요약 기능은 요청 종목에 대해서만 동작합니다.",
+                    source_count=0,
+                    key_sources=[],
+                )
+            )
+            continue
+
         if use_llm:
-            symbol = str(row_series.get("Symbol", ""))
             symbol_name = str(row_series.get("종목명", symbol))
             events = context[context["Symbol"] == symbol]
             if not events.empty:
