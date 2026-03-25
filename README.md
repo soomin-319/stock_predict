@@ -290,6 +290,8 @@ import threading
 from flask import request
 from openai import OpenAI
 from pyngrok import ngrok
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from src.chatbot.kakao_colab_bot import (
     PipelineRuntimeConfig,
@@ -309,6 +311,7 @@ os.environ["NAVER_CLIENT_SECRET"] = "YOUR_NAVER_CLIENT_SECRET"  # 네이버 뉴�
 
 PORT = 8000
 OPENAI_MODEL = "gpt-4o-mini"
+TEST_QUERY = "삼성전자"
 
 
 def check_openai_connection(api_key: str | None, model: str) -> bool:
@@ -332,7 +335,40 @@ def check_openai_connection(api_key: str | None, model: str) -> bool:
         return False
 
 
+def check_naver_news_connection(client_id: str | None, client_secret: str | None, query: str) -> bool:
+    if not client_id or not client_secret:
+        print("[NAVER CHECK] NAVER_CLIENT_ID/NAVER_CLIENT_SECRET가 비어 있어 연결 확인을 건너뜁니다.")
+        return False
+    params = urlencode({"query": query, "display": 5, "start": 1, "sort": "date"})
+    req = Request(
+        f"https://openapi.naver.com/v1/search/news.json?{params}",
+        headers={
+            "X-Naver-Client-Id": client_id,
+            "X-Naver-Client-Secret": client_secret,
+        },
+    )
+    try:
+        with urlopen(req, timeout=15) as resp:
+            import json
+
+            payload = json.loads(resp.read().decode("utf-8"))
+        items = payload.get("items", []) if isinstance(payload, dict) else []
+        print(f"[NAVER CHECK] query={query} | items={len(items)}")
+        if items:
+            print(f"[NAVER CHECK] sample_title={items[0].get('title', '')[:100]}")
+        return True
+    except Exception as exc:
+        print("[NAVER CHECK] 연결 실패")
+        print(f"[NAVER CHECK] error={type(exc).__name__}: {exc}")
+        return False
+
+
 check_openai_connection(os.environ.get("OPENAI_API_KEY"), OPENAI_MODEL)
+check_naver_news_connection(
+    os.environ.get("NAVER_CLIENT_ID"),
+    os.environ.get("NAVER_CLIENT_SECRET"),
+    TEST_QUERY,
+)
 
 runtime_config = PipelineRuntimeConfig(
     input_csv="data/real_ohlcv.csv",
