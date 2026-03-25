@@ -380,6 +380,47 @@ def test_cached_prediction_message_renders_issue_summary_block_header(tmp_path: 
     assert "주의사항:" not in text
 
 
+def test_cached_prediction_message_splits_issue_summary_into_bullets(tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "종목코드": "005930",
+                "종목명": "삼성전자",
+                "권고": "매수",
+                "내일 예상 종가": 71200,
+                "내일 예상 수익률(%)": "1.234%",
+                "상승확률(%)": "78.9%",
+                "예측 신뢰도": "88.0%",
+                "예측 이유": "종배수급: 거래대금 상위",
+                "공시 요약": "[공시 요약]\n- 미국 ADR 상장 추진 관련 보도 / 대규모 현금·자금 조달 및 주주환원 논의; 메모리 가격 강세",
+                "뉴스 요약": "복수 기사에서 ADR 상장 추진 공식화 · 업황 측면 메모리 가격 상승 | 중동 리스크로 변동성 우려",
+            }
+        ]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "005930",
+                "user": {"id": "user-issue-split"},
+            }
+        }
+    )
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "[공시 요약]" in text
+    assert "- 미국 ADR 상장 추진 관련 보도" in text
+    assert "- 대규모 현금·자금 조달 및 주주환원 논의" in text
+    assert "- 메모리 가격 강세" in text
+    assert "[뉴스 요약]" in text
+    assert "- 복수 기사에서 ADR 상장 추진 공식화" in text
+    assert "- 업황 측면 메모리 가격 상승" in text
+    assert "- 중동 리스크로 변동성 우려" in text
+
+
 def test_name_query_with_exact_match_starts_prediction(tmp_path: Path, monkeypatch):
     runner = RecordingRunner()
     bot = make_bot(tmp_path, runner=runner)

@@ -525,10 +525,22 @@ class KakaoColabPredictionBot:
 
     def _to_bullet_lines(self, text: str) -> list[str]:
         normalized = str(text).replace("\r", "\n")
-        if "\n" in normalized:
-            lines = [line.strip("-• ").strip() for line in normalized.split("\n") if line.strip()]
-            return lines or [normalized.strip()]
-        return [normalized.strip()]
+        normalized = re.sub(r"^\[(공시 요약|뉴스 요약)\]\s*", "", normalized.strip(), flags=re.IGNORECASE)
+        raw_lines = [line.strip() for line in normalized.split("\n") if line.strip()]
+        if not raw_lines:
+            return []
+
+        bullets: list[str] = []
+        split_pattern = r"\s*(?:/|\||;|·)\s+"
+        for raw_line in raw_lines:
+            clean_line = raw_line.strip("-• ").strip()
+            if not clean_line:
+                continue
+            parts = [part.strip() for part in re.split(split_pattern, clean_line) if part.strip()]
+            for part in parts:
+                if part and part not in bullets:
+                    bullets.append(part)
+        return bullets or [normalized.strip()]
 
     def _maybe_patch_legacy_rationale_bug(self, exc: Exception) -> bool:
         is_legacy_name_error = isinstance(exc, NameError) and "rationale_block" in str(exc)
