@@ -119,6 +119,35 @@ def _extract_json_dict(text: str) -> dict | None:
         return None
 
 
+def _call_llm_json(client: OpenAI, model: str, prompt: str, max_output_tokens: int = 400) -> dict | None:
+    try:
+        response = client.responses.create(
+            model=model,
+            input=prompt,
+            max_output_tokens=max_output_tokens,
+        )
+        raw = getattr(response, "output_text", "") or ""
+        parsed = _extract_json_dict(raw)
+        if parsed is not None:
+            return parsed
+    except Exception:
+        pass
+
+    try:
+        chat_resp = client.chat.completions.create(
+            model=model,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "Return JSON only."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        chat_raw = (chat_resp.choices[0].message.content or "").strip()
+        return _extract_json_dict(chat_raw)
+    except Exception:
+        return None
+
+
 def _categorize_disclosure_title(title: str) -> str:
     t = str(title)
     if any(k in t for k in ("공급계약", "계약")):
@@ -213,54 +242,68 @@ def _llm_symbol_issue_summary(
     model: str,
 ) -> SymbolIssueSummary | None:
     structured_payload = _build_structured_events(symbol, symbol_name, events)
-    disclosures = [d.get("title", "") for d in structured_payload.get("disclosures", [])]
-    news_titles = []
-    for cluster in structured_payload.get("news_clusters", []):
-        news_titles.extend(cluster.get("representative_titles", []))
-    prompt = _build_llm_prompt(symbol, symbol_name, disclosures, news_titles)
-    prompt = (
-        f"{prompt}\n\n"
-        "[구조화 데이터(JSON)]\n"
+
+    raw_news_count = int((events["source_type"] == "news").sum()) if "source_type" in events.columns else 0
+    dedup_news_count = int(sum(int(c.get("article_count", 0)) for c in structured_payload.get("news_clusters", [])))
+    cluster_count = int(len(structured_payload.get("news_clusters", [])))
+
+    stage1_prompt = (
+        "너는 한국 주식시장 뉴스/공시를 해석하는 금융 보조 AI다.\n"
+        "입력 데이터만 사용하고 원문에 없는 사실/숫자를 만들지 마라.\n"
+        "투자 권유(매수/매도 추천)나 확정적 주가 예측 표현을 금지한다.\n"
+        "아래 구조화 데이터로 핵심 사실을 추출해 JSON만 반환하라.\n"
+        "키는 article_facts 이고 각 원소는 topic, fact_type(fact/forecast/opinion), evidence_strength(high/medium/low), contains_new_fact(true/false), is_repackaged_story(true/false) 를 포함한다.\n\n"
         f"{json.dumps(structured_payload, ensure_ascii=False)}"
     )
     client = OpenAI(api_key=api_key)
+    stage1 = _call_llm_json(client, model, stage1_prompt, max_output_tokens=500)
+    if stage1 is None:
+        stage1 = {"article_facts": []}
+
+    stage2_prompt = (
+        "너는 한국 주식 종목 뉴스/공시 해석 AI다.\n"
+        "입력으로 제공된 데이터만 사용하고 과장/권유 표현 없이 신중하게 요약하라.\n"
+        "공시 사실이 뉴스 해석보다 우선한다.\n"
+        "반드시 JSON만 반환하라.\n"
+        "필드: headline, key_topics, news_summary, overall_signal(positive/negative/neutral), risk_note, evidence_count.\n"
+        f"raw_news_count={raw_news_count}, deduplicated_news_count={dedup_news_count}, cluster_count={cluster_count}\n\n"
+        "[구조화 데이터]\n"
+        f"{json.dumps(structured_payload, ensure_ascii=False)}\n\n"
+        "[1단계 핵심사실]\n"
+        f"{json.dumps(stage1, ensure_ascii=False)}"
+    )
     try:
-        response = client.responses.create(
-            model=model,
-            input=prompt,
-            max_output_tokens=300,
-        )
-        raw = getattr(response, "output_text", "") or ""
-        payload = _extract_json_dict(raw)
-        if payload is None:
-            chat_resp = client.chat.completions.create(
-                model=model,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": "Return JSON only."},
-                    {"role": "user", "content": prompt},
-                ],
-            )
-            chat_raw = (chat_resp.choices[0].message.content or "").strip()
-            payload = _extract_json_dict(chat_raw)
+        payload = _call_llm_json(client, model, stage2_prompt, max_output_tokens=500)
         if payload is None:
             raise ValueError("LLM JSON 파싱 실패")
     except Exception as exc:
         print(f"[ISSUE SUMMARY] LLM 요약 실패 ({symbol}): {type(exc).__name__}: {exc}")
         return None
 
-    judgment = str(payload.get("overall_judgment", "중립")).strip()
-    if judgment not in {"호재", "악재", "중립"}:
-        judgment = "중립"
+    signal = str(payload.get("overall_signal", "neutral")).strip().lower()
+    judgment = "중립"
+    if signal in {"positive", "bullish", "호재"}:
+        judgment = "호재"
+    elif signal in {"negative", "bearish", "악재"}:
+        judgment = "악재"
+
+    key_topics = payload.get("key_topics", [])
+    if isinstance(key_topics, list):
+        topics_text = ", ".join(str(x) for x in key_topics[:4] if str(x).strip())
+    else:
+        topics_text = ""
+
     return SymbolIssueSummary(
-        one_line_summary=str(payload.get("one_line_summary", "")).strip() or "오늘 이슈 요약을 생성하지 못했습니다.",
-        disclosure_summary=str(payload.get("disclosure_summary", "")).strip()
-        or "공시 요약을 생성하지 못했습니다.",
+        one_line_summary=str(payload.get("headline", "")).strip() or "오늘 이슈 요약을 생성하지 못했습니다.",
+        disclosure_summary=(
+            str(payload.get("disclosure_summary", "")).strip()
+            or (f"공시 핵심 이슈: {topics_text}" if topics_text else "당일 공시 관련 핵심 이슈를 요약했습니다.")
+        ),
         news_summary=str(payload.get("news_summary", "")).strip() or "뉴스 요약을 생성하지 못했습니다.",
         overall_judgment=judgment,
-        caution=str(payload.get("caution", "")).strip()
+        caution=str(payload.get("risk_note", "")).strip()
         or "본 이슈 해석은 예측값 설명용 참고 정보이며, 예측 모델 입력/산출에는 반영되지 않습니다.",
-        source_count=int(len(events)),
+        source_count=int(payload.get("evidence_count", len(events)) or len(events)),
         key_sources=sorted(events["source_type"].dropna().astype(str).unique().tolist()),
     )
 
