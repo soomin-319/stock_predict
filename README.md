@@ -310,7 +310,7 @@ os.environ["NAVER_CLIENT_ID"] = "YOUR_NAVER_CLIENT_ID"  # 네이버 뉴스 API(�
 os.environ["NAVER_CLIENT_SECRET"] = "YOUR_NAVER_CLIENT_SECRET"  # 네이버 뉴스 API(선택)
 
 PORT = 8000
-OPENAI_MODEL = "gpt-4o-mini"
+OPENAI_MODEL = "gpt-5"
 TEST_QUERY = "삼성전자"
 
 
@@ -462,7 +462,7 @@ except KeyboardInterrupt:
 python -m src.chatbot.kakao_colab_bot \
   --dart-api-key "YOUR_DART_API_KEY" \
   --openai-api-key "YOUR_OPENAI_API_KEY" \
-  --openai-model "gpt-4o-mini" \
+  --openai-model "gpt-5" \
   --naver-client-id "YOUR_NAVER_CLIENT_ID" \
   --naver-client-secret "YOUR_NAVER_CLIENT_SECRET" \
   --input data/real_ohlcv.csv \

@@ -500,23 +500,35 @@ class KakaoColabPredictionBot:
         return normalized
 
     def _build_issue_summary_block(self, row: pd.Series) -> str:
-        issue_fields = [
-            ("오늘 종목 이슈 한줄 요약", "오늘 이슈"),
-            ("공시 요약", "공시 요약"),
-            ("뉴스 요약", "뉴스 요약"),
-            ("종합 판단", "종합 판단"),
-        ]
-        lines: list[str] = []
-        for column, label in issue_fields:
-            raw = row.get(column)
-            if pd.isna(raw) if not isinstance(raw, str) else False:
-                continue
-            text = str(raw).strip()
-            if text and text != "-":
-                lines.append(f"{label}: {text}")
-        if not lines:
+        disclosure_text = self._get_clean_issue_text(row.get("공시 요약"))
+        news_text = self._get_clean_issue_text(row.get("뉴스 요약"))
+        if not disclosure_text and not news_text:
             return ""
-        return "\n[공시/뉴스 요약]\n" + "\n".join(lines)
+        disclosure_lines = self._to_bullet_lines(disclosure_text or "당일 공시 없음.")
+        news_lines = self._to_bullet_lines(news_text or "당일 뉴스 없음.")
+        return (
+            "\n[공시 요약]\n"
+            + "\n".join(f"- {line}" for line in disclosure_lines)
+            + "\n\n[뉴스 요약]\n"
+            + "\n".join(f"- {line}" for line in news_lines)
+        )
+
+    def _get_clean_issue_text(self, raw: Any) -> str:
+        if raw is None:
+            return ""
+        if not isinstance(raw, str) and pd.isna(raw):
+            return ""
+        text = str(raw).strip()
+        if not text or text == "-":
+            return ""
+        return text
+
+    def _to_bullet_lines(self, text: str) -> list[str]:
+        normalized = str(text).replace("\r", "\n")
+        if "\n" in normalized:
+            lines = [line.strip("-• ").strip() for line in normalized.split("\n") if line.strip()]
+            return lines or [normalized.strip()]
+        return [normalized.strip()]
 
     def _maybe_patch_legacy_rationale_bug(self, exc: Exception) -> bool:
         is_legacy_name_error = isinstance(exc, NameError) and "rationale_block" in str(exc)

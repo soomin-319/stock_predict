@@ -289,7 +289,7 @@ def append_issue_summary_columns(
     context = context_raw_df.copy() if isinstance(context_raw_df, pd.DataFrame) and not context_raw_df.empty else None
     if context is not None and "Symbol" in context.columns:
         context["Symbol"] = context["Symbol"].astype(str)
-    resolved_model = openai_model or ("gpt-4o-mini" if openai_api_key else None)
+    resolved_model = openai_model or ("gpt-5" if openai_api_key else None)
     use_llm = bool(openai_api_key and resolved_model and context is not None and "source_type" in context.columns)
 
     summaries: list[SymbolIssueSummary] = []

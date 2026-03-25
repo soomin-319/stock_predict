@@ -372,11 +372,11 @@ def test_cached_prediction_message_renders_issue_summary_block_header(tmp_path: 
     )
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert "[공시/뉴스 요약]" in text
-    assert "오늘 이슈: 공급계약 공시가 발표되었습니다." in text
-    assert "공시 요약: 대형 공급계약 체결" in text
-    assert "뉴스 요약: 증권사 리포트 호평" in text
-    assert "종합 판단: 약한 호재" in text
+    assert "[공시 요약]" in text
+    assert "- 대형 공급계약 체결" in text
+    assert "[뉴스 요약]" in text
+    assert "- 증권사 리포트 호평" in text
+    assert "종합 판단:" not in text
     assert "주의사항:" not in text
 
 
