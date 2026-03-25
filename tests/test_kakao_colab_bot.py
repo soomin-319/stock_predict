@@ -60,6 +60,8 @@ def make_bot(tmp_path: Path, runner=None) -> KakaoColabPredictionBot:
         figure_dir="figures_with_context",
         dart_api_key="demo-key",
         dart_corp_map_csv="data/dart_corp_map.csv",
+        naver_client_id="naver-id",
+        naver_client_secret="naver-secret",
     )
     return KakaoColabPredictionBot(
         runtime_config=runtime_config,
@@ -103,8 +105,7 @@ def test_returns_cached_prediction_message_from_kakao_payload(tmp_path: Path):
     assert "권고: 매수" in text
     assert "[005930 삼성전자]" in text
     assert "상승확률: 78.9%" in text
-    assert "사유(개정 포맷)" in text
-    assert "무효화 조건" in text
+    assert "사유: 테스트 사유" in text
     assert response["template"]["quickReplies"][0]["label"] == "최신화"
 
 
@@ -129,6 +130,14 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert "000660.KS" in command
     assert "--fetch-investor-context" in command
     assert "--disable-news-context" not in command
+    assert "--dart-api-key" in command
+    assert "demo-key" in command
+    assert "--dart-corp-map-csv" in command
+    assert "data/dart_corp_map.csv" in command
+    assert "--naver-client-id" in command
+    assert "naver-id" in command
+    assert "--naver-client-secret" in command
+    assert "naver-secret" in command
     assert "--disable-external" in command
 
     session_path = tmp_path / "result" / "chatbot_sessions.json"
@@ -294,9 +303,81 @@ def test_cached_prediction_message_formats_rule_based_reason_labels(tmp_path: Pa
     )
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert "사유: 종배수급: 거래대금 15위 이내 상위 종목입니다" in text
-    assert "수급조건: 외국인 1,200억, 기관 1,100억 순매수입니다" in text
-    assert "해외조건: 나스닥 선물 +1% 이상" in text
+    assert "사유: 거래대금 상위, 외국인/기관 순매수, 나스닥 선물 +1% 이상" in text
+
+
+def test_cached_prediction_message_hides_reason_when_rule_not_satisfied(tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "종목코드": "005930",
+                "종목명": "삼성전자",
+                "권고": "매수",
+                "내일 예상 종가": 71200,
+                "내일 예상 수익률(%)": "1.234%",
+                "상승확률(%)": "78.9%",
+                "예측 신뢰도": "88.0%",
+                "예측 이유": "",
+            }
+        ]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "005930",
+                "user": {"id": "user-no-reason"},
+            }
+        }
+    )
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "사유:" not in text
+
+
+def test_cached_prediction_message_renders_issue_summary_block_header(tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "종목코드": "005930",
+                "종목명": "삼성전자",
+                "권고": "매수",
+                "내일 예상 종가": 71200,
+                "내일 예상 수익률(%)": "1.234%",
+                "상승확률(%)": "78.9%",
+                "예측 신뢰도": "88.0%",
+                "예측 이유": "종배수급: 거래대금 상위",
+                "오늘 종목 이슈 한줄 요약": "공급계약 공시가 발표되었습니다.",
+                "공시 요약": "대형 공급계약 체결",
+                "뉴스 요약": "증권사 리포트 호평",
+                "종합 판단": "약한 호재",
+                "주의사항": "이 문구는 출력 대상이 아님",
+            }
+        ]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "005930",
+                "user": {"id": "user-issue-block"},
+            }
+        }
+    )
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "[공시/뉴스 요약]" in text
+    assert "오늘 이슈: 공급계약 공시가 발표되었습니다." in text
+    assert "공시 요약: 대형 공급계약 체결" in text
+    assert "뉴스 요약: 증권사 리포트 호평" in text
+    assert "종합 판단: 약한 호재" in text
+    assert "주의사항:" not in text
 
 
 def test_name_query_with_exact_match_starts_prediction(tmp_path: Path, monkeypatch):
@@ -574,7 +655,7 @@ def test_finalize_process_falls_back_when_prediction_message_format_fails(tmp_pa
     bot._finalize_process("005930.KS", 0)
 
     assert any("레거시 포맷터 오류 감지(NameError: rationale_block)" in log for log in logs)
-    assert any("사유: 종배수급: 거래대금 15위 이내 상위 종목입니다" in log for log in logs)
+    assert any("사유: 거래대금 상위" in log for log in logs)
 
 
 def test_handle_symbol_request_falls_back_when_cached_message_format_fails(tmp_path: Path, monkeypatch):
@@ -606,7 +687,7 @@ def test_handle_symbol_request_falls_back_when_cached_message_format_fails(tmp_p
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
     assert "[005930 삼성전자]" in text
-    assert "사유: 종배수급: 거래대금 15위 이내 상위 종목입니다" in text
+    assert "사유: 거래대금 상위" in text
 
 
 def test_kakao_webhook_returns_safe_response_when_handler_raises(tmp_path: Path, monkeypatch):
