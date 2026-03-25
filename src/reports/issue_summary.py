@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 
 import pandas as pd
@@ -99,6 +100,91 @@ def _build_llm_prompt(symbol: str, symbol_name: str, disclosures: list[str], new
     )
 
 
+def _categorize_disclosure_title(title: str) -> str:
+    t = str(title)
+    if any(k in t for k in ("공급계약", "계약")):
+        return "contract"
+    if any(k in t for k in ("잠정실적", "실적")):
+        return "earnings"
+    if any(k in t for k in ("유상증자", "무상증자")):
+        return "equity_financing"
+    if any(k in t for k in ("전환사채", "신주인수권부사채", "cb", "bw")):
+        return "convertible_financing"
+    if any(k in t for k in ("자기주식", "자사주", "소각")):
+        return "shareholder_return"
+    if any(k in t for k in ("최대주주", "경영권")):
+        return "control_change"
+    if any(k in t for k in ("합병", "분할")):
+        return "mna_restructuring"
+    if any(k in t for k in ("조회공시", "불성실공시")):
+        return "compliance_query"
+    return "general_disclosure"
+
+
+def _normalize_title_key(title: str) -> str:
+    normalized = re.sub(r"\s+", " ", str(title).strip()).lower()
+    normalized = re.sub(r"[^\w\s가-힣]", "", normalized)
+    return normalized
+
+
+def _build_structured_events(symbol: str, symbol_name: str, events: pd.DataFrame) -> dict:
+    if events.empty:
+        return {
+            "symbol": symbol,
+            "symbol_name": symbol_name,
+            "date_kst": "",
+            "disclosures": [],
+            "news_clusters": [],
+        }
+
+    ev = events.copy()
+    ev["title"] = ev["title"].astype(str).str.strip()
+    ev["published_at"] = ev["published_at"].astype(str)
+    ev = ev[ev["title"] != ""]
+    date_kst = str(ev["Date"].astype(str).max()) if "Date" in ev.columns and not ev.empty else ""
+
+    disclosures_df = ev[ev["source_type"] == "disclosure"].copy()
+    disclosures_df = disclosures_df.drop_duplicates(subset=["title", "published_at"])
+    disclosures = [
+        {
+            "title": row["title"],
+            "published_at": row.get("published_at", ""),
+            "category": _categorize_disclosure_title(row["title"]),
+            "summary_hint": f"{_categorize_disclosure_title(row['title'])} 관련 공시",
+        }
+        for _, row in disclosures_df.head(10).iterrows()
+    ]
+
+    news_df = ev[ev["source_type"] == "news"].copy()
+    news_df["cluster_key"] = news_df["title"].map(_normalize_title_key)
+    clustered = (
+        news_df.groupby("cluster_key", as_index=False)
+        .agg(
+            article_count=("title", "count"),
+            representative_title=("title", "first"),
+            representative_titles=("title", lambda x: list(dict.fromkeys([str(v) for v in x]))[:3]),
+        )
+        .sort_values("article_count", ascending=False)
+    )
+    news_clusters = [
+        {
+            "cluster_topic": row["representative_title"],
+            "article_count": int(row["article_count"]),
+            "representative_titles": row["representative_titles"],
+            "novelty_score": round(1.0 / max(int(row["article_count"]), 1), 3),
+        }
+        for _, row in clustered.head(12).iterrows()
+    ]
+
+    return {
+        "symbol": symbol,
+        "symbol_name": symbol_name,
+        "date_kst": date_kst,
+        "disclosures": disclosures,
+        "news_clusters": news_clusters,
+    }
+
+
 def _llm_symbol_issue_summary(
     *,
     symbol: str,
@@ -107,9 +193,17 @@ def _llm_symbol_issue_summary(
     api_key: str,
     model: str,
 ) -> SymbolIssueSummary | None:
-    disclosures = events.loc[events["source_type"] == "disclosure", "title"].dropna().astype(str).tolist()
-    news_titles = events.loc[events["source_type"] == "news", "title"].dropna().astype(str).tolist()
+    structured_payload = _build_structured_events(symbol, symbol_name, events)
+    disclosures = [d.get("title", "") for d in structured_payload.get("disclosures", [])]
+    news_titles = []
+    for cluster in structured_payload.get("news_clusters", []):
+        news_titles.extend(cluster.get("representative_titles", []))
     prompt = _build_llm_prompt(symbol, symbol_name, disclosures, news_titles)
+    prompt = (
+        f"{prompt}\n\n"
+        "[구조화 데이터(JSON)]\n"
+        f"{json.dumps(structured_payload, ensure_ascii=False)}"
+    )
     client = OpenAI(api_key=api_key)
     try:
         response = client.responses.create(

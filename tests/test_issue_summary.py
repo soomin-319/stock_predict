@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.reports.issue_summary import SymbolIssueSummary, append_issue_summary_columns
+from src.reports.issue_summary import SymbolIssueSummary, _build_structured_events, append_issue_summary_columns
 from src.reports.result_formatter import build_result_simple
 
 
@@ -125,3 +125,37 @@ def test_append_issue_summary_columns_uses_llm_for_summary_only(monkeypatch):
     assert out.loc[0, "오늘 종목 이슈 한줄 요약"] == "LLM 한줄 요약"
     assert out.loc[0, "종합 판단"] == "호재"
     assert out.loc[0, "predicted_return"] == base.loc[0, "predicted_return"]
+
+
+def test_build_structured_events_clusters_news_and_categorizes_disclosures():
+    events = pd.DataFrame(
+        [
+            {
+                "Date": "2026-03-24",
+                "Symbol": "005930.KS",
+                "source_type": "disclosure",
+                "title": "주요사항보고서(공급계약체결)",
+                "published_at": "2026-03-24T08:15:00+09:00",
+            },
+            {
+                "Date": "2026-03-24",
+                "Symbol": "005930.KS",
+                "source_type": "news",
+                "title": "삼성전자, 메모리 반등 기대감 확대",
+                "published_at": "2026-03-24T09:00:00+09:00",
+            },
+            {
+                "Date": "2026-03-24",
+                "Symbol": "005930.KS",
+                "source_type": "news",
+                "title": "삼성전자  메모리 반등 기대감 확대",
+                "published_at": "2026-03-24T09:10:00+09:00",
+            },
+        ]
+    )
+
+    structured = _build_structured_events("005930.KS", "삼성전자", events)
+
+    assert structured["symbol"] == "005930.KS"
+    assert structured["disclosures"][0]["category"] == "contract"
+    assert structured["news_clusters"][0]["article_count"] == 2
