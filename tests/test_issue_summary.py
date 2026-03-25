@@ -159,3 +159,28 @@ def test_build_structured_events_clusters_news_and_categorizes_disclosures():
     assert structured["symbol"] == "005930.KS"
     assert structured["disclosures"][0]["category"] == "contract"
     assert structured["news_clusters"][0]["article_count"] == 2
+
+
+def test_append_issue_summary_columns_uses_default_model_when_only_openai_key(monkeypatch):
+    base = pd.DataFrame([{"Symbol": "005930.KS", "종목명": "삼성전자"}])
+    events = pd.DataFrame([{"Symbol": "005930.KS", "source_type": "news", "title": "테스트", "Date": "2026-03-24"}])
+
+    captured = {}
+
+    def _fake_llm(**kwargs):
+        captured["model"] = kwargs["model"]
+        return SymbolIssueSummary(
+            one_line_summary="ok",
+            disclosure_summary="ok",
+            news_summary="ok",
+            overall_judgment="중립",
+            caution="ok",
+            source_count=1,
+            key_sources=["news"],
+        )
+
+    monkeypatch.setattr("src.reports.issue_summary._llm_symbol_issue_summary", _fake_llm)
+    out = append_issue_summary_columns(base, context_raw_df=events, openai_api_key="sk-test", openai_model=None)
+
+    assert captured["model"] == "gpt-4o-mini"
+    assert out.loc[0, "오늘 종목 이슈 한줄 요약"] == "ok"

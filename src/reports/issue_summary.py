@@ -213,7 +213,8 @@ def _llm_symbol_issue_summary(
         )
         raw = getattr(response, "output_text", "") or ""
         payload = json.loads(raw)
-    except Exception:
+    except Exception as exc:
+        print(f"[ISSUE SUMMARY] LLM 요약 실패 ({symbol}): {type(exc).__name__}: {exc}")
         return None
 
     judgment = str(payload.get("overall_judgment", "중립")).strip()
@@ -256,7 +257,8 @@ def append_issue_summary_columns(
     context = context_raw_df.copy() if isinstance(context_raw_df, pd.DataFrame) and not context_raw_df.empty else None
     if context is not None and "Symbol" in context.columns:
         context["Symbol"] = context["Symbol"].astype(str)
-    use_llm = bool(openai_api_key and openai_model and context is not None and "source_type" in context.columns)
+    resolved_model = openai_model or ("gpt-4o-mini" if openai_api_key else None)
+    use_llm = bool(openai_api_key and resolved_model and context is not None and "source_type" in context.columns)
 
     summaries: list[SymbolIssueSummary] = []
     for _, row_series in out.iterrows():
@@ -270,7 +272,7 @@ def append_issue_summary_columns(
                     symbol_name=symbol_name,
                     events=events,
                     api_key=str(openai_api_key),
-                    model=str(openai_model),
+                    model=str(resolved_model),
                 )
                 if llm_summary is not None:
                     summaries.append(llm_summary)

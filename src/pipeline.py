@@ -452,6 +452,8 @@ def run_pipeline(
     max_daily_participation: float | None = None,
     max_positions_per_market_type: int | None = None,
 ):
+    effective_openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+    effective_openai_model = openai_model or os.getenv("OPENAI_MODEL") or ("gpt-4o-mini" if effective_openai_api_key else None)
     total_steps = 13
     _print_progress(1, total_steps, "Loading app configuration")
     cfg_overrides: dict[str, dict[str, float]] = {"backtest": {}}
@@ -510,8 +512,8 @@ def run_pipeline(
                 dart_api_key=dart_api_key,
                 dart_corp_map_csv=dart_corp_map_csv,
                 news_scoring_mode=news_scoring_mode,
-                openai_api_key=openai_api_key,
-                openai_model=openai_model,
+                openai_api_key=effective_openai_api_key,
+                openai_model=effective_openai_model,
                 naver_client_id=naver_client_id,
                 naver_client_secret=naver_client_secret,
             ),
@@ -634,8 +636,8 @@ def run_pipeline(
     pred_df = append_issue_summary_columns(
         pred_df,
         context_raw_df=context_raw_df,
-        openai_api_key=openai_api_key,
-        openai_model=openai_model,
+        openai_api_key=effective_openai_api_key,
+        openai_model=effective_openai_model,
     )
     pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: _format_percentage_text(v, digits=1, unit_interval=True))
     pred_df["예측 이유"] = pred_df["prediction_reason"]
