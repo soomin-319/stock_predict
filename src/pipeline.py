@@ -19,7 +19,7 @@ from src.data.cleaners import clean_ohlcv
 from src.data.fetch_real_data import append_real_ohlcv_csv, normalize_user_symbols, save_real_ohlcv_csv
 from src.data.krx_universe import get_symbol_name_map
 from src.data.loaders import load_ohlcv_csv
-from src.data.investor_context import InvestorContextConfig, add_investor_context_with_coverage
+from src.data.investor_context import InvestorContextConfig, add_investor_context_with_coverage, collect_context_raw_events
 from src.data.universe import filter_by_universe, load_default_universe_symbols, load_universe_symbols
 from src.domain.signal_policy import (
     build_prediction_policy_frame,
@@ -40,6 +40,7 @@ from src.pipeline_support import (
     finalize_latest_prediction_frame,
 )
 from src.reports.pm_report import build_pm_report, save_pm_report
+from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.result_formatter import (
     build_result_simple as formatter_build_result_simple,
     format_percentage_text as formatter_format_percentage_text,
@@ -439,6 +440,8 @@ def run_pipeline(
     news_scoring_mode: str = "auto",
     openai_api_key: str | None = None,
     openai_model: str | None = None,
+    naver_client_id: str | None = None,
+    naver_client_secret: str | None = None,
     min_value_traded: float | None = None,
     turnover_limit: float | None = None,
     min_up_probability: float | None = None,
@@ -449,6 +452,8 @@ def run_pipeline(
     max_daily_participation: float | None = None,
     max_positions_per_market_type: int | None = None,
 ):
+    effective_openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+    effective_openai_model = openai_model or os.getenv("OPENAI_MODEL") or ("gpt-4o-mini" if effective_openai_api_key else None)
     total_steps = 13
     _print_progress(1, total_steps, "Loading app configuration")
     cfg_overrides: dict[str, dict[str, float]] = {"backtest": {}}
@@ -507,9 +512,32 @@ def run_pipeline(
                 dart_api_key=dart_api_key,
                 dart_corp_map_csv=dart_corp_map_csv,
                 news_scoring_mode=news_scoring_mode,
-                openai_api_key=openai_api_key,
-                openai_model=openai_model,
+                openai_api_key=effective_openai_api_key,
+                openai_model=effective_openai_model,
+                naver_client_id=naver_client_id,
+                naver_client_secret=naver_client_secret,
             ),
+        )
+        try:
+            context_symbols = sorted(data["Symbol"].dropna().astype(str).unique().tolist())
+            context_symbol_name_map = get_symbol_name_map(context_symbols)
+            context_raw_df = collect_context_raw_events(
+                symbols=context_symbols,
+                start=data["Date"].min().strftime("%Y-%m-%d"),
+                end=data["Date"].max().strftime("%Y-%m-%d"),
+                dart_api_key=dart_api_key,
+                dart_corp_map_csv=dart_corp_map_csv,
+                symbol_name_map=context_symbol_name_map,
+                naver_client_id=naver_client_id,
+                naver_client_secret=naver_client_secret,
+            )
+        except Exception:
+            context_raw_df = pd.DataFrame(
+                columns=["Date", "Symbol", "source_type", "title", "published_at", "provider", "url", "raw_id"]
+            )
+    else:
+        context_raw_df = pd.DataFrame(
+            columns=["Date", "Symbol", "source_type", "title", "published_at", "provider", "url", "raw_id"]
         )
 
     _print_progress(5, total_steps, "Building price features")
@@ -605,6 +633,12 @@ def run_pipeline(
     pred_df = pred_df.merge(sym_acc, on="Symbol", how="left")
     pred_df["history_direction_accuracy"] = pred_df["history_direction_accuracy"].fillna(0.5)
     pred_df = finalize_latest_prediction_frame(pred_df, symbol_name_map)
+    pred_df = append_issue_summary_columns(
+        pred_df,
+        context_raw_df=context_raw_df,
+        openai_api_key=effective_openai_api_key,
+        openai_model=effective_openai_model,
+    )
     pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: _format_percentage_text(v, digits=1, unit_interval=True))
     pred_df["예측 이유"] = pred_df["prediction_reason"]
     pred_df["권고"] = pred_df["recommendation"]
@@ -655,6 +689,8 @@ def run_pipeline(
 
     simple_path = resolve_output_path("result_simple.csv")
     simple_path = _safe_to_csv(simple_df, simple_path)
+    news_path = resolve_output_path("result_news.csv")
+    news_path = _safe_to_csv(context_raw_df, news_path)
 
     report = {
         "universe_name": cfg.universe.name,
@@ -697,6 +733,7 @@ def run_pipeline(
         "artifacts": {
             "result_detail_csv": str(detail_path),
             "result_simple_csv": str(simple_path),
+            "result_news_csv": str(news_path),
             "figure_dir": str(figure_dir_path),
             **fig_paths,
             "signal_hist": signal_hist,
@@ -740,6 +777,8 @@ def build_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--news-scoring-mode", default="auto", choices=["auto", "rule", "ai"], help="News scoring mode")
     parser.add_argument("--openai-api-key", default=None, help="OpenAI API key for AI news scoring")
     parser.add_argument("--openai-model", default=None, help="OpenAI model for AI news scoring")
+    parser.add_argument("--naver-client-id", default=None, help="Naver News Search API client id")
+    parser.add_argument("--naver-client-secret", default=None, help="Naver News Search API client secret")
     parser.add_argument("--dart-api-key", default=None, help="Deprecated legacy option kept for compatibility")
     parser.add_argument("--dart-corp-map-csv", default=None, help="Deprecated legacy option kept for compatibility")
     parser.add_argument("--config-json", default=None, help="Optional JSON file overriding nested AppConfig values")
@@ -829,6 +868,8 @@ def main():
         news_scoring_mode=args.news_scoring_mode,
         openai_api_key=args.openai_api_key,
         openai_model=args.openai_model,
+        naver_client_id=args.naver_client_id,
+        naver_client_secret=args.naver_client_secret,
         min_value_traded=args.min_value_traded,
         turnover_limit=args.turnover_limit,
         min_up_probability=args.min_up_probability,
