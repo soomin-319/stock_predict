@@ -4,6 +4,7 @@ from src.reports.issue_summary import (
     SymbolIssueSummary,
     _build_structured_events,
     _extract_json_dict,
+    _llm_symbol_issue_summary,
     append_issue_summary_columns,
 )
 from src.reports.result_formatter import build_result_simple
@@ -234,3 +235,38 @@ def test_extract_json_dict_parses_wrapped_json():
     out = _extract_json_dict(raw)
     assert isinstance(out, dict)
     assert out["overall_judgment"] == "호재"
+
+
+def test_llm_symbol_issue_summary_uses_fallback_news_lines_when_llm_returns_empty_marker(monkeypatch):
+    events = pd.DataFrame(
+        [
+            {
+                "Date": "2026-03-26",
+                "Symbol": "005930.KS",
+                "source_type": "news",
+                "title": "삼성전자 메모리 투자 확대 보도",
+                "published_at": "2026-03-26T09:00:00+09:00",
+            }
+        ]
+    )
+
+    monkeypatch.setattr("src.reports.issue_summary.OpenAI", lambda api_key: object())
+
+    def _fake_call_llm_text(client, model, prompt, max_output_tokens=700):
+        if "[입력 뉴스 데이터]" in prompt:
+            return "[뉴스 요약]\n- 확인된 핵심 뉴스 내용 없음"
+        return "[공시 요약]\n- 확인된 핵심 공시 내용 없음"
+
+    monkeypatch.setattr("src.reports.issue_summary._call_llm_text", _fake_call_llm_text)
+
+    out = _llm_symbol_issue_summary(
+        symbol="005930.KS",
+        symbol_name="삼성전자",
+        events=events,
+        api_key="sk-test",
+        model="gpt-5",
+    )
+
+    assert out is not None
+    assert "확인된 핵심 뉴스 내용 없음" not in out.news_summary
+    assert "삼성전자 메모리 투자 확대 보도" in out.news_summary
