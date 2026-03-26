@@ -280,6 +280,18 @@ def test_cached_prediction_still_returns_message_when_issue_summary_raises(tmp_p
     assert "권고: 매수" in text
 
 
+def test_build_response_truncates_overlong_simpletext_payload(tmp_path: Path):
+    bot = make_bot(tmp_path)
+    long_text = "A" * 1200
+    response = bot._build_response(long_text, quick_replies=[("a", "a")] * 12)
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+    quick = response["template"]["quickReplies"]
+
+    assert len(text) <= 900
+    assert text.endswith("...(생략)")
+    assert len(quick) == 10
+
+
 def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     runner = RecordingRunner()
     bot = make_bot(tmp_path, runner=runner)

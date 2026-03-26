@@ -963,13 +963,17 @@ class KakaoColabPredictionBot:
         tmp.replace(path)
 
     def _build_response(self, text: str, quick_replies: list[tuple[str, str]] | None = None) -> dict[str, Any]:
+        message_text = str(text or "")
+        max_len = 900
+        if len(message_text) > max_len:
+            message_text = message_text[: max_len - 8].rstrip() + "\n...(생략)"
         response = {
             "version": "2.0",
             "template": {
                 "outputs": [
                     {
                         "simpleText": {
-                            "text": text,
+                            "text": message_text,
                         }
                     }
                 ]
@@ -982,7 +986,7 @@ class KakaoColabPredictionBot:
                     "label": label,
                     "messageText": message_text,
                 }
-                for label, message_text in quick_replies
+                for label, message_text in quick_replies[:10]
             ]
         return response
 
