@@ -313,7 +313,6 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert "--issue-summary-symbols" in command
     assert "000660.KS" in command
     assert "--fetch-investor-context" in command
-    assert "--disable-news-context" in command
     assert "--dart-api-key" in command
     assert "demo-key" in command
     assert "--dart-corp-map-csv" in command

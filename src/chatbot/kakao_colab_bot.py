@@ -63,8 +63,6 @@ class PipelineRuntimeConfig:
     fetch_investor_context: bool = True
     enable_investor_flow: bool = True
     enable_investor_disclosure: bool = True
-    enable_investor_news: bool = False
-    news_scoring_mode: str = "auto"
     openai_api_key: str | None = None
     openai_model: str | None = None
     naver_client_id: str | None = None
@@ -92,8 +90,6 @@ class PipelineRuntimeConfig:
                 cmd.append("--disable-investor-flow")
             if not self.enable_investor_disclosure:
                 cmd.append("--disable-disclosure-context")
-            # 뉴스 감성 경로 제거 정책: 챗봇 실행 커맨드에서 항상 비활성화
-            cmd.append("--disable-news-context")
             if self.dart_api_key:
                 cmd.extend(["--dart-api-key", self.dart_api_key])
             if self.dart_corp_map_csv:

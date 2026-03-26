@@ -4,18 +4,8 @@ import pandas as pd
 
 from src.data.investor_context import (
     _dart_items,
-    _fetch_news_sentiment,
     collect_context_raw_events,
 )
-
-
-def test_fetch_news_sentiment_is_disabled():
-    news_df, coverage = _fetch_news_sentiment(["005930.KS"], "2026-03-24", "2026-03-24")
-
-    assert coverage["requested"] == 0
-    assert coverage["successful"] == 0
-    assert coverage["failed"] == 0
-    assert news_df.empty
 
 
 def test_collect_context_raw_events_contains_naver_news_and_disclosure(monkeypatch, tmp_path):

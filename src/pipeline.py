@@ -472,8 +472,6 @@ def run_pipeline(
     config_json: str | None = None,
     enable_investor_flow: bool = True,
     enable_investor_disclosure: bool = True,
-    enable_investor_news: bool = True,
-    news_scoring_mode: str = "auto",
     openai_api_key: str | None = None,
     openai_model: str | None = None,
     naver_client_id: str | None = None,
@@ -546,14 +544,8 @@ def run_pipeline(
                 enabled=True,
                 enable_flow=enable_investor_flow,
                 enable_disclosure=enable_investor_disclosure,
-                enable_news=enable_investor_news,
                 dart_api_key=dart_api_key,
                 dart_corp_map_csv=dart_corp_map_csv,
-                news_scoring_mode=news_scoring_mode,
-                openai_api_key=effective_openai_api_key,
-                openai_model=effective_openai_model,
-                naver_client_id=naver_client_id,
-                naver_client_secret=naver_client_secret,
             ),
         )
         try:
@@ -819,8 +811,6 @@ def build_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fetch-investor-context", action="store_true", help="Fetch investor flow context features (foreign/institution flows)")
     parser.add_argument("--disable-investor-flow", action="store_true", help="Disable pykrx investor flow context")
     parser.add_argument("--disable-disclosure-context", action="store_true", help="Disable DART disclosure context")
-    parser.add_argument("--disable-news-context", action="store_true", help="Disable news context")
-    parser.add_argument("--news-scoring-mode", default="auto", choices=["auto", "rule", "ai"], help="News scoring mode")
     parser.add_argument("--openai-api-key", default=None, help="OpenAI API key for AI news scoring")
     parser.add_argument("--openai-model", default=None, help="OpenAI model for AI news scoring")
     parser.add_argument("--naver-client-id", default=None, help="Naver News Search API client id")
@@ -917,8 +907,6 @@ def main():
         config_json=args.config_json,
         enable_investor_flow=not args.disable_investor_flow,
         enable_investor_disclosure=not args.disable_disclosure_context,
-        enable_investor_news=not args.disable_news_context,
-        news_scoring_mode=args.news_scoring_mode,
         openai_api_key=args.openai_api_key,
         openai_model=args.openai_model,
         naver_client_id=args.naver_client_id,
