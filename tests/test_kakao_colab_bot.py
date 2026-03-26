@@ -315,6 +315,26 @@ def test_cached_prediction_still_returns_message_when_issue_summary_raises(tmp_p
     assert "권고: 매수" in text
 
 
+def test_cached_prediction_still_returns_message_when_issue_summary_times_out(tmp_path: Path, monkeypatch):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [{"종목코드": "005930", "종목명": "삼성전자", "권고": "매수", "내일 예상 종가": 71200, "내일 예상 수익률(%)": "1.234%", "상승확률(%)": "78.9%", "예측 신뢰도": "88.0%", "예측 이유": "테스트 사유"}]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+    pd.DataFrame([{"Symbol": "005930.KS", "Date": "2026-03-26"}]).to_csv(result_dir / "result_detail.csv", index=False)
+
+    monkeypatch.setattr(
+        "src.chatbot.kakao_colab_bot.append_issue_summary_columns",
+        lambda *args, **kwargs: (_ for _ in ()).throw(__import__("concurrent").futures.TimeoutError()),
+    )
+
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-timeout"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "권고: 매수" in text
+
+
 def test_build_response_truncates_overlong_simpletext_payload(tmp_path: Path):
     bot = make_bot(tmp_path)
     long_text = "A" * 1200

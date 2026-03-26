@@ -879,13 +879,21 @@ class KakaoColabPredictionBot:
                 return row
 
         base = pd.DataFrame([{"Symbol": symbol, "종목명": str(row.get("종목명", self._display_code(symbol)))}])
-        summarized = append_issue_summary_columns(
-            base,
-            context_raw_df=same_day.copy(),
-            openai_api_key=self.runtime_config.openai_api_key,
-            openai_model=self.runtime_config.openai_model,
-            summarize_symbols=[symbol],
-        ).iloc[0]
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(
+                    append_issue_summary_columns,
+                    base,
+                    context_raw_df=same_day.copy(),
+                    openai_api_key=self.runtime_config.openai_api_key,
+                    openai_model=self.runtime_config.openai_model,
+                    summarize_symbols=[symbol],
+                )
+                summarized_df = future.result(timeout=2.5)
+            summarized = summarized_df.iloc[0]
+        except concurrent.futures.TimeoutError:
+            self._console_log(f"{self._display_code(symbol)} 요약 생성 시간초과(2.5s)로 기존 응답을 유지합니다.")
+            return row
         out = row.copy()
         for col in ["오늘 종목 이슈 한줄 요약", "공시 요약", "뉴스 요약", "종합 판단", "주의사항", "원문 개수", "핵심 원문 목록"]:
             out[col] = summarized.get(col)
