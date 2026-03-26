@@ -944,7 +944,7 @@ def test_load_cached_result_simple_logs_parse_failures(tmp_path: Path, capsys):
     assert "예측 캐시 CSV 로드 실패" in captured.out
 
 
-def test_finalize_process_falls_back_when_prediction_message_format_fails(tmp_path: Path, monkeypatch):
+def test_finalize_process_logs_completion_without_inline_formatting(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
     pd.DataFrame(
@@ -968,18 +968,12 @@ def test_finalize_process_falls_back_when_prediction_message_format_fails(tmp_pa
     bot._active_processes["005930.KS"] = {"log_handle": log_handle, "log_thread": None}
     bot._job_registry["005930.KS"] = {"status": "running"}
 
-    monkeypatch.setattr(
-        bot,
-        "_format_prediction_message",
-        lambda row: (_ for _ in ()).throw(NameError("rationale_block")),
-    )
     logs: list[str] = []
     monkeypatch.setattr(bot, "_console_log", lambda message: logs.append(message))
 
     bot._finalize_process("005930.KS", 0)
 
-    assert any("레거시 포맷터 오류 감지(NameError: rationale_block)" in log for log in logs)
-    assert any("사유: 거래대금 상위" in log for log in logs)
+    assert any("예측 작업 completed" in log for log in logs)
 
 
 def test_handle_symbol_request_falls_back_when_cached_message_format_fails(tmp_path: Path, monkeypatch):

@@ -665,22 +665,7 @@ class KakaoColabPredictionBot:
 
         display_code = self._display_code(symbol)
         if status == "completed":
-            cached_row = self._find_cached_prediction(symbol)
-            if cached_row is not None:
-                cached_row = self._safe_attach_issue_summary(cached_row, symbol)
-                try:
-                    message = self._format_prediction_message(cached_row)
-                except Exception as exc:
-                    if self._maybe_patch_legacy_rationale_bug(exc):
-                        message = self._safe_format_prediction_message(cached_row)
-                    else:
-                        self._console_log(
-                            f"{display_code} 예측 완료 메시지 포맷 오류({type(exc).__name__}): {exc}. 원문 사유로 대체합니다."
-                        )
-                        message = self._minimal_format_prediction_message(cached_row)
-                self._console_log(f"{display_code} 예측 완료\n{message}")
-            else:
-                self._console_log(f"{display_code} 예측 작업 completed (exit_code=0). 결과 CSV를 확인해주세요.")
+            self._console_log(f"{display_code} 예측 작업 completed (exit_code=0). 결과 요청 시 최신 CSV를 기반으로 응답합니다.")
         else:
             self._console_log(f"{display_code} 예측 작업 failed (exit_code={int(exit_code)}). 로그를 확인해주세요.")
 
