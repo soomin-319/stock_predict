@@ -194,7 +194,7 @@ def _fetch_disclosure_scores(symbols: list[str], start: str, end: str, api_key: 
 
 def _fetch_news_sentiment(symbols: list[str], start: str, end: str, cfg: InvestorContextConfig | None = None):
     _ = (symbols, start, end, cfg)
-    # 뉴스 점수화/뉴스 수집 기능은 제거되었습니다.
+    # 뉴스 감성 경로는 운영 복잡도/지연 이슈로 완전히 제거되었습니다.
     # 컬럼 호환성 유지를 위해 빈 프레임과 0-coverage를 반환합니다.
     coverage = {"requested": 0, "successful": 0, "failed": 0}
     return pd.DataFrame(
