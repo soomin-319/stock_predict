@@ -363,12 +363,49 @@ def check_naver_news_connection(client_id: str | None, client_secret: str | None
         return False
 
 
+def check_dart_connection(api_key: str | None) -> bool:
+    if not api_key:
+        print("[DART CHECK] DART_API_KEY가 비어 있어 연결 확인을 건너뜁니다.")
+        return False
+    params = urlencode(
+        {
+            "crtfc_key": api_key,
+            # 삼성전자 corp_code 예시 (README 연결 점검용 고정 샘플)
+            "corp_code": "00126380",
+            "bgn_de": "20260301",
+            "end_de": "20260331",
+            "page_no": 1,
+            "page_count": 5,
+        }
+    )
+    req = Request(f"https://opendart.fss.or.kr/api/list.json?{params}")
+    try:
+        with urlopen(req, timeout=15) as resp:
+            import json
+
+            payload = json.loads(resp.read().decode("utf-8"))
+        status = str(payload.get("status", "")) if isinstance(payload, dict) else ""
+        message = str(payload.get("message", "")) if isinstance(payload, dict) else ""
+        items = payload.get("list", []) if isinstance(payload, dict) else []
+        if status == "000":
+            print(f"[DART CHECK] 연결 성공 | items={len(items)}")
+            return True
+        print("[DART CHECK] 응답 수신(비정상 코드)")
+        print(f"[DART CHECK] status={status} message={message}")
+        return False
+    except Exception as exc:
+        print("[DART CHECK] 연결 실패")
+        print(f"[DART CHECK] error={type(exc).__name__}: {exc}")
+        return False
+
+
 check_openai_connection(os.environ.get("OPENAI_API_KEY"), OPENAI_MODEL)
 check_naver_news_connection(
     os.environ.get("NAVER_CLIENT_ID"),
     os.environ.get("NAVER_CLIENT_SECRET"),
     TEST_QUERY,
 )
+check_dart_connection(os.environ.get("DART_API_KEY"))
 
 runtime_config = PipelineRuntimeConfig(
     input_csv="data/real_ohlcv.csv",
