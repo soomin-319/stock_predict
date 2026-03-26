@@ -137,6 +137,7 @@ class KakaoColabPredictionBot:
         self.result_simple_path = self.project_root / (result_simple_path or "result/result_simple.csv")
         self.result_detail_path = self.project_root / "result" / "result_detail.csv"
         self.result_news_path = self.project_root / "result" / "result_news.csv"
+        self.result_disclosure_path = self.project_root / "result" / "result_disclosure.csv"
         self.state_path = self.project_root / (state_path or "result/chatbot_jobs.json")
         self.session_path = self.project_root / (session_path or "result/chatbot_sessions.json")
         self.prewarm_meta_path = self.project_root / "result" / "prewarm_cache_meta.json"
@@ -862,20 +863,27 @@ class KakaoColabPredictionBot:
         return reference_date.strftime("%Y-%m-%d")
 
     def _load_result_news(self) -> pd.DataFrame:
-        if not self.result_news_path.exists():
+        frames: list[pd.DataFrame] = []
+        for path in [self.result_news_path, self.result_disclosure_path]:
+            if not path.exists():
+                continue
+            try:
+                frame = pd.read_csv(path, dtype={"Symbol": str}, encoding="utf-8-sig")
+            except Exception as exc:
+                self._console_log(f"요약 원문 CSV 로드 실패: {path} ({exc})")
+                continue
+            if not frame.empty:
+                frames.append(frame)
+        if not frames:
             return pd.DataFrame()
-        try:
-            news_df = pd.read_csv(self.result_news_path, dtype={"Symbol": str}, encoding="utf-8-sig")
-        except Exception as exc:
-            self._console_log(f"요약 원문 CSV 로드 실패: {self.result_news_path} ({exc})")
-            return pd.DataFrame()
-        if news_df.empty:
-            return pd.DataFrame()
-        if "Date" in news_df.columns:
-            news_df["Date"] = pd.to_datetime(news_df["Date"], errors="coerce").dt.normalize()
-        if "Symbol" in news_df.columns:
-            news_df["Symbol"] = news_df["Symbol"].astype(str)
-        return news_df
+        merged = pd.concat(frames, ignore_index=True)
+        if "Date" in merged.columns:
+            merged["Date"] = pd.to_datetime(merged["Date"], errors="coerce").dt.normalize()
+        if "Symbol" in merged.columns:
+            merged["Symbol"] = merged["Symbol"].astype(str)
+        if "title" in merged.columns:
+            merged = merged.drop_duplicates(subset=["Date", "Symbol", "source_type", "title"], keep="first")
+        return merged
 
     def _collect_live_symbol_events(self, symbol: str, reference_date: str) -> pd.DataFrame:
         has_naver = bool(self.runtime_config.naver_client_id and self.runtime_config.naver_client_secret)
@@ -933,8 +941,8 @@ class KakaoColabPredictionBot:
             return row
 
         same_symbol = events[events["Symbol"].astype(str) == str(symbol)]
-        candidate_dates = [target_dt.normalize(), (target_dt - pd.Timedelta(days=1)).normalize()]
-        used_date = candidate_dates[0]
+        candidate_dates = [target_dt.normalize()]
+        used_date = target_dt.normalize()
         same_day = pd.DataFrame()
         live_fetch_attempted = False
         for candidate_dt in candidate_dates:
@@ -953,7 +961,7 @@ class KakaoColabPredictionBot:
         news_count = int((same_day.get("source_type", pd.Series(dtype=str)).astype(str) == "news").sum())
         if same_day.empty:
             self._console_log(
-                f"{self._display_code(symbol)} 요약 원문 없음 (기준일 {prediction_date}, 전일 포함 검색, symbol_events={len(same_symbol)})."
+                f"{self._display_code(symbol)} 요약 원문 없음 (기준일 {prediction_date}, symbol_events={len(same_symbol)})."
             )
             has_existing_summary = bool(str(row.get("공시 요약", "")).strip()) or bool(str(row.get("뉴스 요약", "")).strip())
             if has_existing_summary:

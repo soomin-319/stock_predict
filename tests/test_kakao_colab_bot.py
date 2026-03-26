@@ -206,7 +206,7 @@ def test_cached_prediction_uses_today_reference_date_when_detail_date_is_stale(t
     assert "[뉴스 요약]" in text
 
 
-def test_cached_prediction_falls_back_to_yesterday_when_today_events_are_missing(tmp_path: Path, monkeypatch):
+def test_cached_prediction_uses_today_only_when_today_events_are_missing(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
     pd.DataFrame(
@@ -220,7 +220,11 @@ def test_cached_prediction_falls_back_to_yesterday_when_today_events_are_missing
     captured = {}
 
     def _fake_append(pred_df, context_raw_df=None, **kwargs):
-        captured["dates"] = sorted(context_raw_df["Date"].astype(str).unique().tolist()) if context_raw_df is not None else []
+        captured["dates"] = (
+            sorted(context_raw_df["Date"].astype(str).unique().tolist())
+            if context_raw_df is not None and "Date" in context_raw_df.columns
+            else []
+        )
         out = pred_df.copy()
         out["오늘 종목 이슈 한줄 요약"] = "요약"
         out["공시 요약"] = "[공시 요약]\n- 전일 공시"
@@ -232,15 +236,16 @@ def test_cached_prediction_falls_back_to_yesterday_when_today_events_are_missing
         return out
 
     monkeypatch.setattr("src.chatbot.kakao_colab_bot.append_issue_summary_columns", _fake_append)
+    monkeypatch.setattr(KakaoColabPredictionBot, "_collect_live_symbol_events", lambda self, symbol, reference_date: pd.DataFrame())
     bot = make_bot(tmp_path)
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-yday"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert captured["dates"] == ["2026-03-25"]
+    assert captured["dates"] == []
     assert "[공시 요약]" in text
 
 
-def test_cached_prediction_attempts_live_fetch_only_once_across_today_and_yesterday(tmp_path: Path, monkeypatch):
+def test_cached_prediction_attempts_live_fetch_only_once_for_today(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
     pd.DataFrame(
@@ -1224,3 +1229,20 @@ def test_generated_issue_summary_is_reused_without_refresh(tmp_path: Path, monke
     assert "생성된 공시 요약" in text1 and "생성된 뉴스 요약" in text1
     assert "생성된 공시 요약" in text2 and "생성된 뉴스 요약" in text2
     assert called["count"] == 1
+
+
+def test_load_result_news_merges_result_disclosure(tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([{"Date": "2026-03-26", "Symbol": "005930.KS", "source_type": "news", "title": "뉴스"}]).to_csv(
+        result_dir / "result_news.csv", index=False
+    )
+    pd.DataFrame([{"Date": "2026-03-26", "Symbol": "005930.KS", "source_type": "disclosure", "title": "공시"}]).to_csv(
+        result_dir / "result_disclosure.csv", index=False
+    )
+
+    bot = make_bot(tmp_path)
+    merged = bot._load_result_news()
+
+    assert len(merged) == 2
+    assert set(merged["source_type"].astype(str)) == {"news", "disclosure"}

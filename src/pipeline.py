@@ -722,10 +722,24 @@ def run_pipeline(
 
     simple_path = resolve_output_path("result_simple.csv")
     simple_path = _safe_to_csv(simple_df, simple_path)
+    export_context_df = context_raw_df.copy()
+    if not export_context_df.empty and "Date" in export_context_df.columns:
+        export_context_df["Date"] = pd.to_datetime(export_context_df["Date"], errors="coerce").dt.normalize()
+        today_kst = pd.Timestamp.now(tz="Asia/Seoul").normalize().tz_localize(None)
+        export_context_df = export_context_df[export_context_df["Date"] == today_kst].copy()
     news_path = resolve_output_path("result_news.csv")
-    news_path = _safe_to_csv(context_raw_df, news_path)
+    news_df = (
+        export_context_df[export_context_df["source_type"].astype(str) == "news"].copy()
+        if "source_type" in export_context_df.columns
+        else pd.DataFrame()
+    )
+    news_path = _safe_to_csv(news_df, news_path)
     disclosure_path = resolve_output_path("result_disclosure.csv")
-    disclosure_df = context_raw_df[context_raw_df["source_type"].astype(str) == "disclosure"].copy() if "source_type" in context_raw_df.columns else pd.DataFrame()
+    disclosure_df = (
+        export_context_df[export_context_df["source_type"].astype(str) == "disclosure"].copy()
+        if "source_type" in export_context_df.columns
+        else pd.DataFrame()
+    )
     disclosure_path = _safe_to_csv(disclosure_df, disclosure_path)
 
     report = {
