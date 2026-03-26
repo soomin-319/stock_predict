@@ -19,108 +19,56 @@ class SymbolIssueSummary:
     key_sources: list[str]
 
 
-DISCLOSURE_SUMMARY_PROMPT = """너는 한국 주식시장 종목 관련 공시를 투자 전문가에게 전달하기 위한 참고용 요약 AI다.
-
-역할:
-- 입력된 공시 문서를 바탕으로, 해당 종목과 관련된 핵심 사실을 객관적으로 정리한다.
-- 이 요약은 주가 예측값을 생성하거나 수정하기 위한 것이 아니라, 사용자가 참고할 수 있는 설명 자료를 제공하기 위한 것이다.
-- 따라서 투자 권유, 주가 방향 예측, 가치판단, 감정적 해석은 하지 않는다.
+DISCLOSURE_SUMMARY_PROMPT = """너는 한국 상장사 공시를 간결하게 정리하는 AI다.
 
 목표:
-- 공시 원문에 기재된 핵심 사실, 수치, 일정, 당사자, 변경사항을 빠짐없이 정리한다.
-- 투자 전문가가 실무적으로 중요하게 볼 항목을 우선 정리한다.
-- 공시의 제목보다 실제 본문과 수치 정보를 우선 기준으로 사용한다.
-- 공시가 정정인지 신규인지, 반복 보고인지 여부를 구분한다.
+- 공시의 핵심 사실(수치, 계약, 변경사항, 일정)을 짧게 정리한다.
+- 해석, 전망, 투자 판단은 하지 않는다.
 
-반드시 지켜야 할 규칙:
-1. 입력으로 제공된 공시 정보만 사용하라.
-2. 원문에 없는 사실, 추정, 배경설명, 전망을 추가하지 마라.
-3. "호재", "악재", "긍정적", "부정적", "상승", "하락", "매수", "매도" 같은 투자 판단 표현을 사용하지 마라.
-4. "시장에 영향을 줄 수 있다", "주가가 반응할 수 있다" 같은 추정 표현을 사용하지 마라.
-5. 공시 제목보다 본문과 수치 정보를 우선적으로 반영하라.
-6. 금액, 비율, 기간, 계약 상대방, 발행 조건, 일정, 변경 전후 내용을 정확히 정리하라.
-7. 정정공시일 경우 무엇이 변경되었는지 명확히 구분하라.
-8. 단순 반복 문구나 법적 서술은 축약하되, 핵심 의무, 조건, 수치는 누락하지 마라.
-9. 원문에 명확히 적혀 있지 않은 사항은 쓰지 마라.
-10. 각 bullet은 반드시 한 문장으로 작성하라.
-11. 각 bullet은 짧고 명확하게 작성하라.
-12. 중복되는 내용은 하나로 합쳐라.
-13. 출력은 반드시 아래 형식을 따르라.
-14. 한국어로 작성하라.
+규칙:
+- 입력에 없는 내용은 쓰지 마라
+- 수치/금액/일정이 있으면 우선 포함하라
+- 정정 공시는 변경된 내용만 반영하라
+- 각 bullet은 한 문장으로 작성하라
+- 중복 내용은 제거하라
 
 출력 형식:
 [공시 요약]
-- 공시 핵심 내용 1문장
-- 공시 핵심 내용 1문장
-- 공시 핵심 내용 1문장
-- 필요 시 추가
+- 핵심 내용
+- 핵심 내용
+- 핵심 내용
 
-출력 규칙:
-- bullet마다 한 가지 핵심 사실만 적어라.
-- 한 bullet 안에 서로 다른 사실을 과도하게 묶지 마라.
-- 문장은 가능한 한 짧게 유지하라.
-- 사실, 수치, 일정, 변경사항, 상대방, 조건이 있으면 우선 반영하라.
-- 해석하지 말고 정리만 하라.
-- 핵심 내용이 없으면 아래처럼 출력하라:
-  [공시 요약]
-  - 확인된 핵심 공시 내용 없음
+추가:
+- 핵심이 없으면 "확인된 핵심 공시 내용 없음" 출력
+- bullet은 3~5개 이내로 제한
 
-이제 아래 입력된 공시 문서를 위 형식에 맞춰 요약하라."""
+이제 공시를 요약하라."""
 
 
-NEWS_SUMMARY_PROMPT = """너는 한국 주식시장 종목 관련 뉴스를 투자 전문가에게 전달하기 위한 참고용 요약 AI다.
-
-역할:
-- 입력된 뉴스 기사들을 바탕으로, 해당 종목과 관련된 핵심 사실을 객관적으로 정리한다.
-- 이 요약은 주가 예측값을 생성하거나 수정하기 위한 것이 아니라, 사용자가 참고할 수 있는 설명 자료를 제공하기 위한 것이다.
-- 따라서 투자 권유, 매수/매도 판단, 주가 방향 예측, 감정적 해석은 하지 않는다.
+NEWS_SUMMARY_PROMPT = """너는 종목 관련 뉴스를 간결하게 정리하는 AI다.
 
 목표:
-- 여러 뉴스 기사에서 종목과 직접 관련된 핵심 사실만 추려 요약한다.
-- 중복 보도는 하나의 이슈로 묶는다.
-- 기사 수가 많아도 실제 정보량이 적을 수 있음을 반영한다.
-- 투자 전문가가 빠르게 읽고 상황을 파악할 수 있도록, 과장 없이 사실 중심으로 정리한다.
+- 여러 기사에서 공통되는 핵심 사실만 정리한다.
+- 해석, 전망, 투자 판단은 하지 않는다.
 
-반드시 지켜야 할 규칙:
-1. 입력으로 제공된 기사 정보만 사용하라.
-2. 원문에 없는 사실, 숫자, 배경, 의도, 전망을 추가하지 마라.
-3. "호재", "악재", "긍정적", "부정적", "상승", "하락", "매수", "매도" 같은 투자 판단 표현을 사용하지 마라.
-4. "영향을 줄 수 있다", "시장이 이렇게 볼 수 있다" 같은 추정 표현도 사용하지 마라.
-5. 기사 제목이 자극적이어도 중립적 표현으로 바꿔라.
-6. 같은 내용을 반복 보도한 기사는 하나의 이슈로 통합하라.
-7. 기업 직접 이슈와 업종/시장 일반 이슈를 구분하라.
-8. 사실 기사와 전망/의견성 기사를 구분하라.
-9. 원문에 명확히 적혀 있지 않은 내용은 쓰지 마라.
-10. 각 bullet은 반드시 한 문장으로 작성하라.
-11. 각 bullet은 짧고 명확하게 작성하라.
-12. 중복되는 내용은 하나로 합쳐라.
-13. 출력은 반드시 아래 형식을 따르라.
-14. 한국어로 작성하라.
-
-뉴스 정리 원칙:
-- 뉴스는 공시와 달리 기자의 서술과 재가공이 포함될 수 있으므로, 확인된 사실 위주로 정리하라.
-- 여러 기사에 공통으로 등장하는 사실을 우선 정리하라.
-- 기사별 표현 차이가 크면 공통 사실만 남겨라.
-- 단순 전망, 기대, 우려, 평가 표현은 핵심 사실이 아닐 경우 제외하라.
+규칙:
+- 입력에 없는 내용은 쓰지 마라
+- 같은 내용은 하나로 묶어라
+- 자극적인 표현은 제거하고 중립적으로 작성하라
+- 각 bullet은 한 문장으로 작성하라
+- 기사 수가 많아도 핵심만 남겨라
 
 출력 형식:
 [뉴스 요약]
-- 뉴스 핵심 내용 1문장
-- 뉴스 핵심 내용 1문장
-- 뉴스 핵심 내용 1문장
-- 필요 시 추가
+- 핵심 내용
+- 핵심 내용
+- 핵심 내용
 
-출력 규칙:
-- bullet마다 한 가지 핵심 사실만 적어라.
-- 한 bullet 안에 서로 다른 사실을 과도하게 묶지 마라.
-- 문장은 가능한 한 짧게 유지하라.
-- 같은 이슈가 반복 보도되면 "복수 기사에서 ~" 형태로 정리할 수 있다.
-- 해석하지 말고 정리만 하라.
-- 핵심 내용이 없으면 아래처럼 출력하라:
-  [뉴스 요약]
-  - 확인된 핵심 뉴스 내용 없음
+추가:
+- 핵심이 없으면 "확인된 핵심 뉴스 내용 없음" 출력
+- bullet은 3~5개 이내로 제한
 
-이제 아래 입력된 뉴스 기사들을 위 형식에 맞춰 요약하라."""
+이제 뉴스를 요약하라."""
 
 
 def _overall_judgment(disclosure_score: float, news_impact_score: float, news_count: int) -> str:
@@ -391,6 +339,13 @@ def _llm_symbol_issue_summary(
         ensure_ascii=False,
     )
 
+    fallback_disclosure_lines = [str(item.get("title") or "").strip() for item in disclosures if str(item.get("title") or "").strip()][:5]
+    fallback_news_lines = [
+        str(item.get("cluster_topic") or "").strip()
+        for item in structured_payload.get("news_clusters", [])
+        if str(item.get("cluster_topic") or "").strip()
+    ][:5]
+
     try:
         disclosure_summary = _call_llm_text(
             client,
@@ -408,6 +363,18 @@ def _llm_symbol_issue_summary(
         print(f"[ISSUE SUMMARY] LLM 요약 실패 ({symbol}): {type(exc).__name__}: {exc}")
         return None
 
+    disclosure_summary = _ensure_non_empty_issue_block(
+        disclosure_summary,
+        header="[공시 요약]",
+        fallback_lines=fallback_disclosure_lines,
+        empty_line="확인된 핵심 공시 내용 없음",
+    )
+    news_summary = _ensure_non_empty_issue_block(
+        news_summary,
+        header="[뉴스 요약]",
+        fallback_lines=fallback_news_lines,
+        empty_line="확인된 핵심 뉴스 내용 없음",
+    )
     disclosure_summary = disclosure_summary or "[공시 요약]\n- 확인된 핵심 공시 내용 없음"
     news_summary = news_summary or "[뉴스 요약]\n- 확인된 핵심 뉴스 내용 없음"
     source_count = int(len(disclosures)) + int(len(structured_payload.get("news_clusters", [])))
@@ -421,6 +388,29 @@ def _llm_symbol_issue_summary(
         source_count=source_count,
         key_sources=sorted(events["source_type"].dropna().astype(str).unique().tolist()),
     )
+
+
+def _ensure_non_empty_issue_block(
+    summary_text: str | None,
+    *,
+    header: str,
+    fallback_lines: list[str],
+    empty_line: str,
+) -> str:
+    raw = str(summary_text or "").strip()
+    bullets = [line.strip() for line in raw.splitlines() if line.strip().startswith("- ")]
+    lowered = raw.replace(" ", "").lower()
+    empty_marker = empty_line.replace(" ", "").lower()
+    has_explicit_empty_marker = empty_marker in lowered
+    if bullets and not has_explicit_empty_marker:
+        return raw
+
+    if fallback_lines:
+        uniq = list(dict.fromkeys([line.strip() for line in fallback_lines if line.strip()]))[:5]
+        if uniq:
+            return header + "\n" + "\n".join(f"- {line}" for line in uniq)
+
+    return f"{header}\n- {empty_line}"
 
 
 def _rule_based_event_issue_summary(symbol: str, events: pd.DataFrame) -> SymbolIssueSummary:
@@ -470,7 +460,7 @@ def append_issue_summary_columns(
     context = context_raw_df.copy() if isinstance(context_raw_df, pd.DataFrame) and not context_raw_df.empty else None
     if context is not None and "Symbol" in context.columns:
         context["Symbol"] = context["Symbol"].astype(str)
-    resolved_model = openai_model or ("gpt-5" if openai_api_key else None)
+    resolved_model = openai_model or ("gpt-5-mini" if openai_api_key else None)
     use_llm = bool(openai_api_key and resolved_model and context is not None and "source_type" in context.columns)
     target_symbols = {str(s) for s in (summarize_symbols or []) if str(s).strip()}
 
