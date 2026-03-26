@@ -63,8 +63,6 @@ class PipelineRuntimeConfig:
     fetch_investor_context: bool = True
     enable_investor_flow: bool = True
     enable_investor_disclosure: bool = True
-    enable_investor_news: bool = True
-    news_scoring_mode: str = "auto"
     openai_api_key: str | None = None
     openai_model: str | None = None
     naver_client_id: str | None = None
@@ -92,22 +90,18 @@ class PipelineRuntimeConfig:
                 cmd.append("--disable-investor-flow")
             if not self.enable_investor_disclosure:
                 cmd.append("--disable-disclosure-context")
-            if not self.enable_investor_news:
-                cmd.append("--disable-news-context")
             if self.dart_api_key:
                 cmd.extend(["--dart-api-key", self.dart_api_key])
             if self.dart_corp_map_csv:
                 cmd.extend(["--dart-corp-map-csv", self.dart_corp_map_csv])
-            if self.news_scoring_mode:
-                cmd.extend(["--news-scoring-mode", self.news_scoring_mode])
-            if self.openai_api_key:
-                cmd.extend(["--openai-api-key", self.openai_api_key])
-            if self.openai_model:
-                cmd.extend(["--openai-model", self.openai_model])
             if self.naver_client_id:
                 cmd.extend(["--naver-client-id", self.naver_client_id])
             if self.naver_client_secret:
                 cmd.extend(["--naver-client-secret", self.naver_client_secret])
+        if self.openai_api_key:
+            cmd.extend(["--openai-api-key", self.openai_api_key])
+        if self.openai_model:
+            cmd.extend(["--openai-model", self.openai_model])
         if not self.use_external:
             cmd.append("--disable-external")
         if self.report_json:
@@ -127,6 +121,9 @@ class PyngrokTunnelConfig:
 
 
 class KakaoColabPredictionBot:
+    LIVE_EVENTS_TIMEOUT_SEC = 1.5
+    ISSUE_SUMMARY_TIMEOUT_SEC = 2.5
+
     def __init__(
         self,
         runtime_config: PipelineRuntimeConfig | None = None,
@@ -212,11 +209,16 @@ class KakaoColabPredictionBot:
         from_session: bool,
     ) -> dict[str, Any]:
         display_code = self._display_code(symbol)
-        self._update_session(user_id, symbol=symbol, intent="tracking")
 
         with self._state_lock:
             job_state = self._job_registry.get(symbol)
+            has_active_runtime = symbol in self._active_processes
+        if job_state and job_state.get("status") == "running" and not has_active_runtime:
+            self._mark_job_failed(symbol, exit_code=-2, note="stale_running_state")
+            with self._state_lock:
+                job_state = self._job_registry.get(symbol)
         if job_state and job_state.get("status") == "running":
+            self._update_session(user_id, symbol=symbol, intent="running")
             return self._build_response(
                 f"{display_code} 예측이 현재 진행 중입니다. 잠시 후 '결과' 또는 '{display_code}'를 다시 입력해주세요.",
                 quick_replies=[
@@ -228,6 +230,7 @@ class KakaoColabPredictionBot:
 
         cached_row = None if force_refresh else self._find_cached_prediction(symbol)
         if cached_row is not None:
+            self._update_session(user_id, symbol=symbol, intent="tracking")
             cached_row = self._safe_attach_issue_summary(cached_row, symbol)
             try:
                 message = self._format_prediction_message(cached_row)
@@ -248,12 +251,43 @@ class KakaoColabPredictionBot:
                 ],
             )
 
+        if job_state and job_state.get("status") == "completed":
+            self._update_session(user_id, symbol=symbol, intent="tracking")
+            elapsed = self._job_elapsed_seconds(job_state)
+            if elapsed is not None and elapsed >= 15.0:
+                return self._build_response(
+                    f"{display_code} 예측 완료 후 결과 파일에서 종목을 찾지 못했습니다. '최신화'로 다시 실행해주세요.",
+                    quick_replies=[
+                        ("최신화", "최신화"),
+                        ("다시 시도", display_code),
+                        ("도움말", "도움말"),
+                    ],
+                )
+            return self._build_response(
+                f"{display_code} 예측은 완료됐지만 결과 파일 반영을 확인 중입니다. 잠시 후 '결과'를 다시 입력해주세요.",
+                quick_replies=[
+                    ("결과 확인", "결과"),
+                    ("최신화", "최신화"),
+                    ("도움말", "도움말"),
+                ],
+            )
+
         if job_state and job_state.get("status") == "failed":
-            return self._start_job_response(symbol, retry=True)
+            self._update_session(user_id, symbol=symbol, intent="tracking")
+            return self._build_response(
+                f"{display_code} 예측 작업이 실패했습니다. '최신화' 또는 '{display_code}'를 다시 입력해 재시도해주세요.",
+                quick_replies=[
+                    ("최신화", "최신화"),
+                    ("다시 시도", display_code),
+                    ("도움말", "도움말"),
+                ],
+            )
 
         if force_refresh and from_session:
+            self._update_session(user_id, symbol=symbol, intent="tracking")
             return self._start_job_response(symbol, retry=True)
 
+        self._update_session(user_id, symbol=symbol, intent="tracking")
         return self._start_job_response(symbol, retry=False)
 
     def _start_job_response(self, symbol: str, retry: bool) -> dict[str, Any]:
@@ -393,7 +427,7 @@ class KakaoColabPredictionBot:
             user.get("id")
             or user.get("userKey")
             or (user.get("properties") or {}).get("plusfriendUserKey")
-            or "anonymous"
+            or ""
         )
 
     def _find_cached_prediction(self, symbol: str) -> pd.Series | None:
@@ -656,27 +690,60 @@ class KakaoColabPredictionBot:
 
         display_code = self._display_code(symbol)
         if status == "completed":
-            cached_row = self._find_cached_prediction(symbol)
-            if cached_row is not None:
-                cached_row = self._safe_attach_issue_summary(cached_row, symbol)
-                try:
-                    message = self._format_prediction_message(cached_row)
-                except Exception as exc:
-                    if self._maybe_patch_legacy_rationale_bug(exc):
-                        message = self._safe_format_prediction_message(cached_row)
-                    else:
-                        self._console_log(
-                            f"{display_code} 예측 완료 메시지 포맷 오류({type(exc).__name__}): {exc}. 원문 사유로 대체합니다."
-                        )
-                        message = self._minimal_format_prediction_message(cached_row)
-                self._console_log(f"{display_code} 예측 완료\n{message}")
-            else:
-                self._console_log(f"{display_code} 예측 작업 completed (exit_code=0). 결과 CSV를 확인해주세요.")
+            self._console_log(f"{display_code} 예측 작업 completed (exit_code=0). 결과 요청 시 최신 CSV를 기반으로 응답합니다.")
+            completion_thread = threading.Thread(
+                target=self._log_completion_preview,
+                args=(symbol,),
+                daemon=True,
+            )
+            completion_thread.start()
         else:
             self._console_log(f"{display_code} 예측 작업 failed (exit_code={int(exit_code)}). 로그를 확인해주세요.")
 
         with self._state_lock:
             self._active_processes.pop(symbol, None)
+
+    def _mark_job_failed(self, symbol: str, exit_code: int, note: str = ""):
+        with self._state_lock:
+            job_state = self._job_registry.get(symbol, {})
+            job_state.update(
+                {
+                    "status": "failed",
+                    "exit_code": int(exit_code),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "failure_note": str(note or ""),
+                }
+            )
+            self._job_registry[symbol] = job_state
+            self._save_registry(self.state_path, self._job_registry)
+
+    def _job_elapsed_seconds(self, job_state: dict[str, Any]) -> float | None:
+        completed_at = str(job_state.get("completed_at") or "").strip()
+        if not completed_at:
+            return None
+        try:
+            completed_dt = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+        except Exception:
+            return None
+        now_utc = datetime.now(timezone.utc)
+        if completed_dt.tzinfo is None:
+            completed_dt = completed_dt.replace(tzinfo=timezone.utc)
+        return max(0.0, (now_utc - completed_dt.astimezone(timezone.utc)).total_seconds())
+
+    def _log_completion_preview(self, symbol: str):
+        display_code = self._display_code(symbol)
+        cached_row = self._find_cached_prediction(symbol)
+        if cached_row is None:
+            return
+        cached_row = self._safe_attach_issue_summary(cached_row, symbol)
+        try:
+            message = self._format_prediction_message(cached_row)
+        except Exception:
+            try:
+                message = self._safe_format_prediction_message(cached_row)
+            except Exception:
+                return
+        self._console_log(f"{display_code} 예측 완료\n{message}")
 
     def _monitor_process_completion(self, symbol: str, process: Any):
         wait = getattr(process, "wait", None)
@@ -829,17 +896,16 @@ class KakaoColabPredictionBot:
                     naver_client_id=self.runtime_config.naver_client_id,
                     naver_client_secret=self.runtime_config.naver_client_secret,
                 )
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                future = ex.submit(_fetch)
-                events = future.result(timeout=1.5)
+            events = self._run_in_background_with_timeout(_fetch, timeout=self.LIVE_EVENTS_TIMEOUT_SEC)
+            if events is None:
+                self._console_log(
+                    f"{self._display_code(symbol)} 라이브 원문 수집 시간초과({self.LIVE_EVENTS_TIMEOUT_SEC:.1f}s)로 생략합니다."
+                )
+                return pd.DataFrame()
             if events.empty:
                 return events
             events["Date"] = pd.to_datetime(events["Date"], errors="coerce").dt.normalize()
             return events
-        except concurrent.futures.TimeoutError:
-            self._console_log(f"{self._display_code(symbol)} 라이브 원문 수집 시간초과(1.5s)로 생략합니다.")
-            return pd.DataFrame()
         except Exception as exc:
             self._console_log(f"{self._display_code(symbol)} 라이브 원문 수집 실패 ({type(exc).__name__}): {exc}")
             return pd.DataFrame()
@@ -851,8 +917,7 @@ class KakaoColabPredictionBot:
 
         events = self._load_result_news()
         if events.empty or "Date" not in events.columns or "Symbol" not in events.columns:
-            self._console_log(f"{self._display_code(symbol)} 요약 원문이 없어 예측 결과만 제공합니다.")
-            return row
+            events = pd.DataFrame(columns=["Date", "Symbol", "source_type", "title"])
 
         target_dt = pd.to_datetime(prediction_date, errors="coerce")
         if pd.isna(target_dt):
@@ -881,15 +946,26 @@ class KakaoColabPredictionBot:
             self._console_log(
                 f"{self._display_code(symbol)} 요약 원문 없음 (기준일 {prediction_date}, 전일 포함 검색, symbol_events={len(same_symbol)})."
             )
+            has_existing_summary = bool(str(row.get("공시 요약", "")).strip()) or bool(str(row.get("뉴스 요약", "")).strip())
+            if has_existing_summary:
+                return row
 
         base = pd.DataFrame([{"Symbol": symbol, "종목명": str(row.get("종목명", self._display_code(symbol)))}])
-        summarized = append_issue_summary_columns(
+        summarized_df = self._run_in_background_with_timeout(
+            append_issue_summary_columns,
             base,
+            timeout=self.ISSUE_SUMMARY_TIMEOUT_SEC,
             context_raw_df=same_day.copy(),
             openai_api_key=self.runtime_config.openai_api_key,
             openai_model=self.runtime_config.openai_model,
             summarize_symbols=[symbol],
-        ).iloc[0]
+        )
+        if summarized_df is None:
+            self._console_log(
+                f"{self._display_code(symbol)} 요약 생성 시간초과({self.ISSUE_SUMMARY_TIMEOUT_SEC:.1f}s)로 기존 응답을 유지합니다."
+            )
+            return row
+        summarized = summarized_df.iloc[0]
         out = row.copy()
         for col in ["오늘 종목 이슈 한줄 요약", "공시 요약", "뉴스 요약", "종합 판단", "주의사항", "원문 개수", "핵심 원문 목록"]:
             out[col] = summarized.get(col)
@@ -904,6 +980,17 @@ class KakaoColabPredictionBot:
         except Exception as exc:
             self._console_log(f"{self._display_code(symbol)} 요약 생성 오류({type(exc).__name__}): {exc}")
             return row
+
+    def _run_in_background_with_timeout(self, fn: Callable[..., Any], *args, timeout: float, **kwargs) -> Any | None:
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(fn, *args, **kwargs)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            return None
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def _refresh_job_states(self):
         with self._state_lock:
