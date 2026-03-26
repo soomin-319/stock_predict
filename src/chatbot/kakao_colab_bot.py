@@ -832,13 +832,13 @@ class KakaoColabPredictionBot:
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 future = ex.submit(_fetch)
-                events = future.result(timeout=4.0)
+                events = future.result(timeout=1.5)
             if events.empty:
                 return events
             events["Date"] = pd.to_datetime(events["Date"], errors="coerce").dt.normalize()
             return events
         except concurrent.futures.TimeoutError:
-            self._console_log(f"{self._display_code(symbol)} 라이브 원문 수집 시간초과(4s)로 생략합니다.")
+            self._console_log(f"{self._display_code(symbol)} 라이브 원문 수집 시간초과(1.5s)로 생략합니다.")
             return pd.DataFrame()
         except Exception as exc:
             self._console_log(f"{self._display_code(symbol)} 라이브 원문 수집 실패 ({type(exc).__name__}): {exc}")
@@ -862,10 +862,12 @@ class KakaoColabPredictionBot:
         candidate_dates = [target_dt.normalize(), (target_dt - pd.Timedelta(days=1)).normalize()]
         used_date = candidate_dates[0]
         same_day = pd.DataFrame()
+        live_fetch_attempted = False
         for candidate_dt in candidate_dates:
             daily = same_symbol[same_symbol["Date"] == candidate_dt]
-            if daily.empty:
+            if daily.empty and not live_fetch_attempted:
                 live_events = self._collect_live_symbol_events(symbol, candidate_dt.strftime("%Y-%m-%d"))
+                live_fetch_attempted = True
                 if not live_events.empty:
                     same_symbol = pd.concat([same_symbol, live_events], ignore_index=True)
                     daily = same_symbol[same_symbol["Date"] == candidate_dt]

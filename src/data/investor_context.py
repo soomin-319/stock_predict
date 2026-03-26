@@ -137,6 +137,8 @@ def _dart_items(payload: dict | None) -> list[dict]:
         return []
     status = str(payload.get("status", "")).strip()
     if status and status != "000":
+        message = str(payload.get("message", "")).strip()
+        print(f"[INVESTOR_CONTEXT] DART 응답 비정상 status={status} message={message}")
         return []
     items = payload.get("list", [])
     return items if isinstance(items, list) else []

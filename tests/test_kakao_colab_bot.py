@@ -239,6 +239,32 @@ def test_cached_prediction_falls_back_to_yesterday_when_today_events_are_missing
     assert "[공시 요약]" in text
 
 
+def test_cached_prediction_attempts_live_fetch_only_once_across_today_and_yesterday(tmp_path: Path, monkeypatch):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [{"종목코드": "000660", "종목명": "SK하이닉스", "권고": "관망", "내일 예상 종가": 200, "내일 예상 수익률(%)": "0.5%", "상승확률(%)": "55.0%", "예측 신뢰도": "65.0%", "예측 이유": "r2"}]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+    pd.DataFrame([{"Symbol": "000660.KS", "Date": "2026-03-26"}]).to_csv(result_dir / "result_detail.csv", index=False)
+    pd.DataFrame([{"Date": "2026-03-24", "Symbol": "005930.KS", "source_type": "news", "title": "other"}]).to_csv(
+        result_dir / "result_news.csv", index=False
+    )
+
+    calls = {"count": 0}
+
+    def _fake_collect(self, symbol, reference_date):
+        calls["count"] += 1
+        return pd.DataFrame()
+
+    monkeypatch.setattr(KakaoColabPredictionBot, "_collect_live_symbol_events", _fake_collect)
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-once"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert calls["count"] == 1
+    assert "권고:" in text
+
+
 def test_cached_prediction_still_returns_message_when_issue_summary_raises(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
