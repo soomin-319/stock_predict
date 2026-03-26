@@ -339,6 +339,13 @@ def _llm_symbol_issue_summary(
         ensure_ascii=False,
     )
 
+    fallback_disclosure_lines = [str(item.get("title") or "").strip() for item in disclosures if str(item.get("title") or "").strip()][:5]
+    fallback_news_lines = [
+        str(item.get("cluster_topic") or "").strip()
+        for item in structured_payload.get("news_clusters", [])
+        if str(item.get("cluster_topic") or "").strip()
+    ][:5]
+
     try:
         disclosure_summary = _call_llm_text(
             client,
@@ -356,6 +363,18 @@ def _llm_symbol_issue_summary(
         print(f"[ISSUE SUMMARY] LLM 요약 실패 ({symbol}): {type(exc).__name__}: {exc}")
         return None
 
+    disclosure_summary = _ensure_non_empty_issue_block(
+        disclosure_summary,
+        header="[공시 요약]",
+        fallback_lines=fallback_disclosure_lines,
+        empty_line="확인된 핵심 공시 내용 없음",
+    )
+    news_summary = _ensure_non_empty_issue_block(
+        news_summary,
+        header="[뉴스 요약]",
+        fallback_lines=fallback_news_lines,
+        empty_line="확인된 핵심 뉴스 내용 없음",
+    )
     disclosure_summary = disclosure_summary or "[공시 요약]\n- 확인된 핵심 공시 내용 없음"
     news_summary = news_summary or "[뉴스 요약]\n- 확인된 핵심 뉴스 내용 없음"
     source_count = int(len(disclosures)) + int(len(structured_payload.get("news_clusters", [])))
@@ -369,6 +388,29 @@ def _llm_symbol_issue_summary(
         source_count=source_count,
         key_sources=sorted(events["source_type"].dropna().astype(str).unique().tolist()),
     )
+
+
+def _ensure_non_empty_issue_block(
+    summary_text: str | None,
+    *,
+    header: str,
+    fallback_lines: list[str],
+    empty_line: str,
+) -> str:
+    raw = str(summary_text or "").strip()
+    bullets = [line.strip() for line in raw.splitlines() if line.strip().startswith("- ")]
+    lowered = raw.replace(" ", "").lower()
+    empty_marker = empty_line.replace(" ", "").lower()
+    has_explicit_empty_marker = empty_marker in lowered
+    if bullets and not has_explicit_empty_marker:
+        return raw
+
+    if fallback_lines:
+        uniq = list(dict.fromkeys([line.strip() for line in fallback_lines if line.strip()]))[:5]
+        if uniq:
+            return header + "\n" + "\n".join(f"- {line}" for line in uniq)
+
+    return f"{header}\n- {empty_line}"
 
 
 def _rule_based_event_issue_summary(symbol: str, events: pd.DataFrame) -> SymbolIssueSummary:
