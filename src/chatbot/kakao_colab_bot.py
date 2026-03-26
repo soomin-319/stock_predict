@@ -63,8 +63,6 @@ class PipelineRuntimeConfig:
     fetch_investor_context: bool = True
     enable_investor_flow: bool = True
     enable_investor_disclosure: bool = True
-    enable_investor_news: bool = True
-    news_scoring_mode: str = "auto"
     openai_api_key: str | None = None
     openai_model: str | None = None
     naver_client_id: str | None = None
@@ -92,22 +90,18 @@ class PipelineRuntimeConfig:
                 cmd.append("--disable-investor-flow")
             if not self.enable_investor_disclosure:
                 cmd.append("--disable-disclosure-context")
-            if not self.enable_investor_news:
-                cmd.append("--disable-news-context")
             if self.dart_api_key:
                 cmd.extend(["--dart-api-key", self.dart_api_key])
             if self.dart_corp_map_csv:
                 cmd.extend(["--dart-corp-map-csv", self.dart_corp_map_csv])
-            if self.news_scoring_mode:
-                cmd.extend(["--news-scoring-mode", self.news_scoring_mode])
-            if self.openai_api_key:
-                cmd.extend(["--openai-api-key", self.openai_api_key])
-            if self.openai_model:
-                cmd.extend(["--openai-model", self.openai_model])
             if self.naver_client_id:
                 cmd.extend(["--naver-client-id", self.naver_client_id])
             if self.naver_client_secret:
                 cmd.extend(["--naver-client-secret", self.naver_client_secret])
+        if self.openai_api_key:
+            cmd.extend(["--openai-api-key", self.openai_api_key])
+        if self.openai_model:
+            cmd.extend(["--openai-model", self.openai_model])
         if not self.use_external:
             cmd.append("--disable-external")
         if self.report_json:
@@ -212,11 +206,22 @@ class KakaoColabPredictionBot:
         from_session: bool,
     ) -> dict[str, Any]:
         display_code = self._display_code(symbol)
-        self._update_session(user_id, symbol=symbol, intent="tracking")
 
         with self._state_lock:
             job_state = self._job_registry.get(symbol)
         if job_state and job_state.get("status") == "running":
+            prior_intent = self._session_intent(user_id)
+            if prior_intent != "waiting":
+                self._update_session(user_id, symbol=symbol, intent="waiting")
+                return self._build_response(
+                    f"{display_code} 예측을 시작합니다. 잠시 후 '결과'를 입력하면 최신 예측 결과를 안내해드릴게요.",
+                    quick_replies=[
+                        ("결과 확인", "결과"),
+                        ("최신화", "최신화"),
+                        ("도움말", "도움말"),
+                    ],
+                )
+            self._update_session(user_id, symbol=symbol, intent="running")
             return self._build_response(
                 f"{display_code} 예측이 현재 진행 중입니다. 잠시 후 '결과' 또는 '{display_code}'를 다시 입력해주세요.",
                 quick_replies=[
@@ -228,6 +233,7 @@ class KakaoColabPredictionBot:
 
         cached_row = None if force_refresh else self._find_cached_prediction(symbol)
         if cached_row is not None:
+            self._update_session(user_id, symbol=symbol, intent="tracking")
             cached_row = self._safe_attach_issue_summary(cached_row, symbol)
             try:
                 message = self._format_prediction_message(cached_row)
@@ -249,11 +255,14 @@ class KakaoColabPredictionBot:
             )
 
         if job_state and job_state.get("status") == "failed":
+            self._update_session(user_id, symbol=symbol, intent="tracking")
             return self._start_job_response(symbol, retry=True)
 
         if force_refresh and from_session:
+            self._update_session(user_id, symbol=symbol, intent="tracking")
             return self._start_job_response(symbol, retry=True)
 
+        self._update_session(user_id, symbol=symbol, intent="tracking")
         return self._start_job_response(symbol, retry=False)
 
     def _start_job_response(self, symbol: str, retry: bool) -> dict[str, Any]:
@@ -393,7 +402,7 @@ class KakaoColabPredictionBot:
             user.get("id")
             or user.get("userKey")
             or (user.get("properties") or {}).get("plusfriendUserKey")
-            or "anonymous"
+            or ""
         )
 
     def _find_cached_prediction(self, symbol: str) -> pd.Series | None:
@@ -656,22 +665,7 @@ class KakaoColabPredictionBot:
 
         display_code = self._display_code(symbol)
         if status == "completed":
-            cached_row = self._find_cached_prediction(symbol)
-            if cached_row is not None:
-                cached_row = self._safe_attach_issue_summary(cached_row, symbol)
-                try:
-                    message = self._format_prediction_message(cached_row)
-                except Exception as exc:
-                    if self._maybe_patch_legacy_rationale_bug(exc):
-                        message = self._safe_format_prediction_message(cached_row)
-                    else:
-                        self._console_log(
-                            f"{display_code} 예측 완료 메시지 포맷 오류({type(exc).__name__}): {exc}. 원문 사유로 대체합니다."
-                        )
-                        message = self._minimal_format_prediction_message(cached_row)
-                self._console_log(f"{display_code} 예측 완료\n{message}")
-            else:
-                self._console_log(f"{display_code} 예측 작업 completed (exit_code=0). 결과 CSV를 확인해주세요.")
+            self._console_log(f"{display_code} 예측 작업 completed (exit_code=0). 결과 요청 시 최신 CSV를 기반으로 응답합니다.")
         else:
             self._console_log(f"{display_code} 예측 작업 failed (exit_code={int(exit_code)}). 로그를 확인해주세요.")
 
@@ -851,8 +845,7 @@ class KakaoColabPredictionBot:
 
         events = self._load_result_news()
         if events.empty or "Date" not in events.columns or "Symbol" not in events.columns:
-            self._console_log(f"{self._display_code(symbol)} 요약 원문이 없어 예측 결과만 제공합니다.")
-            return row
+            events = pd.DataFrame(columns=["Date", "Symbol", "source_type", "title"])
 
         target_dt = pd.to_datetime(prediction_date, errors="coerce")
         if pd.isna(target_dt):
@@ -881,15 +874,26 @@ class KakaoColabPredictionBot:
             self._console_log(
                 f"{self._display_code(symbol)} 요약 원문 없음 (기준일 {prediction_date}, 전일 포함 검색, symbol_events={len(same_symbol)})."
             )
+            has_existing_summary = bool(str(row.get("공시 요약", "")).strip()) or bool(str(row.get("뉴스 요약", "")).strip())
+            if has_existing_summary:
+                return row
 
         base = pd.DataFrame([{"Symbol": symbol, "종목명": str(row.get("종목명", self._display_code(symbol)))}])
-        summarized = append_issue_summary_columns(
-            base,
-            context_raw_df=same_day.copy(),
-            openai_api_key=self.runtime_config.openai_api_key,
-            openai_model=self.runtime_config.openai_model,
-            summarize_symbols=[symbol],
-        ).iloc[0]
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(
+                    append_issue_summary_columns,
+                    base,
+                    context_raw_df=same_day.copy(),
+                    openai_api_key=self.runtime_config.openai_api_key,
+                    openai_model=self.runtime_config.openai_model,
+                    summarize_symbols=[symbol],
+                )
+                summarized_df = future.result(timeout=2.5)
+            summarized = summarized_df.iloc[0]
+        except concurrent.futures.TimeoutError:
+            self._console_log(f"{self._display_code(symbol)} 요약 생성 시간초과(2.5s)로 기존 응답을 유지합니다.")
+            return row
         out = row.copy()
         for col in ["오늘 종목 이슈 한줄 요약", "공시 요약", "뉴스 요약", "종합 판단", "주의사항", "원문 개수", "핵심 원문 목록"]:
             out[col] = summarized.get(col)
@@ -936,6 +940,14 @@ class KakaoColabPredictionBot:
             session = self._session_registry.get(user_id, {})
         symbol = session.get("last_symbol")
         return str(symbol) if symbol else None
+
+    def _session_intent(self, user_id: str | None) -> str:
+        if not user_id:
+            return ""
+        with self._state_lock:
+            session = self._session_registry.get(user_id, {})
+        intent = str(session.get("last_intent") or "").strip()
+        return intent
 
     def _is_help_request(self, text: str) -> bool:
         return text.strip().lower() in _HELP_KEYWORDS
