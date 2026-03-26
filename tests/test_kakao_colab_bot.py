@@ -177,10 +177,10 @@ def test_cached_prediction_uses_today_reference_date_when_detail_date_is_stale(t
         result_dir / "result_news.csv", index=False
     )
 
-    captured_ref = {}
+    captured_ref: list[str] = []
 
     def _fake_collect(symbol, reference_date):
-        captured_ref["date"] = reference_date
+        captured_ref.append(reference_date)
         return pd.DataFrame([{"Date": "2026-03-26", "Symbol": "000660.KS", "source_type": "news", "title": "당일 뉴스"}])
 
     def _fake_append(pred_df, context_raw_df=None, **kwargs):
@@ -201,8 +201,57 @@ def test_cached_prediction_uses_today_reference_date_when_detail_date_is_stale(t
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-stale"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert captured_ref["date"] == "2026-03-26"
+    assert captured_ref[0] == "2026-03-26"
     assert "[뉴스 요약]" in text
+
+
+def test_cached_prediction_falls_back_to_yesterday_when_today_events_are_missing(tmp_path: Path, monkeypatch):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [{"종목코드": "000660", "종목명": "SK하이닉스", "권고": "관망", "내일 예상 종가": 200, "내일 예상 수익률(%)": "0.5%", "상승확률(%)": "55.0%", "예측 신뢰도": "65.0%", "예측 이유": "r2"}]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+    pd.DataFrame([{"Symbol": "000660.KS", "Date": "2026-03-26"}]).to_csv(result_dir / "result_detail.csv", index=False)
+    pd.DataFrame([{"Date": "2026-03-25", "Symbol": "000660.KS", "source_type": "disclosure", "title": "전일 공시"}]).to_csv(
+        result_dir / "result_news.csv", index=False
+    )
+
+    captured = {}
+
+    def _fake_append(pred_df, context_raw_df=None, **kwargs):
+        captured["dates"] = sorted(context_raw_df["Date"].astype(str).unique().tolist()) if context_raw_df is not None else []
+        out = pred_df.copy()
+        out["오늘 종목 이슈 한줄 요약"] = "요약"
+        out["공시 요약"] = "[공시 요약]\n- 전일 공시"
+        out["뉴스 요약"] = "[뉴스 요약]\n- 없음"
+        out["종합 판단"] = "중립"
+        out["주의사항"] = "참고용"
+        out["원문 개수"] = 1
+        out["핵심 원문 목록"] = "[]"
+        return out
+
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.append_issue_summary_columns", _fake_append)
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-yday"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert captured["dates"] == ["2026-03-25"]
+    assert "[공시 요약]" in text
+
+
+def test_cached_prediction_still_returns_message_when_issue_summary_raises(tmp_path: Path, monkeypatch):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [{"종목코드": "005930", "종목명": "삼성전자", "권고": "매수", "내일 예상 종가": 71200, "내일 예상 수익률(%)": "1.234%", "상승확률(%)": "78.9%", "예측 신뢰도": "88.0%", "예측 이유": "테스트 사유"}]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+
+    bot = make_bot(tmp_path)
+    monkeypatch.setattr(bot, "_attach_live_issue_summary", lambda row, symbol: (_ for _ in ()).throw(RuntimeError("boom")))
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-safe"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "권고: 매수" in text
 
 
 def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):

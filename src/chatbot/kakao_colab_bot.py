@@ -227,7 +227,7 @@ class KakaoColabPredictionBot:
 
         cached_row = None if force_refresh else self._find_cached_prediction(symbol)
         if cached_row is not None:
-            cached_row = self._attach_live_issue_summary(cached_row, symbol)
+            cached_row = self._safe_attach_issue_summary(cached_row, symbol)
             try:
                 message = self._format_prediction_message(cached_row)
             except Exception as exc:
@@ -657,7 +657,7 @@ class KakaoColabPredictionBot:
         if status == "completed":
             cached_row = self._find_cached_prediction(symbol)
             if cached_row is not None:
-                cached_row = self._attach_live_issue_summary(cached_row, symbol)
+                cached_row = self._safe_attach_issue_summary(cached_row, symbol)
                 try:
                     message = self._format_prediction_message(cached_row)
                 except Exception as exc:
@@ -847,18 +847,27 @@ class KakaoColabPredictionBot:
         target_dt = pd.to_datetime(prediction_date, errors="coerce")
         if pd.isna(target_dt):
             return row
+
         same_symbol = events[events["Symbol"].astype(str) == str(symbol)]
-        same_day = same_symbol[same_symbol["Date"] == target_dt.normalize()]
-        if same_day.empty:
-            live_events = self._collect_live_symbol_events(symbol, prediction_date)
-            if not live_events.empty:
-                same_day = live_events[live_events["Date"] == target_dt.normalize()].copy()
-                same_symbol = live_events[live_events["Symbol"].astype(str) == str(symbol)]
+        candidate_dates = [target_dt.normalize(), (target_dt - pd.Timedelta(days=1)).normalize()]
+        used_date = candidate_dates[0]
+        same_day = pd.DataFrame()
+        for candidate_dt in candidate_dates:
+            daily = same_symbol[same_symbol["Date"] == candidate_dt]
+            if daily.empty:
+                live_events = self._collect_live_symbol_events(symbol, candidate_dt.strftime("%Y-%m-%d"))
+                if not live_events.empty:
+                    same_symbol = pd.concat([same_symbol, live_events], ignore_index=True)
+                    daily = same_symbol[same_symbol["Date"] == candidate_dt]
+            if not daily.empty:
+                same_day = daily.copy()
+                used_date = candidate_dt
+                break
         disclosure_count = int((same_day.get("source_type", pd.Series(dtype=str)).astype(str) == "disclosure").sum())
         news_count = int((same_day.get("source_type", pd.Series(dtype=str)).astype(str) == "news").sum())
         if same_day.empty:
             self._console_log(
-                f"{self._display_code(symbol)} 요약 원문 없음 (기준일 {prediction_date}, symbol_events={len(same_symbol)})."
+                f"{self._display_code(symbol)} 요약 원문 없음 (기준일 {prediction_date}, 전일 포함 검색, symbol_events={len(same_symbol)})."
             )
 
         base = pd.DataFrame([{"Symbol": symbol, "종목명": str(row.get("종목명", self._display_code(symbol)))}])
@@ -873,9 +882,16 @@ class KakaoColabPredictionBot:
         for col in ["오늘 종목 이슈 한줄 요약", "공시 요약", "뉴스 요약", "종합 판단", "주의사항", "원문 개수", "핵심 원문 목록"]:
             out[col] = summarized.get(col)
         self._console_log(
-            f"{self._display_code(symbol)} 요약 생성 완료 (기준일 {prediction_date}, 공시 {disclosure_count}건, 뉴스 {news_count}건)."
+            f"{self._display_code(symbol)} 요약 생성 완료 (기준일 {used_date.strftime('%Y-%m-%d')}, 공시 {disclosure_count}건, 뉴스 {news_count}건)."
         )
         return out
+
+    def _safe_attach_issue_summary(self, row: pd.Series, symbol: str) -> pd.Series:
+        try:
+            return self._attach_live_issue_summary(row, symbol)
+        except Exception as exc:
+            self._console_log(f"{self._display_code(symbol)} 요약 생성 오류({type(exc).__name__}): {exc}")
+            return row
 
     def _refresh_job_states(self):
         with self._state_lock:
