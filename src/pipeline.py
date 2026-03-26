@@ -451,6 +451,8 @@ def run_pipeline(
     portfolio_value: float | None = None,
     max_daily_participation: float | None = None,
     max_positions_per_market_type: int | None = None,
+    enable_issue_summary: bool = True,
+    issue_summary_symbols: list[str] | None = None,
 ):
     effective_openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
     effective_openai_model = openai_model or os.getenv("OPENAI_MODEL") or ("gpt-5" if effective_openai_api_key else None)
@@ -633,12 +635,16 @@ def run_pipeline(
     pred_df = pred_df.merge(sym_acc, on="Symbol", how="left")
     pred_df["history_direction_accuracy"] = pred_df["history_direction_accuracy"].fillna(0.5)
     pred_df = finalize_latest_prediction_frame(pred_df, symbol_name_map)
-    pred_df = append_issue_summary_columns(
-        pred_df,
-        context_raw_df=context_raw_df,
-        openai_api_key=effective_openai_api_key,
-        openai_model=effective_openai_model,
-    )
+    if enable_issue_summary:
+        pred_df = append_issue_summary_columns(
+            pred_df,
+            context_raw_df=context_raw_df,
+            openai_api_key=effective_openai_api_key,
+            openai_model=effective_openai_model,
+            summarize_symbols=issue_summary_symbols,
+        )
+    else:
+        pred_df = append_issue_summary_columns(pred_df, summarize_symbols=[])
     pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: _format_percentage_text(v, digits=1, unit_interval=True))
     pred_df["예측 이유"] = pred_df["prediction_reason"]
     pred_df["권고"] = pred_df["recommendation"]
@@ -691,6 +697,9 @@ def run_pipeline(
     simple_path = _safe_to_csv(simple_df, simple_path)
     news_path = resolve_output_path("result_news.csv")
     news_path = _safe_to_csv(context_raw_df, news_path)
+    disclosure_path = resolve_output_path("result_disclosure.csv")
+    disclosure_df = context_raw_df[context_raw_df["source_type"].astype(str) == "disclosure"].copy() if "source_type" in context_raw_df.columns else pd.DataFrame()
+    disclosure_path = _safe_to_csv(disclosure_df, disclosure_path)
 
     report = {
         "universe_name": cfg.universe.name,
@@ -734,6 +743,7 @@ def run_pipeline(
             "result_detail_csv": str(detail_path),
             "result_simple_csv": str(simple_path),
             "result_news_csv": str(news_path),
+            "result_disclosure_csv": str(disclosure_path),
             "figure_dir": str(figure_dir_path),
             **fig_paths,
             "signal_hist": signal_hist,
@@ -811,6 +821,13 @@ def build_cli_parser() -> argparse.ArgumentParser:
         default=None,
         help="Maximum number of holdings allowed per market_type bucket",
     )
+    parser.add_argument("--disable-issue-summary", action="store_true", help="Disable news/disclosure summary generation")
+    parser.add_argument(
+        "--issue-summary-symbols",
+        nargs="*",
+        default=None,
+        help="Generate issue summaries only for specific symbols",
+    )
     parser.add_argument(
         "--real-symbols",
         nargs="*",
@@ -879,6 +896,8 @@ def main():
         portfolio_value=args.portfolio_value,
         max_daily_participation=args.max_daily_participation,
         max_positions_per_market_type=args.max_positions_per_market_type,
+        enable_issue_summary=not args.disable_issue_summary,
+        issue_summary_symbols=args.issue_summary_symbols,
     )
 
 

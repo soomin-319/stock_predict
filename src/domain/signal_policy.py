@@ -39,15 +39,15 @@ def recommendation_from_signal(
     uncertainty = pd.to_numeric(pd.Series([uncertainty_score]), errors="coerce").iloc[0]
 
     if pd.isna(signal) or pd.isna(up_prob) or pd.isna(uncertainty):
-        if ret > 1.0:
+        if ret > 2.0:
             return "매수"
-        if ret <= -1.0:
+        if ret <= -2.0:
             return "매도"
         return "관망"
 
     if signal >= 0.55 and up_prob >= 0.55 and uncertainty <= 0.60 and ret > 0:
         return "매수"
-    if signal <= 0.25 or up_prob < 0.45 or (ret <= -1.0 and uncertainty >= 0.5):
+    if signal <= 0.25 or up_prob < 0.45 or (ret <= -2.0 and uncertainty >= 0.5):
         return "매도"
 
     return "관망"

@@ -113,6 +113,7 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "avg_selected_count" in payload["backtest"]
     assert Path(payload["artifacts"]["result_detail_csv"]).exists()
     assert Path(payload["artifacts"]["result_simple_csv"]).exists()
+    assert Path(payload["artifacts"]["result_disclosure_csv"]).exists()
     assert Path(payload["artifacts"]["actual_vs_predicted"]).exists()
     assert Path(payload["artifacts"]["actual_vs_predicted_price"]).exists()
     assert Path(payload["artifacts"]["pm_report_json"]).exists()
