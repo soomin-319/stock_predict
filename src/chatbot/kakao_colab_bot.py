@@ -150,6 +150,7 @@ class KakaoColabPredictionBot:
         self._session_registry = self._load_registry(self.session_path)
         self._result_simple_cache: pd.DataFrame | None = None
         self._result_simple_cache_mtime_ns: int | None = None
+        self._issue_summary_cache: dict[str, dict[str, Any]] = {}
         self._state_lock = threading.RLock()
         self._legacy_formatter_patched = False
         self._bootstrap_formatter_guard()
@@ -439,13 +440,15 @@ class KakaoColabPredictionBot:
         matched = simple_df[simple_df["종목코드"].astype(str).str.zfill(6) == target_code.zfill(6)]
         if matched.empty:
             return None
-        return matched.iloc[0]
+        row = matched.iloc[0].copy()
+        return self._apply_issue_summary_cache(row, symbol)
 
     def _load_cached_result_simple(self) -> pd.DataFrame:
         if not self.result_simple_path.exists():
             with self._state_lock:
                 self._result_simple_cache = None
                 self._result_simple_cache_mtime_ns = None
+                self._issue_summary_cache = {}
             return pd.DataFrame()
         try:
             stat_mtime_ns = self.result_simple_path.stat().st_mtime_ns
@@ -462,6 +465,7 @@ class KakaoColabPredictionBot:
             with self._state_lock:
                 self._result_simple_cache = loaded
                 self._result_simple_cache_mtime_ns = stat_mtime_ns
+                self._issue_summary_cache = {}
             return loaded.copy()
         except FileNotFoundError:
             return pd.DataFrame()
@@ -470,6 +474,7 @@ class KakaoColabPredictionBot:
             with self._state_lock:
                 self._result_simple_cache = None
                 self._result_simple_cache_mtime_ns = None
+                self._issue_summary_cache = {}
             return pd.DataFrame()
 
     def _infer_market_from_symbol(self, symbol: str) -> str:
@@ -911,6 +916,10 @@ class KakaoColabPredictionBot:
             return pd.DataFrame()
 
     def _attach_live_issue_summary(self, row: pd.Series, symbol: str) -> pd.Series:
+        if self._has_issue_summary(row):
+            self._cache_issue_summary(symbol, row)
+            return row
+
         prediction_date = self._prediction_date_for_symbol(symbol)
         if not prediction_date:
             return row
@@ -969,6 +978,7 @@ class KakaoColabPredictionBot:
         out = row.copy()
         for col in ["오늘 종목 이슈 한줄 요약", "공시 요약", "뉴스 요약", "종합 판단", "주의사항", "원문 개수", "핵심 원문 목록"]:
             out[col] = summarized.get(col)
+        self._cache_issue_summary(symbol, out)
         self._console_log(
             f"{self._display_code(symbol)} 요약 생성 완료 (기준일 {used_date.strftime('%Y-%m-%d')}, 공시 {disclosure_count}건, 뉴스 {news_count}건)."
         )
@@ -980,6 +990,27 @@ class KakaoColabPredictionBot:
         except Exception as exc:
             self._console_log(f"{self._display_code(symbol)} 요약 생성 오류({type(exc).__name__}): {exc}")
             return row
+
+    def _has_issue_summary(self, row: pd.Series) -> bool:
+        return bool(self._get_clean_issue_text(row.get("공시 요약")) or self._get_clean_issue_text(row.get("뉴스 요약")))
+
+    def _cache_issue_summary(self, symbol: str, row: pd.Series) -> None:
+        payload = {
+            col: row.get(col)
+            for col in ["오늘 종목 이슈 한줄 요약", "공시 요약", "뉴스 요약", "종합 판단", "주의사항", "원문 개수", "핵심 원문 목록"]
+        }
+        with self._state_lock:
+            self._issue_summary_cache[str(symbol)] = payload
+
+    def _apply_issue_summary_cache(self, row: pd.Series, symbol: str) -> pd.Series:
+        with self._state_lock:
+            payload = self._issue_summary_cache.get(str(symbol))
+        if not payload:
+            return row
+        out = row.copy()
+        for col, value in payload.items():
+            out[col] = value
+        return out
 
     def _run_in_background_with_timeout(self, fn: Callable[..., Any], *args, timeout: float, **kwargs) -> Any | None:
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)

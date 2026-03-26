@@ -1140,3 +1140,87 @@ def test_issue_summary_timeout_does_not_block_webhook_response(tmp_path: Path, m
     text = response["template"]["outputs"][0]["simpleText"]["text"]
     assert "삼성전자" in text
     assert elapsed < 0.12
+
+
+def test_cached_prediction_does_not_regenerate_issue_summary_when_summary_exists(tmp_path: Path, monkeypatch):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "종목코드": "005930",
+                "종목명": "삼성전자",
+                "권고": "매수",
+                "내일 예상 종가": 71200,
+                "내일 예상 수익률(%)": "1.234%",
+                "상승확률(%)": "78.9%",
+                "예측 신뢰도": "88.0%",
+                "예측 이유": "테스트 사유",
+                "공시 요약": "이미 생성된 공시 요약",
+                "뉴스 요약": "이미 생성된 뉴스 요약",
+            }
+        ]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+
+    called = {"count": 0}
+
+    def _should_not_run(*args, **kwargs):
+        called["count"] += 1
+        raise AssertionError("요약 재생성은 호출되면 안 됩니다.")
+
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.append_issue_summary_columns", _should_not_run)
+
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-summary-exists"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "이미 생성된 공시 요약" in text
+    assert "이미 생성된 뉴스 요약" in text
+    assert called["count"] == 0
+
+
+def test_generated_issue_summary_is_reused_without_refresh(tmp_path: Path, monkeypatch):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "종목코드": "005930",
+                "종목명": "삼성전자",
+                "권고": "매수",
+                "내일 예상 종가": 71200,
+                "내일 예상 수익률(%)": "1.234%",
+                "상승확률(%)": "78.9%",
+                "예측 신뢰도": "88.0%",
+                "예측 이유": "테스트 사유",
+            }
+        ]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+    pd.DataFrame([{"Symbol": "005930.KS", "Date": "2026-03-26"}]).to_csv(result_dir / "result_detail.csv", index=False)
+
+    called = {"count": 0}
+
+    def _fake_summary(pred_df, **kwargs):
+        called["count"] += 1
+        out = pred_df.copy()
+        out["공시 요약"] = "생성된 공시 요약"
+        out["뉴스 요약"] = "생성된 뉴스 요약"
+        out["오늘 종목 이슈 한줄 요약"] = "요약"
+        out["종합 판단"] = "중립"
+        out["주의사항"] = "참고"
+        out["원문 개수"] = 0
+        out["핵심 원문 목록"] = "[]"
+        return out
+
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.append_issue_summary_columns", _fake_summary)
+    monkeypatch.setattr(KakaoColabPredictionBot, "_collect_live_symbol_events", lambda self, symbol, reference_date: pd.DataFrame())
+
+    bot = make_bot(tmp_path)
+    resp1 = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-reuse-1"}}})
+    resp2 = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-reuse-2"}}})
+
+    text1 = resp1["template"]["outputs"][0]["simpleText"]["text"]
+    text2 = resp2["template"]["outputs"][0]["simpleText"]["text"]
+    assert "생성된 공시 요약" in text1 and "생성된 뉴스 요약" in text1
+    assert "생성된 공시 요약" in text2 and "생성된 뉴스 요약" in text2
+    assert called["count"] == 1
