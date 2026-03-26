@@ -194,7 +194,7 @@ def prediction_reason(row: pd.Series) -> str:
     one_hundred_billion_krw = 100_000_000_000.0
 
     if turnover_rank <= 15:
-        reasons.append("종배수급: 거래대금 15위 이내 상위 종목입니다")
+        reasons.append("종배수급: 거래대금 상위권, 거래대금 상위 15위 종목입니다")
     if foreign_net_buy >= one_hundred_billion_krw and institution_net_buy >= one_hundred_billion_krw:
         reasons.append(
             f"수급조건: 외국인 {_format_korean_amount(foreign_net_buy)}, 기관 {_format_korean_amount(institution_net_buy)}로 각각 1,000억 이상 순매수입니다"
