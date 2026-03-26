@@ -44,4 +44,5 @@ def test_run_colab_pipeline_bootstraps_default_krx_symbols(monkeypatch, tmp_path
     assert captured["save"]["path"].endswith("data/real_ohlcv.csv")
     assert captured["save"]["symbols"] == ["000270.KS", "005930.KS", "000660.KS"]
     assert captured["run_pipeline"]["input_csv"] == "data/real_ohlcv.csv"
+    assert captured["run_pipeline"]["enable_issue_summary"] is True
     assert out["result_simple_csv"].endswith("result/result_simple.csv")

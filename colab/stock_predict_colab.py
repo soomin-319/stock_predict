@@ -105,6 +105,7 @@ def run_colab_pipeline(
     bootstrap_default_symbols: bool = True,
     real_start: str = "2018-01-01",
     config_json: str | None = None,
+    enable_issue_summary: bool = True,
 ) -> dict[str, str]:
     pipeline_input = input_csv
     if bootstrap_default_symbols and _should_bootstrap_default_symbols(input_csv):
@@ -133,6 +134,7 @@ def run_colab_pipeline(
         news_scoring_mode=news_scoring_mode,
         openai_api_key=openai_api_key,
         openai_model=openai_model,
+        enable_issue_summary=enable_issue_summary,
     )
 
     result_dir = PROJECT_ROOT / "result"
