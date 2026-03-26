@@ -1123,6 +1123,14 @@ class KakaoColabPredictionBot:
         symbol = session.get("last_symbol")
         return str(symbol) if symbol else None
 
+    def _session_intent(self, user_id: str | None) -> str:
+        if not user_id:
+            return ""
+        with self._state_lock:
+            session = self._session_registry.get(user_id, {})
+        intent = str(session.get("last_intent") or "").strip()
+        return intent
+
     def _is_help_request(self, text: str) -> bool:
         return text.strip().lower() in _HELP_KEYWORDS
 
