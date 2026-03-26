@@ -381,6 +381,23 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert "user-77" in session_path.read_text(encoding="utf-8")
 
 
+def test_second_and_third_request_show_wait_then_running_message(tmp_path: Path):
+    runner = RecordingRunner()
+    bot = make_bot(tmp_path, runner=runner)
+
+    first = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-seq"}}})
+    second = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-seq"}}})
+    third = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-seq"}}})
+
+    first_text = first["template"]["outputs"][0]["simpleText"]["text"]
+    second_text = second["template"]["outputs"][0]["simpleText"]["text"]
+    third_text = third["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "005930 예측을 시작합니다" in first_text
+    assert "005930 예측을 시작합니다" in second_text
+    assert "005930 예측이 현재 진행 중입니다" in third_text
+
+
 def test_start_job_skips_disable_external_flag_when_external_features_enabled(tmp_path: Path):
     runner = RecordingRunner()
     runtime_config = PipelineRuntimeConfig(
