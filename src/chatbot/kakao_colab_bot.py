@@ -12,10 +12,12 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from src.data.krx_universe import find_symbol_candidates_by_name
+from src.data.investor_context import collect_context_raw_events
+from src.data.krx_universe import find_symbol_candidates_by_name, get_symbol_name_map
 from src.data.fetch_real_data import normalize_user_symbols
 from src.reports.issue_summary import append_issue_summary_columns
 
@@ -766,22 +768,25 @@ class KakaoColabPredictionBot:
         return True
 
     def _prediction_date_for_symbol(self, symbol: str) -> str | None:
+        today_kst = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Seoul")).date()
         if not self.result_detail_path.exists():
-            return None
+            return today_kst.strftime("%Y-%m-%d")
         try:
             df = pd.read_csv(self.result_detail_path, dtype={"Symbol": str}, encoding="utf-8-sig")
         except Exception:
-            return None
+            return today_kst.strftime("%Y-%m-%d")
         if df.empty or "Symbol" not in df.columns or "Date" not in df.columns:
-            return None
+            return today_kst.strftime("%Y-%m-%d")
         target = str(symbol)
         matched = df[df["Symbol"].astype(str) == target].copy()
         if matched.empty:
-            return None
+            return today_kst.strftime("%Y-%m-%d")
         dt = pd.to_datetime(matched["Date"], errors="coerce").dropna()
         if dt.empty:
-            return None
-        return dt.max().normalize().strftime("%Y-%m-%d")
+            return today_kst.strftime("%Y-%m-%d")
+        latest_prediction_date = dt.max().normalize().date()
+        reference_date = max(today_kst, latest_prediction_date)
+        return reference_date.strftime("%Y-%m-%d")
 
     def _load_result_news(self) -> pd.DataFrame:
         if not self.result_news_path.exists():
@@ -799,6 +804,36 @@ class KakaoColabPredictionBot:
             news_df["Symbol"] = news_df["Symbol"].astype(str)
         return news_df
 
+    def _collect_live_symbol_events(self, symbol: str, reference_date: str) -> pd.DataFrame:
+        has_naver = bool(self.runtime_config.naver_client_id and self.runtime_config.naver_client_secret)
+        has_dart = bool(self.runtime_config.dart_api_key)
+        looks_demo_key = any(
+            str(v).lower().startswith("demo")
+            for v in [self.runtime_config.naver_client_id, self.runtime_config.naver_client_secret, self.runtime_config.dart_api_key]
+            if v
+        )
+        if not (has_naver or has_dart) or looks_demo_key:
+            return pd.DataFrame()
+        try:
+            symbol_name_map = get_symbol_name_map([symbol])
+            events = collect_context_raw_events(
+                symbols=[symbol],
+                start=reference_date,
+                end=reference_date,
+                dart_api_key=self.runtime_config.dart_api_key,
+                dart_corp_map_csv=self.runtime_config.dart_corp_map_csv,
+                symbol_name_map=symbol_name_map,
+                naver_client_id=self.runtime_config.naver_client_id,
+                naver_client_secret=self.runtime_config.naver_client_secret,
+            )
+            if events.empty:
+                return events
+            events["Date"] = pd.to_datetime(events["Date"], errors="coerce").dt.normalize()
+            return events
+        except Exception as exc:
+            self._console_log(f"{self._display_code(symbol)} 라이브 원문 수집 실패 ({type(exc).__name__}): {exc}")
+            return pd.DataFrame()
+
     def _attach_live_issue_summary(self, row: pd.Series, symbol: str) -> pd.Series:
         prediction_date = self._prediction_date_for_symbol(symbol)
         if not prediction_date:
@@ -814,6 +849,11 @@ class KakaoColabPredictionBot:
             return row
         same_symbol = events[events["Symbol"].astype(str) == str(symbol)]
         same_day = same_symbol[same_symbol["Date"] == target_dt.normalize()]
+        if same_day.empty:
+            live_events = self._collect_live_symbol_events(symbol, prediction_date)
+            if not live_events.empty:
+                same_day = live_events[live_events["Date"] == target_dt.normalize()].copy()
+                same_symbol = live_events[live_events["Symbol"].astype(str) == str(symbol)]
         disclosure_count = int((same_day.get("source_type", pd.Series(dtype=str)).astype(str) == "disclosure").sum())
         news_count = int((same_day.get("source_type", pd.Series(dtype=str)).astype(str) == "news").sum())
         if same_day.empty:
