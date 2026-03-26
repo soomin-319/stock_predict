@@ -338,7 +338,7 @@ def test_cached_prediction_still_returns_message_when_issue_summary_times_out(tm
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-timeout"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert "권고: 매수" in text
+    assert "뉴스/공시 요약을 생성 중" in text
 
 
 def test_build_response_truncates_overlong_simpletext_payload(tmp_path: Path):
@@ -378,8 +378,8 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert "demo-key" in command
     assert "--dart-corp-map-csv" in command
     assert "data/dart_corp_map.csv" in command
-    assert "--naver-client-id" not in command
-    assert "--naver-client-secret" not in command
+    assert "--naver-client-id" in command
+    assert "--naver-client-secret" in command
     assert "--disable-external" in command
 
     session_path = tmp_path / "result" / "chatbot_sessions.json"
@@ -399,7 +399,24 @@ def test_first_prediction_bootstraps_all_symbols_but_summarizes_only_requested_s
     ).to_csv(data_dir / "krx_symbol_name_map.csv", index=False)
 
     runner = RecordingRunner()
-    bot = make_bot(tmp_path, runner=runner)
+    runtime_config = PipelineRuntimeConfig(
+        project_root=tmp_path,
+        python_executable="python",
+        input_csv="data/real_ohlcv.csv",
+        report_json="pipeline_report_with_context.json",
+        figure_dir="figures_with_context",
+        dart_api_key="demo-key",
+        dart_corp_map_csv="data/dart_corp_map.csv",
+        bootstrap_default_symbols=True,
+        bootstrap_symbol_cap=20,
+    )
+    bot = KakaoColabPredictionBot(
+        runtime_config=runtime_config,
+        result_simple_path="result/result_simple.csv",
+        state_path="result/chatbot_jobs.json",
+        session_path="result/chatbot_sessions.json",
+        process_runner=runner,
+    )
 
     bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-bootstrap"}}})
     command = runner.calls[0]["command"]
@@ -453,9 +470,15 @@ def test_additional_symbol_request_generates_summary_when_placeholder_exists(tmp
     bot = make_bot(tmp_path)
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-extra-symbol"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
+    for _ in range(20):
+        follow_up = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-extra-symbol"}}})
+        follow_text = follow_up["template"]["outputs"][0]["simpleText"]["text"]
+        if "실제 공시 요약" in follow_text:
+            break
+        time.sleep(0.01)
 
-    assert "실제 공시 요약" in text
-    assert "실제 뉴스 요약" in text
+    assert "실제 공시 요약" in follow_text
+    assert "실제 뉴스 요약" in follow_text
     assert calls["count"] == 1
 
 
@@ -1193,6 +1216,8 @@ def test_issue_summary_timeout_does_not_block_webhook_response(tmp_path: Path, m
                 "상승확률(%)": "78.9%",
                 "예측 신뢰도": "88.0%",
                 "예측 이유": "테스트 사유",
+                "공시 요약": "[공시 요약]\n- 요청 종목에 대해서만 요약을 생성합니다.",
+                "뉴스 요약": "[뉴스 요약]\n- 요청 종목에 대해서만 요약을 생성합니다.",
             }
         ]
     ).to_csv(result_dir / "result_simple.csv", index=False)
@@ -1215,7 +1240,7 @@ def test_issue_summary_timeout_does_not_block_webhook_response(tmp_path: Path, m
     elapsed = time.perf_counter() - started
 
     text = response["template"]["outputs"][0]["simpleText"]["text"]
-    assert "삼성전자" in text
+    assert "뉴스/공시 요약을 생성 중" in text
     assert elapsed < 0.12
 
 

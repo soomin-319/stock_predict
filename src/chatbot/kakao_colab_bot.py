@@ -68,7 +68,8 @@ class PipelineRuntimeConfig:
     naver_client_id: str | None = None
     naver_client_secret: str | None = None
     use_external: bool = False
-    bootstrap_default_symbols: bool = True
+    bootstrap_default_symbols: bool = False
+    bootstrap_symbol_cap: int = 20
     real_start: str = "2018-01-01"
     prewarm_default_predictions: bool = True
     extra_args: tuple[str, ...] = ()
@@ -159,6 +160,8 @@ class KakaoColabPredictionBot:
         self._result_simple_cache: pd.DataFrame | None = None
         self._result_simple_cache_mtime_ns: int | None = None
         self._issue_summary_cache: dict[str, dict[str, Any]] = {}
+        self._issue_summary_jobs: dict[str, dict[str, Any]] = {}
+        self._issue_summary_timeout_symbols: set[str] = set()
         self._state_lock = threading.RLock()
         self._legacy_formatter_patched = False
         self._bootstrap_all_symbols_done = False
@@ -242,6 +245,19 @@ class KakaoColabPredictionBot:
         if cached_row is not None:
             self._update_session(user_id, symbol=symbol, intent="tracking")
             cached_row = self._safe_attach_issue_summary(cached_row, symbol)
+            if not self._has_issue_summary(cached_row) and self._is_issue_summary_running(symbol):
+                return self._build_response(
+                    (
+                        f"{display_code} 예측은 완료되었습니다. "
+                        "뉴스/공시 요약을 생성 중입니다. 잠시 후 '결과' 또는 "
+                        f"'{display_code}'를 다시 입력해주세요."
+                    ),
+                    quick_replies=[
+                        ("결과 확인", "결과"),
+                        ("최신화", "최신화"),
+                        ("도움말", "도움말"),
+                    ],
+                )
             try:
                 message = self._format_prediction_message(cached_row)
             except Exception as exc:
@@ -803,8 +819,16 @@ class KakaoColabPredictionBot:
             bootstrap_symbols = self._load_bootstrap_symbols_from_krx_map()
             if bootstrap_symbols:
                 add_symbols = bootstrap_symbols
+                cap = max(1, int(self.runtime_config.bootstrap_symbol_cap or 1))
+                if len(add_symbols) > cap:
+                    head = [symbol]
+                    tail = [s for s in add_symbols if s != symbol]
+                    add_symbols = list(dict.fromkeys(head + tail))[:cap]
+                    self._console_log(
+                        f"{self._display_code(symbol)} 최초 예측 요청: KRX 심볼 맵 {len(bootstrap_symbols)}개 중 상위 {len(add_symbols)}개만 분할 실행 대상으로 제한합니다."
+                    )
                 self._console_log(
-                    f"{self._display_code(symbol)} 최초 예측 요청: KRX 심볼 맵 전체 {len(add_symbols)}개 심볼에 대해 예측을 실행합니다."
+                    f"{self._display_code(symbol)} 최초 예측 요청: {len(add_symbols)}개 심볼에 대해 예측을 실행합니다."
                 )
             self._bootstrap_all_symbols_done = True
 
@@ -1030,6 +1054,9 @@ class KakaoColabPredictionBot:
             self._console_log(
                 f"{self._display_code(symbol)} 요약 생성 시간초과({self.ISSUE_SUMMARY_TIMEOUT_SEC:.1f}s)로 기존 응답을 유지합니다."
             )
+            with self._state_lock:
+                self._issue_summary_timeout_symbols.add(str(symbol))
+            self._start_issue_summary_background(symbol, row)
             return row
         summarized = summarized_df.iloc[0]
         out = row.copy()
@@ -1069,6 +1096,61 @@ class KakaoColabPredictionBot:
         }
         with self._state_lock:
             self._issue_summary_cache[str(symbol)] = payload
+            self._issue_summary_jobs[str(symbol)] = {
+                "status": "completed",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self._issue_summary_timeout_symbols.discard(str(symbol))
+
+    def _is_issue_summary_running(self, symbol: str) -> bool:
+        with self._state_lock:
+            if str(symbol) not in self._issue_summary_timeout_symbols:
+                return False
+            current = self._issue_summary_jobs.get(str(symbol), {})
+            return current.get("status") == "running"
+
+    def _start_issue_summary_background(self, symbol: str, row: pd.Series) -> None:
+        with self._state_lock:
+            current = self._issue_summary_jobs.get(str(symbol), {})
+            if current.get("status") == "running":
+                return
+            self._issue_summary_jobs[str(symbol)] = {
+                "status": "running",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        worker = threading.Thread(
+            target=self._run_issue_summary_background,
+            args=(str(symbol), row.copy()),
+            daemon=True,
+        )
+        worker.start()
+
+    def _run_issue_summary_background(self, symbol: str, row: pd.Series) -> None:
+        display_code = self._display_code(symbol)
+        try:
+            summarized = self._attach_live_issue_summary(row, symbol)
+            if self._has_issue_summary(summarized):
+                self._cache_issue_summary(symbol, summarized)
+                self._console_log(f"{display_code} 백그라운드 요약 생성 완료.")
+                return
+            with self._state_lock:
+                self._issue_summary_jobs[str(symbol)] = {
+                    "status": "failed",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "reason": "empty_summary",
+                }
+                self._issue_summary_timeout_symbols.discard(str(symbol))
+            self._console_log(f"{display_code} 백그라운드 요약 생성 결과가 비어 있어 재시도 대기 상태로 전환합니다.")
+        except Exception as exc:
+            with self._state_lock:
+                self._issue_summary_jobs[str(symbol)] = {
+                    "status": "failed",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
+                self._issue_summary_timeout_symbols.discard(str(symbol))
+            self._console_log(f"{display_code} 백그라운드 요약 생성 실패({type(exc).__name__}): {exc}")
 
     def _apply_issue_summary_cache(self, row: pd.Series, symbol: str) -> pd.Series:
         with self._state_lock:
