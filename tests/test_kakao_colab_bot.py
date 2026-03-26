@@ -372,10 +372,8 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert "demo-key" in command
     assert "--dart-corp-map-csv" in command
     assert "data/dart_corp_map.csv" in command
-    assert "--naver-client-id" in command
-    assert "naver-id" in command
-    assert "--naver-client-secret" in command
-    assert "naver-secret" in command
+    assert "--naver-client-id" not in command
+    assert "--naver-client-secret" not in command
     assert "--disable-external" in command
 
     session_path = tmp_path / "result" / "chatbot_sessions.json"
