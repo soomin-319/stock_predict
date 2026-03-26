@@ -423,6 +423,28 @@ def _llm_symbol_issue_summary(
     )
 
 
+def _rule_based_event_issue_summary(symbol: str, events: pd.DataFrame) -> SymbolIssueSummary:
+    ev = events.copy()
+    ev["source_type"] = ev.get("source_type", "").astype(str)
+    disclosures = ev[ev["source_type"] == "disclosure"]["title"].dropna().astype(str).head(4).tolist()
+    news = ev[ev["source_type"] == "news"]["title"].dropna().astype(str).head(4).tolist()
+
+    disclosure_lines = [f"- {title}" for title in disclosures] or ["- 확인된 핵심 공시 내용 없음"]
+    news_lines = [f"- {title}" for title in news] or ["- 확인된 핵심 뉴스 내용 없음"]
+    source_count = int(len(disclosures) + len(news))
+    one_line = f"{symbol} 기준 당일 공시 {len(disclosures)}건, 뉴스 {len(news)}건을 정리했습니다."
+
+    return SymbolIssueSummary(
+        one_line_summary=one_line,
+        disclosure_summary="[공시 요약]\n" + "\n".join(disclosure_lines),
+        news_summary="[뉴스 요약]\n" + "\n".join(news_lines),
+        overall_judgment="중립",
+        caution="본 요약은 참고용 정보이며 예측값 생성/수정에는 사용되지 않습니다.",
+        source_count=source_count,
+        key_sources=sorted(ev["source_type"].dropna().astype(str).unique().tolist()),
+    )
+
+
 def append_issue_summary_columns(
     pred_df: pd.DataFrame,
     context_raw_df: pd.DataFrame | None = None,
@@ -483,6 +505,11 @@ def append_issue_summary_columns(
                 if llm_summary is not None:
                     summaries.append(llm_summary)
                     continue
+        if context is not None and "Symbol" in context.columns:
+            events = context[context["Symbol"] == symbol]
+            if not events.empty:
+                summaries.append(_rule_based_event_issue_summary(symbol, events))
+                continue
         summaries.append(summarize_symbol_issue(row_series))
 
     summaries = pd.Series(summaries)
