@@ -19,15 +19,9 @@ from src.data.pykrx_support import import_pykrx_stock
 class InvestorContextConfig:
     enabled: bool = False
     enable_disclosure: bool = True
-    enable_news: bool = True
     enable_flow: bool = True
     dart_api_key: str | None = None
     dart_corp_map_csv: str | None = None
-    news_scoring_mode: str = "auto"
-    openai_api_key: str | None = None
-    openai_model: str | None = None
-    naver_client_id: str | None = None
-    naver_client_secret: str | None = None
 
 
 def _symbol_to_ticker(symbol: str) -> str | None:
@@ -192,16 +186,6 @@ def _fetch_disclosure_scores(symbols: list[str], start: str, end: str, api_key: 
     return pd.concat(rows, ignore_index=True), coverage
 
 
-def _fetch_news_sentiment(symbols: list[str], start: str, end: str, cfg: InvestorContextConfig | None = None):
-    _ = (symbols, start, end, cfg)
-    # 뉴스 점수화/뉴스 수집 기능은 제거되었습니다.
-    # 컬럼 호환성 유지를 위해 빈 프레임과 0-coverage를 반환합니다.
-    coverage = {"requested": 0, "successful": 0, "failed": 0}
-    return pd.DataFrame(
-        columns=["Date", "Symbol", "news_sentiment", "news_relevance_score", "news_impact_score", "news_article_count"]
-    ), coverage
-
-
 def _strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", "", str(text or "")).strip()
 
@@ -310,11 +294,7 @@ def add_investor_context_with_coverage(df: pd.DataFrame, cfg: InvestorContextCon
         if not disc_df.empty:
             out = out.merge(disc_df, on=["Date", "Symbol"], how="left")
 
-    if cfg.enable_news:
-        news_df, news_cov = _fetch_news_sentiment(symbols, start, end, cfg=cfg)
-        coverage["news"] = news_cov
-        if not news_df.empty:
-            out = out.merge(news_df, on=["Date", "Symbol"], how="left")
+    coverage["news"] = {"requested": 0, "successful": 0, "failed": 0}
 
     for c in [
         "foreign_net_buy",
