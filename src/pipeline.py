@@ -534,6 +534,9 @@ def run_pipeline(
         "disclosure": {"requested": 0, "successful": 0, "failed": 0},
         "news": {"requested": 0, "successful": 0, "failed": 0},
     }
+    context_raw_df = pd.DataFrame(
+        columns=["Date", "Symbol", "source_type", "title", "published_at", "provider", "url", "raw_id"]
+    )
     if use_investor_context:
         data, investor_context_coverage = add_investor_context_with_coverage(
             data,
@@ -545,6 +548,9 @@ def run_pipeline(
                 dart_corp_map_csv=dart_corp_map_csv,
             ),
         )
+
+    should_collect_context_raw = bool(enable_issue_summary and (dart_api_key or (naver_client_id and naver_client_secret)))
+    if should_collect_context_raw:
         try:
             context_symbols = sorted(data["Symbol"].dropna().astype(str).unique().tolist())
             context_symbol_name_map = get_symbol_name_map(context_symbols)
@@ -562,10 +568,6 @@ def run_pipeline(
             context_raw_df = pd.DataFrame(
                 columns=["Date", "Symbol", "source_type", "title", "published_at", "provider", "url", "raw_id"]
             )
-    else:
-        context_raw_df = pd.DataFrame(
-            columns=["Date", "Symbol", "source_type", "title", "published_at", "provider", "url", "raw_id"]
-        )
 
     _print_progress(5, total_steps, "Building price features")
     feat = build_features(data, cfg.feature)
