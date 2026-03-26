@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import pandas as pd
+import yfinance as yf
 
 from src.data.pykrx_support import import_pykrx_stock
 
@@ -193,13 +194,112 @@ def _fetch_disclosure_scores(symbols: list[str], start: str, end: str, api_key: 
 
 
 def _fetch_news_sentiment(symbols: list[str], start: str, end: str, cfg: InvestorContextConfig | None = None):
-    _ = (symbols, start, end, cfg)
-    # 뉴스 점수화/뉴스 수집 기능은 제거되었습니다.
-    # 컬럼 호환성 유지를 위해 빈 프레임과 0-coverage를 반환합니다.
-    coverage = {"requested": 0, "successful": 0, "failed": 0}
-    return pd.DataFrame(
-        columns=["Date", "Symbol", "news_sentiment", "news_relevance_score", "news_impact_score", "news_article_count"]
-    ), coverage
+    # 운영 안정성을 위해 최근 구간(지연 없는 실시간 구간)은 비활성화합니다.
+    end_dt = pd.to_datetime(end, errors="coerce")
+    cutoff = pd.Timestamp.now("UTC").tz_localize(None).normalize() - pd.Timedelta(days=30)
+    if pd.isna(end_dt) or end_dt.normalize() >= cutoff:
+        coverage = {"requested": 0, "successful": 0, "failed": 0}
+        return pd.DataFrame(
+            columns=["Date", "Symbol", "news_sentiment", "news_relevance_score", "news_impact_score", "news_article_count"]
+        ), coverage
+
+    coverage = {"requested": len(symbols), "successful": 0, "failed": 0}
+    start_dt = pd.to_datetime(start, errors="coerce").normalize()
+    end_dt = end_dt.normalize()
+    rows: list[dict] = []
+
+    for symbol in symbols:
+        try:
+            ticker = yf.Ticker(symbol)
+            items = getattr(ticker, "news", []) or []
+        except Exception:
+            coverage["failed"] += 1
+            continue
+
+        per_day: dict[pd.Timestamp, list[tuple[float, float, float]]] = {}
+        seen_titles: set[str] = set()
+        for item in items:
+            title = " ".join(str(item.get("title", "")).split())
+            if not title or title in seen_titles:
+                continue
+            seen_titles.add(title)
+
+            pub_raw = item.get("providerPublishTime")
+            pub_dt = pd.to_datetime(pub_raw, unit="s", errors="coerce")
+            if pd.isna(pub_dt):
+                continue
+            pub_day = pub_dt.normalize()
+            if pub_day < start_dt or pub_day > end_dt:
+                continue
+            sentiment, relevance, impact = _headline_news_features(title, cfg=cfg)
+            per_day.setdefault(pub_day, []).append((sentiment, relevance, impact))
+
+        if not per_day:
+            coverage["failed"] += 1
+            continue
+
+        for day, vals in per_day.items():
+            s = pd.Series([v[0] for v in vals], dtype=float)
+            r = pd.Series([v[1] for v in vals], dtype=float)
+            i = pd.Series([v[2] for v in vals], dtype=float)
+            rows.append(
+                {
+                    "Date": day,
+                    "Symbol": symbol,
+                    "news_sentiment": float(s.mean()),
+                    "news_relevance_score": float(r.mean()),
+                    "news_impact_score": float(i.mean()),
+                    "news_article_count": int(len(vals)),
+                }
+            )
+        coverage["successful"] += 1
+
+    if not rows:
+        return pd.DataFrame(
+            columns=["Date", "Symbol", "news_sentiment", "news_relevance_score", "news_impact_score", "news_article_count"]
+        ), coverage
+    out = pd.DataFrame(rows).groupby(["Date", "Symbol"], as_index=False).agg(
+        news_sentiment=("news_sentiment", "mean"),
+        news_relevance_score=("news_relevance_score", "mean"),
+        news_impact_score=("news_impact_score", "mean"),
+        news_article_count=("news_article_count", "sum"),
+    )
+    return out, coverage
+
+
+def _score_headline_with_openai(headline: str, cfg: InvestorContextConfig) -> tuple[float, float, float]:
+    _ = (headline, cfg)
+    return 0.0, 0.0, 0.0
+
+
+def _headline_news_features(headline: str, cfg: InvestorContextConfig | None = None) -> tuple[float, float, float]:
+    title = str(headline or "").strip()
+    if not title:
+        return 0.0, 0.0, 0.0
+
+    use_ai = (
+        cfg is not None
+        and cfg.news_scoring_mode == "ai"
+        and bool(cfg.openai_api_key)
+        and bool(cfg.openai_model)
+    )
+    if use_ai:
+        return _score_headline_with_openai(title, cfg)
+
+    pos_kw = {"공급계약", "수주", "실적", "개선", "성장", "호조", "증가", "상향", "흑자"}
+    neg_kw = {"하향", "적자", "감소", "소송", "리콜", "부진", "경고", "악화"}
+    rel_kw = {"공급계약", "실적", "공시", "가이던스", "매출", "영업이익", "수주", "주가", "전망"}
+    impact_kw = {"대규모", "급등", "급락", "M&A", "합병", "신사업", "수출", "규제"}
+
+    pos_score = sum(1 for kw in pos_kw if kw in title)
+    neg_score = sum(1 for kw in neg_kw if kw in title)
+    rel_score = sum(1 for kw in rel_kw if kw in title)
+    imp_score = sum(1 for kw in impact_kw if kw in title)
+
+    sentiment = 0.5 + 0.18 * pos_score - 0.18 * neg_score
+    relevance = min(1.0, 0.1 + 0.25 * rel_score + 0.1 * max(pos_score, 0))
+    impact = min(1.0, 0.1 + 0.25 * imp_score + 0.15 * (1 if "공급계약" in title else 0))
+    return float(max(0.0, min(1.0, sentiment))), float(max(0.0, relevance)), float(max(0.0, impact))
 
 
 def _strip_html(text: str) -> str:

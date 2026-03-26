@@ -255,7 +255,43 @@ def _print_backtest_console_summary(backtest: dict):
 
 
 def _print_prediction_console_summary(pred_df: pd.DataFrame):
-    formatter_print_prediction_console_summary(pred_df)
+    out = pred_df.copy()
+    required = {"recommendation", "portfolio_action", "trading_gate", "risk_flag", "prediction_reason", "confidence_label"}
+    if not required.issubset(set(out.columns)):
+        out = build_prediction_policy_frame(out)
+    if "confidence_score" not in out.columns:
+        out["confidence_score"] = 0.5
+    if "history_direction_accuracy" not in out.columns:
+        out["history_direction_accuracy"] = 0.5
+    formatter_print_prediction_console_summary(out)
+
+
+def _recommendation_from_signal(
+    signal_score: float | int | None,
+    predicted_return: float | int | None,
+    up_probability: float | int | None = None,
+    uncertainty_score: float | int | None = None,
+) -> str:
+    """Backward-compatible wrapper for tests/importers."""
+    return domain_recommendation_from_signal(signal_score, predicted_return, up_probability, uncertainty_score)
+
+
+def _policy_recommendation(row: pd.Series) -> str:
+    """Backward-compatible policy helper kept for test compatibility."""
+    return _recommendation_from_signal(
+        row.get("signal_score"),
+        row.get("predicted_return"),
+        row.get("up_probability"),
+        row.get("uncertainty_score"),
+    ) if not (
+        pd.to_numeric(pd.Series([row.get("nq_f_ret_1d")]), errors="coerce").iloc[0] <= -0.01
+        or pd.to_numeric(pd.Series([row.get("rsi_14")]), errors="coerce").iloc[0] >= 70.0
+    ) else "매도"
+
+
+def _apply_event_signal_boost(pred_df: pd.DataFrame) -> pd.DataFrame:
+    """Backward-compatible wrapper for event signal boost."""
+    return vectorized_event_signal_boost(pred_df)
 
 
 def _coverage_gate_status(cfg, external_coverage_ratio: float, investor_coverage_ratio: float) -> str:
