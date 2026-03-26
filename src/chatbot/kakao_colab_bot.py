@@ -254,9 +254,27 @@ class KakaoColabPredictionBot:
                 ],
             )
 
+        if job_state and job_state.get("status") == "completed":
+            self._update_session(user_id, symbol=symbol, intent="tracking")
+            return self._build_response(
+                f"{display_code} 예측은 완료됐지만 결과 파일 반영을 확인 중입니다. 잠시 후 '결과'를 다시 입력해주세요.",
+                quick_replies=[
+                    ("결과 확인", "결과"),
+                    ("최신화", "최신화"),
+                    ("도움말", "도움말"),
+                ],
+            )
+
         if job_state and job_state.get("status") == "failed":
             self._update_session(user_id, symbol=symbol, intent="tracking")
-            return self._start_job_response(symbol, retry=True)
+            return self._build_response(
+                f"{display_code} 예측 작업이 실패했습니다. '최신화' 또는 '{display_code}'를 다시 입력해 재시도해주세요.",
+                quick_replies=[
+                    ("최신화", "최신화"),
+                    ("다시 시도", display_code),
+                    ("도움말", "도움말"),
+                ],
+            )
 
         if force_refresh and from_session:
             self._update_session(user_id, symbol=symbol, intent="tracking")
@@ -666,11 +684,32 @@ class KakaoColabPredictionBot:
         display_code = self._display_code(symbol)
         if status == "completed":
             self._console_log(f"{display_code} 예측 작업 completed (exit_code=0). 결과 요청 시 최신 CSV를 기반으로 응답합니다.")
+            completion_thread = threading.Thread(
+                target=self._log_completion_preview,
+                args=(symbol,),
+                daemon=True,
+            )
+            completion_thread.start()
         else:
             self._console_log(f"{display_code} 예측 작업 failed (exit_code={int(exit_code)}). 로그를 확인해주세요.")
 
         with self._state_lock:
             self._active_processes.pop(symbol, None)
+
+    def _log_completion_preview(self, symbol: str):
+        display_code = self._display_code(symbol)
+        cached_row = self._find_cached_prediction(symbol)
+        if cached_row is None:
+            return
+        cached_row = self._safe_attach_issue_summary(cached_row, symbol)
+        try:
+            message = self._format_prediction_message(cached_row)
+        except Exception:
+            try:
+                message = self._safe_format_prediction_message(cached_row)
+            except Exception:
+                return
+        self._console_log(f"{display_code} 예측 완료\n{message}")
 
     def _monitor_process_completion(self, symbol: str, process: Any):
         wait = getattr(process, "wait", None)
