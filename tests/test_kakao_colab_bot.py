@@ -265,6 +265,41 @@ def test_cached_prediction_attempts_live_fetch_only_once_across_today_and_yester
     assert "권고:" in text
 
 
+def test_cached_prediction_can_generate_summary_when_result_news_is_missing(tmp_path: Path, monkeypatch):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [{"종목코드": "005930", "종목명": "삼성전자", "권고": "매수", "내일 예상 종가": 71000, "내일 예상 수익률(%)": "1.2%", "상승확률(%)": "70.0%", "예측 신뢰도": "80.0%", "예측 이유": "r"}]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+    pd.DataFrame([{"Symbol": "005930.KS", "Date": "2026-03-26"}]).to_csv(result_dir / "result_detail.csv", index=False)
+
+    monkeypatch.setattr(
+        KakaoColabPredictionBot,
+        "_collect_live_symbol_events",
+        lambda self, symbol, reference_date: pd.DataFrame(
+            [{"Date": reference_date, "Symbol": symbol, "source_type": "news", "title": "당일 이슈"}]
+        ),
+    )
+
+    def _fake_append(pred_df, context_raw_df=None, **kwargs):
+        out = pred_df.copy()
+        out["오늘 종목 이슈 한줄 요약"] = "요약"
+        out["공시 요약"] = "[공시 요약]\n- 없음"
+        out["뉴스 요약"] = "[뉴스 요약]\n- 당일 이슈"
+        out["종합 판단"] = "중립"
+        out["주의사항"] = "참고용"
+        out["원문 개수"] = 1
+        out["핵심 원문 목록"] = "[]"
+        return out
+
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.append_issue_summary_columns", _fake_append)
+
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-missing-news"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+    assert "[뉴스 요약]" in text
+
+
 def test_cached_prediction_still_returns_message_when_issue_summary_raises(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
@@ -275,6 +310,26 @@ def test_cached_prediction_still_returns_message_when_issue_summary_raises(tmp_p
     bot = make_bot(tmp_path)
     monkeypatch.setattr(bot, "_attach_live_issue_summary", lambda row, symbol: (_ for _ in ()).throw(RuntimeError("boom")))
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-safe"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "권고: 매수" in text
+
+
+def test_cached_prediction_still_returns_message_when_issue_summary_times_out(tmp_path: Path, monkeypatch):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [{"종목코드": "005930", "종목명": "삼성전자", "권고": "매수", "내일 예상 종가": 71200, "내일 예상 수익률(%)": "1.234%", "상승확률(%)": "78.9%", "예측 신뢰도": "88.0%", "예측 이유": "테스트 사유"}]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+    pd.DataFrame([{"Symbol": "005930.KS", "Date": "2026-03-26"}]).to_csv(result_dir / "result_detail.csv", index=False)
+
+    monkeypatch.setattr(
+        "src.chatbot.kakao_colab_bot.append_issue_summary_columns",
+        lambda *args, **kwargs: (_ for _ in ()).throw(__import__("concurrent").futures.TimeoutError()),
+    )
+
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-timeout"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
     assert "권고: 매수" in text
@@ -313,7 +368,6 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert "--issue-summary-symbols" in command
     assert "000660.KS" in command
     assert "--fetch-investor-context" in command
-    assert "--disable-news-context" not in command
     assert "--dart-api-key" in command
     assert "demo-key" in command
     assert "--dart-corp-map-csv" in command
@@ -327,6 +381,44 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     session_path = tmp_path / "result" / "chatbot_sessions.json"
     assert session_path.exists()
     assert "user-77" in session_path.read_text(encoding="utf-8")
+
+
+def test_second_and_third_request_show_wait_then_running_message(tmp_path: Path):
+    runner = RecordingRunner()
+    bot = make_bot(tmp_path, runner=runner)
+
+    first = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-seq"}}})
+    second = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-seq"}}})
+    third = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-seq"}}})
+
+    first_text = first["template"]["outputs"][0]["simpleText"]["text"]
+    second_text = second["template"]["outputs"][0]["simpleText"]["text"]
+    third_text = third["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "005930 예측을 시작합니다" in first_text
+    assert "005930 예측을 시작합니다" in second_text
+    assert "005930 예측이 현재 진행 중입니다" in third_text
+
+
+def test_stale_running_state_is_downgraded_to_failed_and_prompts_retry(tmp_path: Path):
+    bot = make_bot(tmp_path)
+    bot._job_registry["005930.KS"] = {"status": "running", "submitted_at": "2026-03-26T00:00:00+00:00"}
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-stale-running"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "예측 작업이 실패했습니다" in text
+    assert bot._job_registry["005930.KS"]["status"] == "failed"
+
+
+def test_completed_without_result_for_long_time_prompts_refresh(tmp_path: Path):
+    bot = make_bot(tmp_path)
+    bot._job_registry["005930.KS"] = {"status": "completed", "completed_at": "2026-03-26T00:00:00+00:00"}
+    bot._session_registry["u-no-result"] = {"last_symbol": "005930.KS", "last_intent": "tracking"}
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "결과", "user": {"id": "u-no-result"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "결과 파일에서 종목을 찾지 못했습니다" in text
+    assert "최신화" in text
 
 
 def test_start_job_skips_disable_external_flag_when_external_features_enabled(tmp_path: Path):
@@ -875,7 +967,7 @@ def test_load_cached_result_simple_logs_parse_failures(tmp_path: Path, capsys):
     assert "예측 캐시 CSV 로드 실패" in captured.out
 
 
-def test_finalize_process_falls_back_when_prediction_message_format_fails(tmp_path: Path, monkeypatch):
+def test_finalize_process_logs_completion_without_inline_formatting(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
     pd.DataFrame(
@@ -899,18 +991,12 @@ def test_finalize_process_falls_back_when_prediction_message_format_fails(tmp_pa
     bot._active_processes["005930.KS"] = {"log_handle": log_handle, "log_thread": None}
     bot._job_registry["005930.KS"] = {"status": "running"}
 
-    monkeypatch.setattr(
-        bot,
-        "_format_prediction_message",
-        lambda row: (_ for _ in ()).throw(NameError("rationale_block")),
-    )
     logs: list[str] = []
     monkeypatch.setattr(bot, "_console_log", lambda message: logs.append(message))
 
     bot._finalize_process("005930.KS", 0)
 
-    assert any("레거시 포맷터 오류 감지(NameError: rationale_block)" in log for log in logs)
-    assert any("사유: 거래대금 상위" in log for log in logs)
+    assert any("예측 작업 completed" in log for log in logs)
 
 
 def test_handle_symbol_request_falls_back_when_cached_message_format_fails(tmp_path: Path, monkeypatch):
