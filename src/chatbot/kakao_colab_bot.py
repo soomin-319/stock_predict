@@ -73,16 +73,23 @@ class PipelineRuntimeConfig:
     prewarm_default_predictions: bool = True
     extra_args: tuple[str, ...] = ()
 
-    def build_command(self, symbol: str) -> list[str]:
+    def build_command(
+        self,
+        symbol: str,
+        add_symbols: list[str] | None = None,
+        issue_summary_symbols: list[str] | None = None,
+    ) -> list[str]:
+        normalized_add_symbols = [str(s) for s in (add_symbols or [symbol]) if str(s).strip()]
+        normalized_issue_symbols = [str(s) for s in (issue_summary_symbols or [symbol]) if str(s).strip()]
         cmd = [
             self.python_executable,
             "src/pipeline.py",
             "--input",
             self.input_csv,
             "--add-symbols",
-            symbol,
+            *normalized_add_symbols,
             "--issue-summary-symbols",
-            symbol,
+            *normalized_issue_symbols,
         ]
         if self.fetch_investor_context:
             cmd.append("--fetch-investor-context")
@@ -154,6 +161,7 @@ class KakaoColabPredictionBot:
         self._issue_summary_cache: dict[str, dict[str, Any]] = {}
         self._state_lock = threading.RLock()
         self._legacy_formatter_patched = False
+        self._bootstrap_all_symbols_done = False
         self._bootstrap_formatter_guard()
 
     def _bootstrap_formatter_guard(self):
@@ -762,8 +770,49 @@ class KakaoColabPredictionBot:
             exit_code = -1
         self._finalize_process(symbol, int(exit_code))
 
+    def _is_bootstrap_required(self) -> bool:
+        if self._bootstrap_all_symbols_done:
+            return False
+        if not self.runtime_config.bootstrap_default_symbols:
+            return False
+        with self._state_lock:
+            has_history = bool(self._job_registry)
+        if has_history:
+            return False
+        return not self.result_simple_path.exists()
+
+    def _load_bootstrap_symbols_from_krx_map(self) -> list[str]:
+        path = self.project_root / "data" / "krx_symbol_name_map.csv"
+        if not path.exists():
+            return []
+        try:
+            df = pd.read_csv(path)
+        except Exception as exc:
+            self._console_log(f"KRX 심볼 맵 로드 실패: {path} ({exc})")
+            return []
+        if "Symbol" not in df.columns:
+            return []
+        symbols = [str(v).strip() for v in df["Symbol"].dropna().tolist() if str(v).strip()]
+        deduped = list(dict.fromkeys(symbols))
+        return deduped
+
     def _start_prediction_job(self, symbol: str) -> bool:
-        command = self.runtime_config.build_command(symbol)
+        issue_summary_symbols = [symbol]
+        add_symbols = [symbol]
+        if self._is_bootstrap_required():
+            bootstrap_symbols = self._load_bootstrap_symbols_from_krx_map()
+            if bootstrap_symbols:
+                add_symbols = bootstrap_symbols
+                self._console_log(
+                    f"{self._display_code(symbol)} 최초 예측 요청: KRX 심볼 맵 전체 {len(add_symbols)}개 심볼에 대해 예측을 실행합니다."
+                )
+            self._bootstrap_all_symbols_done = True
+
+        command = self.runtime_config.build_command(
+            symbol,
+            add_symbols=add_symbols,
+            issue_summary_symbols=issue_summary_symbols,
+        )
         display_code = self._display_code(symbol)
         submitted_at = datetime.now(timezone.utc).isoformat()
         log_path = self.log_dir / f"{display_code}_{submitted_at.replace(':', '').replace('+00:00', 'Z')}.log"
@@ -963,7 +1012,7 @@ class KakaoColabPredictionBot:
             self._console_log(
                 f"{self._display_code(symbol)} 요약 원문 없음 (기준일 {prediction_date}, symbol_events={len(same_symbol)})."
             )
-            has_existing_summary = bool(str(row.get("공시 요약", "")).strip()) or bool(str(row.get("뉴스 요약", "")).strip())
+            has_existing_summary = self._has_issue_summary(row)
             if has_existing_summary:
                 return row
 
@@ -1000,7 +1049,18 @@ class KakaoColabPredictionBot:
             return row
 
     def _has_issue_summary(self, row: pd.Series) -> bool:
-        return bool(self._get_clean_issue_text(row.get("공시 요약")) or self._get_clean_issue_text(row.get("뉴스 요약")))
+        disclosure = self._get_clean_issue_text(row.get("공시 요약"))
+        news = self._get_clean_issue_text(row.get("뉴스 요약"))
+        placeholders = {
+            "요청 종목에 대해서만 요약을 생성합니다.",
+            "[공시 요약]\n- 요청 종목에 대해서만 요약을 생성합니다.",
+            "[뉴스 요약]\n- 요청 종목에 대해서만 요약을 생성합니다.",
+        }
+        normalized_disclosure = disclosure.strip()
+        normalized_news = news.strip()
+        has_real_disclosure = bool(normalized_disclosure and normalized_disclosure not in placeholders)
+        has_real_news = bool(normalized_news and normalized_news not in placeholders)
+        return has_real_disclosure or has_real_news
 
     def _cache_issue_summary(self, symbol: str, row: pd.Series) -> None:
         payload = {

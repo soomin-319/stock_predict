@@ -387,6 +387,78 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert "user-77" in session_path.read_text(encoding="utf-8")
 
 
+def test_first_prediction_bootstraps_all_symbols_but_summarizes_only_requested_symbol(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {"Ticker": "005930", "Symbol": "005930.KS", "Name": "삼성전자", "Market": "KOSPI"},
+            {"Ticker": "000660", "Symbol": "000660.KS", "Name": "SK하이닉스", "Market": "KOSPI"},
+            {"Ticker": "035420", "Symbol": "035420.KS", "Name": "NAVER", "Market": "KOSPI"},
+        ]
+    ).to_csv(data_dir / "krx_symbol_name_map.csv", index=False)
+
+    runner = RecordingRunner()
+    bot = make_bot(tmp_path, runner=runner)
+
+    bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-bootstrap"}}})
+    command = runner.calls[0]["command"]
+    add_symbols_idx = command.index("--add-symbols")
+    issue_summary_idx = command.index("--issue-summary-symbols")
+    add_symbols = command[add_symbols_idx + 1 : issue_summary_idx]
+    issue_symbols = command[issue_summary_idx + 1 : issue_summary_idx + 2]
+
+    assert set(add_symbols) == {"005930.KS", "000660.KS", "035420.KS"}
+    assert issue_symbols == ["005930.KS"]
+
+
+def test_additional_symbol_request_generates_summary_when_placeholder_exists(tmp_path: Path, monkeypatch):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "종목코드": "000660",
+                "종목명": "SK하이닉스",
+                "권고": "매도",
+                "내일 예상 종가": 842353,
+                "내일 예상 수익률(%)": "-8.836%",
+                "상승확률(%)": "13.6%",
+                "예측 신뢰도": "25.9%",
+                "예측 이유": "거래대금 상위",
+                "공시 요약": "[공시 요약]\n- 요청 종목에 대해서만 요약을 생성합니다.",
+                "뉴스 요약": "[뉴스 요약]\n- 요청 종목에 대해서만 요약을 생성합니다.",
+            }
+        ]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+    pd.DataFrame([{"Symbol": "000660.KS", "Date": "2026-03-26"}]).to_csv(result_dir / "result_detail.csv", index=False)
+
+    calls = {"count": 0}
+
+    def _fake_append(pred_df, **kwargs):
+        calls["count"] += 1
+        out = pred_df.copy()
+        out["공시 요약"] = "[공시 요약]\n- 실제 공시 요약"
+        out["뉴스 요약"] = "[뉴스 요약]\n- 실제 뉴스 요약"
+        out["오늘 종목 이슈 한줄 요약"] = "요약"
+        out["종합 판단"] = "중립"
+        out["주의사항"] = "참고"
+        out["원문 개수"] = 1
+        out["핵심 원문 목록"] = "[]"
+        return out
+
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.append_issue_summary_columns", _fake_append)
+    monkeypatch.setattr(KakaoColabPredictionBot, "_collect_live_symbol_events", lambda self, symbol, reference_date: pd.DataFrame())
+
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-extra-symbol"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "실제 공시 요약" in text
+    assert "실제 뉴스 요약" in text
+    assert calls["count"] == 1
+
+
 def test_repeated_request_while_running_shows_running_message(tmp_path: Path):
     runner = RecordingRunner()
     bot = make_bot(tmp_path, runner=runner)
