@@ -106,7 +106,15 @@ def _load_dart_corp_map(path: str | None) -> dict[str, str]:
         return {}
     if "Symbol" not in df.columns or "corp_code" not in df.columns:
         return {}
-    return {str(r.Symbol): str(r.corp_code) for r in df.itertuples(index=False)}
+    out: dict[str, str] = {}
+    for r in df.itertuples(index=False):
+        sym = str(r.Symbol)
+        corp = str(r.corp_code)
+        out[sym] = corp
+        ticker = _symbol_to_ticker(sym)
+        if ticker:
+            out[ticker] = corp
+    return out
 
 
 def _dart_list(api_key: str, corp_code: str, start: str, end: str):
@@ -122,6 +130,16 @@ def _dart_list(api_key: str, corp_code: str, start: str, end: str):
     with urlopen(url, timeout=15) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     return data
+
+
+def _dart_items(payload: dict | None) -> list[dict]:
+    if not isinstance(payload, dict):
+        return []
+    status = str(payload.get("status", "")).strip()
+    if status and status != "000":
+        return []
+    items = payload.get("list", [])
+    return items if isinstance(items, list) else []
 
 
 def _fetch_disclosure_scores(symbols: list[str], start: str, end: str, api_key: str | None, corp_map_csv: str | None):
@@ -141,7 +159,7 @@ def _fetch_disclosure_scores(symbols: list[str], start: str, end: str, api_key: 
             continue
         try:
             payload = _dart_list(api_key, corp, start, end)
-            items = payload.get("list", []) if isinstance(payload, dict) else []
+            items = _dart_items(payload)
             if not items:
                 coverage["failed"] += 1
                 continue
@@ -207,6 +225,8 @@ def _fetch_naver_news_items(
         return []
     rows: list[dict] = []
     seen: set[tuple[str, str]] = set()
+    start_date = pd.to_datetime(start_dt).normalize()
+    end_date = pd.to_datetime(end_dt).normalize()
     for query in _build_news_queries(symbol_name):
         params = urlencode({"query": query, "display": 50, "start": 1, "sort": "date"})
         req = Request(
@@ -229,8 +249,9 @@ def _fetch_naver_news_items(
             pub_dt = pd.to_datetime(pub_raw, utc=True, errors="coerce")
             if pd.isna(pub_dt):
                 continue
-            pub_dt = pub_dt.tz_localize(None)
-            if pub_dt < start_dt or pub_dt > (end_dt + pd.Timedelta(days=1)):
+            pub_kst = pub_dt.tz_convert("Asia/Seoul")
+            pub_date = pub_kst.tz_localize(None).normalize()
+            if pub_date < start_date or pub_date > end_date:
                 continue
             if symbol_name and symbol_name not in f"{title} {description}":
                 continue
@@ -241,12 +262,12 @@ def _fetch_naver_news_items(
             seen.add(dedupe_key)
             rows.append(
                 {
-                    "Date": pub_dt.normalize().strftime("%Y-%m-%d"),
+                    "Date": pub_date.strftime("%Y-%m-%d"),
                     "Symbol": symbol,
                     "source_type": "news",
                     "title": title,
                     "body": description,
-                    "published_at": pub_dt.isoformat(),
+                    "published_at": pub_kst.isoformat(),
                     "provider": "naver_news_api",
                     "url": str(item.get("originallink") or item.get("link") or ""),
                     "raw_id": origin,
@@ -343,7 +364,7 @@ def collect_context_raw_events(
                 continue
             try:
                 payload = _dart_list(dart_api_key, corp, start, end)
-                items = payload.get("list", []) if isinstance(payload, dict) else []
+                items = _dart_items(payload)
             except Exception:
                 items = []
             for item in items:
@@ -394,5 +415,8 @@ def collect_context_raw_events(
         )
 
     out = pd.DataFrame(rows).drop_duplicates(subset=["Date", "Symbol", "source_type", "title", "raw_id"]).reset_index(drop=True)
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce").dt.normalize()
+    out = out[(out["Date"] >= start_dt.normalize()) & (out["Date"] <= end_dt.normalize())].copy()
+    out["Date"] = out["Date"].dt.strftime("%Y-%m-%d")
     out = out.sort_values(["Date", "Symbol", "source_type", "title"]).reset_index(drop=True)
     return out

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import re
 import hashlib
@@ -12,11 +13,14 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from src.data.krx_universe import find_symbol_candidates_by_name
+from src.data.investor_context import collect_context_raw_events
+from src.data.krx_universe import find_symbol_candidates_by_name, get_symbol_name_map
 from src.data.fetch_real_data import normalize_user_symbols
+from src.reports.issue_summary import append_issue_summary_columns
 
 
 _STOCK_CODE_PATTERN = re.compile(r"\b\d{6}(?:\.(?:KS|KQ))?\b", re.IGNORECASE)
@@ -79,6 +83,8 @@ class PipelineRuntimeConfig:
             self.input_csv,
             "--add-symbols",
             symbol,
+            "--issue-summary-symbols",
+            symbol,
         ]
         if self.fetch_investor_context:
             cmd.append("--fetch-investor-context")
@@ -132,6 +138,8 @@ class KakaoColabPredictionBot:
         self.runtime_config = runtime_config or PipelineRuntimeConfig()
         self.project_root = Path(self.runtime_config.project_root)
         self.result_simple_path = self.project_root / (result_simple_path or "result/result_simple.csv")
+        self.result_detail_path = self.project_root / "result" / "result_detail.csv"
+        self.result_news_path = self.project_root / "result" / "result_news.csv"
         self.state_path = self.project_root / (state_path or "result/chatbot_jobs.json")
         self.session_path = self.project_root / (session_path or "result/chatbot_sessions.json")
         self.prewarm_meta_path = self.project_root / "result" / "prewarm_cache_meta.json"
@@ -220,6 +228,7 @@ class KakaoColabPredictionBot:
 
         cached_row = None if force_refresh else self._find_cached_prediction(symbol)
         if cached_row is not None:
+            cached_row = self._safe_attach_issue_summary(cached_row, symbol)
             try:
                 message = self._format_prediction_message(cached_row)
             except Exception as exc:
@@ -649,6 +658,7 @@ class KakaoColabPredictionBot:
         if status == "completed":
             cached_row = self._find_cached_prediction(symbol)
             if cached_row is not None:
+                cached_row = self._safe_attach_issue_summary(cached_row, symbol)
                 try:
                     message = self._format_prediction_message(cached_row)
                 except Exception as exc:
@@ -757,6 +767,141 @@ class KakaoColabPredictionBot:
             )
             self._save_registry(self.state_path, self._job_registry)
         return True
+
+    def _prediction_date_for_symbol(self, symbol: str) -> str | None:
+        today_kst = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Seoul")).date()
+        if not self.result_detail_path.exists():
+            return today_kst.strftime("%Y-%m-%d")
+        try:
+            df = pd.read_csv(self.result_detail_path, dtype={"Symbol": str}, encoding="utf-8-sig")
+        except Exception:
+            return today_kst.strftime("%Y-%m-%d")
+        if df.empty or "Symbol" not in df.columns or "Date" not in df.columns:
+            return today_kst.strftime("%Y-%m-%d")
+        target = str(symbol)
+        matched = df[df["Symbol"].astype(str) == target].copy()
+        if matched.empty:
+            return today_kst.strftime("%Y-%m-%d")
+        dt = pd.to_datetime(matched["Date"], errors="coerce").dropna()
+        if dt.empty:
+            return today_kst.strftime("%Y-%m-%d")
+        latest_prediction_date = dt.max().normalize().date()
+        reference_date = max(today_kst, latest_prediction_date)
+        return reference_date.strftime("%Y-%m-%d")
+
+    def _load_result_news(self) -> pd.DataFrame:
+        if not self.result_news_path.exists():
+            return pd.DataFrame()
+        try:
+            news_df = pd.read_csv(self.result_news_path, dtype={"Symbol": str}, encoding="utf-8-sig")
+        except Exception as exc:
+            self._console_log(f"요약 원문 CSV 로드 실패: {self.result_news_path} ({exc})")
+            return pd.DataFrame()
+        if news_df.empty:
+            return pd.DataFrame()
+        if "Date" in news_df.columns:
+            news_df["Date"] = pd.to_datetime(news_df["Date"], errors="coerce").dt.normalize()
+        if "Symbol" in news_df.columns:
+            news_df["Symbol"] = news_df["Symbol"].astype(str)
+        return news_df
+
+    def _collect_live_symbol_events(self, symbol: str, reference_date: str) -> pd.DataFrame:
+        has_naver = bool(self.runtime_config.naver_client_id and self.runtime_config.naver_client_secret)
+        has_dart = bool(self.runtime_config.dart_api_key)
+        looks_demo_key = any(
+            str(v).lower().startswith("demo")
+            for v in [self.runtime_config.naver_client_id, self.runtime_config.naver_client_secret, self.runtime_config.dart_api_key]
+            if v
+        )
+        if not (has_naver or has_dart) or looks_demo_key:
+            return pd.DataFrame()
+        try:
+            symbol_name_map = get_symbol_name_map([symbol])
+
+            def _fetch() -> pd.DataFrame:
+                return collect_context_raw_events(
+                    symbols=[symbol],
+                    start=reference_date,
+                    end=reference_date,
+                    dart_api_key=self.runtime_config.dart_api_key,
+                    dart_corp_map_csv=self.runtime_config.dart_corp_map_csv,
+                    symbol_name_map=symbol_name_map,
+                    naver_client_id=self.runtime_config.naver_client_id,
+                    naver_client_secret=self.runtime_config.naver_client_secret,
+                )
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(_fetch)
+                events = future.result(timeout=4.0)
+            if events.empty:
+                return events
+            events["Date"] = pd.to_datetime(events["Date"], errors="coerce").dt.normalize()
+            return events
+        except concurrent.futures.TimeoutError:
+            self._console_log(f"{self._display_code(symbol)} 라이브 원문 수집 시간초과(4s)로 생략합니다.")
+            return pd.DataFrame()
+        except Exception as exc:
+            self._console_log(f"{self._display_code(symbol)} 라이브 원문 수집 실패 ({type(exc).__name__}): {exc}")
+            return pd.DataFrame()
+
+    def _attach_live_issue_summary(self, row: pd.Series, symbol: str) -> pd.Series:
+        prediction_date = self._prediction_date_for_symbol(symbol)
+        if not prediction_date:
+            return row
+
+        events = self._load_result_news()
+        if events.empty or "Date" not in events.columns or "Symbol" not in events.columns:
+            self._console_log(f"{self._display_code(symbol)} 요약 원문이 없어 예측 결과만 제공합니다.")
+            return row
+
+        target_dt = pd.to_datetime(prediction_date, errors="coerce")
+        if pd.isna(target_dt):
+            return row
+
+        same_symbol = events[events["Symbol"].astype(str) == str(symbol)]
+        candidate_dates = [target_dt.normalize(), (target_dt - pd.Timedelta(days=1)).normalize()]
+        used_date = candidate_dates[0]
+        same_day = pd.DataFrame()
+        for candidate_dt in candidate_dates:
+            daily = same_symbol[same_symbol["Date"] == candidate_dt]
+            if daily.empty:
+                live_events = self._collect_live_symbol_events(symbol, candidate_dt.strftime("%Y-%m-%d"))
+                if not live_events.empty:
+                    same_symbol = pd.concat([same_symbol, live_events], ignore_index=True)
+                    daily = same_symbol[same_symbol["Date"] == candidate_dt]
+            if not daily.empty:
+                same_day = daily.copy()
+                used_date = candidate_dt
+                break
+        disclosure_count = int((same_day.get("source_type", pd.Series(dtype=str)).astype(str) == "disclosure").sum())
+        news_count = int((same_day.get("source_type", pd.Series(dtype=str)).astype(str) == "news").sum())
+        if same_day.empty:
+            self._console_log(
+                f"{self._display_code(symbol)} 요약 원문 없음 (기준일 {prediction_date}, 전일 포함 검색, symbol_events={len(same_symbol)})."
+            )
+
+        base = pd.DataFrame([{"Symbol": symbol, "종목명": str(row.get("종목명", self._display_code(symbol)))}])
+        summarized = append_issue_summary_columns(
+            base,
+            context_raw_df=same_day.copy(),
+            openai_api_key=self.runtime_config.openai_api_key,
+            openai_model=self.runtime_config.openai_model,
+            summarize_symbols=[symbol],
+        ).iloc[0]
+        out = row.copy()
+        for col in ["오늘 종목 이슈 한줄 요약", "공시 요약", "뉴스 요약", "종합 판단", "주의사항", "원문 개수", "핵심 원문 목록"]:
+            out[col] = summarized.get(col)
+        self._console_log(
+            f"{self._display_code(symbol)} 요약 생성 완료 (기준일 {used_date.strftime('%Y-%m-%d')}, 공시 {disclosure_count}건, 뉴스 {news_count}건)."
+        )
+        return out
+
+    def _safe_attach_issue_summary(self, row: pd.Series, symbol: str) -> pd.Series:
+        try:
+            return self._attach_live_issue_summary(row, symbol)
+        except Exception as exc:
+            self._console_log(f"{self._display_code(symbol)} 요약 생성 오류({type(exc).__name__}): {exc}")
+            return row
 
     def _refresh_job_states(self):
         with self._state_lock:
@@ -978,6 +1123,7 @@ def prewarm_prediction_cache(runtime_config: PipelineRuntimeConfig | None = None
         dart_corp_map_csv=cfg.dart_corp_map_csv,
         bootstrap_default_symbols=cfg.bootstrap_default_symbols,
         real_start=cfg.real_start,
+        enable_issue_summary=False,
     )
     _write_prewarm_meta(meta_path, {"signature": signature, "signature_hash": signature_hash})
     print(f"[KAKAO BOT] 기본 심볼 예측 캐시 준비 완료: {outputs.get('result_simple_csv', '')}")
