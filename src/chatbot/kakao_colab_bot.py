@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import re
 import hashlib
@@ -816,20 +817,29 @@ class KakaoColabPredictionBot:
             return pd.DataFrame()
         try:
             symbol_name_map = get_symbol_name_map([symbol])
-            events = collect_context_raw_events(
-                symbols=[symbol],
-                start=reference_date,
-                end=reference_date,
-                dart_api_key=self.runtime_config.dart_api_key,
-                dart_corp_map_csv=self.runtime_config.dart_corp_map_csv,
-                symbol_name_map=symbol_name_map,
-                naver_client_id=self.runtime_config.naver_client_id,
-                naver_client_secret=self.runtime_config.naver_client_secret,
-            )
+
+            def _fetch() -> pd.DataFrame:
+                return collect_context_raw_events(
+                    symbols=[symbol],
+                    start=reference_date,
+                    end=reference_date,
+                    dart_api_key=self.runtime_config.dart_api_key,
+                    dart_corp_map_csv=self.runtime_config.dart_corp_map_csv,
+                    symbol_name_map=symbol_name_map,
+                    naver_client_id=self.runtime_config.naver_client_id,
+                    naver_client_secret=self.runtime_config.naver_client_secret,
+                )
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(_fetch)
+                events = future.result(timeout=4.0)
             if events.empty:
                 return events
             events["Date"] = pd.to_datetime(events["Date"], errors="coerce").dt.normalize()
             return events
+        except concurrent.futures.TimeoutError:
+            self._console_log(f"{self._display_code(symbol)} 라이브 원문 수집 시간초과(4s)로 생략합니다.")
+            return pd.DataFrame()
         except Exception as exc:
             self._console_log(f"{self._display_code(symbol)} 라이브 원문 수집 실패 ({type(exc).__name__}): {exc}")
             return pd.DataFrame()

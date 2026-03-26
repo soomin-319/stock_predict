@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from src.data.investor_context import (
+    _dart_items,
     _fetch_news_sentiment,
     collect_context_raw_events,
 )
@@ -134,3 +135,8 @@ def test_collect_context_raw_events_filters_strictly_by_reference_date(monkeypat
 
     assert set(out["Date"].unique().tolist()) == {"2026-03-26"}
     assert "당일 공시" in " ".join(out[out["source_type"] == "disclosure"]["title"].tolist())
+
+
+def test_dart_items_ignores_non_success_status():
+    assert _dart_items({"status": "013", "message": "NO_DATA", "list": [{"x": 1}]}) == []
+    assert _dart_items({"status": "000", "list": [{"x": 1}]}) == [{"x": 1}]

@@ -106,7 +106,15 @@ def _load_dart_corp_map(path: str | None) -> dict[str, str]:
         return {}
     if "Symbol" not in df.columns or "corp_code" not in df.columns:
         return {}
-    return {str(r.Symbol): str(r.corp_code) for r in df.itertuples(index=False)}
+    out: dict[str, str] = {}
+    for r in df.itertuples(index=False):
+        sym = str(r.Symbol)
+        corp = str(r.corp_code)
+        out[sym] = corp
+        ticker = _symbol_to_ticker(sym)
+        if ticker:
+            out[ticker] = corp
+    return out
 
 
 def _dart_list(api_key: str, corp_code: str, start: str, end: str):
@@ -122,6 +130,16 @@ def _dart_list(api_key: str, corp_code: str, start: str, end: str):
     with urlopen(url, timeout=15) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     return data
+
+
+def _dart_items(payload: dict | None) -> list[dict]:
+    if not isinstance(payload, dict):
+        return []
+    status = str(payload.get("status", "")).strip()
+    if status and status != "000":
+        return []
+    items = payload.get("list", [])
+    return items if isinstance(items, list) else []
 
 
 def _fetch_disclosure_scores(symbols: list[str], start: str, end: str, api_key: str | None, corp_map_csv: str | None):
@@ -141,7 +159,7 @@ def _fetch_disclosure_scores(symbols: list[str], start: str, end: str, api_key: 
             continue
         try:
             payload = _dart_list(api_key, corp, start, end)
-            items = payload.get("list", []) if isinstance(payload, dict) else []
+            items = _dart_items(payload)
             if not items:
                 coverage["failed"] += 1
                 continue
@@ -346,7 +364,7 @@ def collect_context_raw_events(
                 continue
             try:
                 payload = _dart_list(dart_api_key, corp, start, end)
-                items = payload.get("list", []) if isinstance(payload, dict) else []
+                items = _dart_items(payload)
             except Exception:
                 items = []
             for item in items:
