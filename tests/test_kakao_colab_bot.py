@@ -265,6 +265,41 @@ def test_cached_prediction_attempts_live_fetch_only_once_across_today_and_yester
     assert "권고:" in text
 
 
+def test_cached_prediction_can_generate_summary_when_result_news_is_missing(tmp_path: Path, monkeypatch):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [{"종목코드": "005930", "종목명": "삼성전자", "권고": "매수", "내일 예상 종가": 71000, "내일 예상 수익률(%)": "1.2%", "상승확률(%)": "70.0%", "예측 신뢰도": "80.0%", "예측 이유": "r"}]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+    pd.DataFrame([{"Symbol": "005930.KS", "Date": "2026-03-26"}]).to_csv(result_dir / "result_detail.csv", index=False)
+
+    monkeypatch.setattr(
+        KakaoColabPredictionBot,
+        "_collect_live_symbol_events",
+        lambda self, symbol, reference_date: pd.DataFrame(
+            [{"Date": reference_date, "Symbol": symbol, "source_type": "news", "title": "당일 이슈"}]
+        ),
+    )
+
+    def _fake_append(pred_df, context_raw_df=None, **kwargs):
+        out = pred_df.copy()
+        out["오늘 종목 이슈 한줄 요약"] = "요약"
+        out["공시 요약"] = "[공시 요약]\n- 없음"
+        out["뉴스 요약"] = "[뉴스 요약]\n- 당일 이슈"
+        out["종합 판단"] = "중립"
+        out["주의사항"] = "참고용"
+        out["원문 개수"] = 1
+        out["핵심 원문 목록"] = "[]"
+        return out
+
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.append_issue_summary_columns", _fake_append)
+
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-missing-news"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+    assert "[뉴스 요약]" in text
+
+
 def test_cached_prediction_still_returns_message_when_issue_summary_raises(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
