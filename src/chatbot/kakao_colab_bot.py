@@ -215,17 +215,6 @@ class KakaoColabPredictionBot:
             with self._state_lock:
                 job_state = self._job_registry.get(symbol)
         if job_state and job_state.get("status") == "running":
-            prior_intent = self._session_intent(user_id)
-            if prior_intent != "waiting":
-                self._update_session(user_id, symbol=symbol, intent="waiting")
-                return self._build_response(
-                    f"{display_code} 예측을 시작합니다. 잠시 후 '결과'를 입력하면 최신 예측 결과를 안내해드릴게요.",
-                    quick_replies=[
-                        ("결과 확인", "결과"),
-                        ("최신화", "최신화"),
-                        ("도움말", "도움말"),
-                    ],
-                )
             self._update_session(user_id, symbol=symbol, intent="running")
             return self._build_response(
                 f"{display_code} 예측이 현재 진행 중입니다. 잠시 후 '결과' 또는 '{display_code}'를 다시 입력해주세요.",
