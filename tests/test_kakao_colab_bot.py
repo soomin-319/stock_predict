@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 
@@ -1099,3 +1100,43 @@ def test_load_cached_result_simple_uses_mtime_cache(monkeypatch, tmp_path: Path)
 
     assert calls["count"] == 1
     assert not out1.empty and not out2.empty
+
+
+def test_issue_summary_timeout_does_not_block_webhook_response(tmp_path: Path, monkeypatch):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "종목코드": "005930",
+                "종목명": "삼성전자",
+                "권고": "매수",
+                "내일 예상 종가": 71200,
+                "내일 예상 수익률(%)": "1.234%",
+                "상승확률(%)": "78.9%",
+                "예측 신뢰도": "88.0%",
+                "예측 이유": "테스트 사유",
+            }
+        ]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+    pd.DataFrame([{"Symbol": "005930.KS", "Date": "2026-03-26"}]).to_csv(result_dir / "result_detail.csv", index=False)
+
+    def _slow_summary(*args, **kwargs):
+        time.sleep(0.2)
+        out = args[0].copy()
+        out["공시 요약"] = "없음"
+        out["뉴스 요약"] = "없음"
+        return out
+
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.append_issue_summary_columns", _slow_summary)
+
+    bot = make_bot(tmp_path)
+    bot.ISSUE_SUMMARY_TIMEOUT_SEC = 0.01
+
+    started = time.perf_counter()
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-timeout"}}})
+    elapsed = time.perf_counter() - started
+
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+    assert "삼성전자" in text
+    assert elapsed < 0.12

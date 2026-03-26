@@ -121,6 +121,9 @@ class PyngrokTunnelConfig:
 
 
 class KakaoColabPredictionBot:
+    LIVE_EVENTS_TIMEOUT_SEC = 1.5
+    ISSUE_SUMMARY_TIMEOUT_SEC = 2.5
+
     def __init__(
         self,
         runtime_config: PipelineRuntimeConfig | None = None,
@@ -893,17 +896,16 @@ class KakaoColabPredictionBot:
                     naver_client_id=self.runtime_config.naver_client_id,
                     naver_client_secret=self.runtime_config.naver_client_secret,
                 )
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                future = ex.submit(_fetch)
-                events = future.result(timeout=1.5)
+            events = self._run_in_background_with_timeout(_fetch, timeout=self.LIVE_EVENTS_TIMEOUT_SEC)
+            if events is None:
+                self._console_log(
+                    f"{self._display_code(symbol)} 라이브 원문 수집 시간초과({self.LIVE_EVENTS_TIMEOUT_SEC:.1f}s)로 생략합니다."
+                )
+                return pd.DataFrame()
             if events.empty:
                 return events
             events["Date"] = pd.to_datetime(events["Date"], errors="coerce").dt.normalize()
             return events
-        except concurrent.futures.TimeoutError:
-            self._console_log(f"{self._display_code(symbol)} 라이브 원문 수집 시간초과(1.5s)로 생략합니다.")
-            return pd.DataFrame()
         except Exception as exc:
             self._console_log(f"{self._display_code(symbol)} 라이브 원문 수집 실패 ({type(exc).__name__}): {exc}")
             return pd.DataFrame()
@@ -949,21 +951,21 @@ class KakaoColabPredictionBot:
                 return row
 
         base = pd.DataFrame([{"Symbol": symbol, "종목명": str(row.get("종목명", self._display_code(symbol)))}])
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                future = ex.submit(
-                    append_issue_summary_columns,
-                    base,
-                    context_raw_df=same_day.copy(),
-                    openai_api_key=self.runtime_config.openai_api_key,
-                    openai_model=self.runtime_config.openai_model,
-                    summarize_symbols=[symbol],
-                )
-                summarized_df = future.result(timeout=2.5)
-            summarized = summarized_df.iloc[0]
-        except concurrent.futures.TimeoutError:
-            self._console_log(f"{self._display_code(symbol)} 요약 생성 시간초과(2.5s)로 기존 응답을 유지합니다.")
+        summarized_df = self._run_in_background_with_timeout(
+            append_issue_summary_columns,
+            base,
+            timeout=self.ISSUE_SUMMARY_TIMEOUT_SEC,
+            context_raw_df=same_day.copy(),
+            openai_api_key=self.runtime_config.openai_api_key,
+            openai_model=self.runtime_config.openai_model,
+            summarize_symbols=[symbol],
+        )
+        if summarized_df is None:
+            self._console_log(
+                f"{self._display_code(symbol)} 요약 생성 시간초과({self.ISSUE_SUMMARY_TIMEOUT_SEC:.1f}s)로 기존 응답을 유지합니다."
+            )
             return row
+        summarized = summarized_df.iloc[0]
         out = row.copy()
         for col in ["오늘 종목 이슈 한줄 요약", "공시 요약", "뉴스 요약", "종합 판단", "주의사항", "원문 개수", "핵심 원문 목록"]:
             out[col] = summarized.get(col)
@@ -978,6 +980,17 @@ class KakaoColabPredictionBot:
         except Exception as exc:
             self._console_log(f"{self._display_code(symbol)} 요약 생성 오류({type(exc).__name__}): {exc}")
             return row
+
+    def _run_in_background_with_timeout(self, fn: Callable[..., Any], *args, timeout: float, **kwargs) -> Any | None:
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(fn, *args, **kwargs)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            return None
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def _refresh_job_states(self):
         with self._state_lock:
