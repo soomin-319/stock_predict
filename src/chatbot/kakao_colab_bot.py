@@ -63,8 +63,6 @@ class PipelineRuntimeConfig:
     fetch_investor_context: bool = True
     enable_investor_flow: bool = True
     enable_investor_disclosure: bool = True
-    enable_investor_news: bool = True
-    news_scoring_mode: str = "auto"
     openai_api_key: str | None = None
     openai_model: str | None = None
     naver_client_id: str | None = None
@@ -92,22 +90,18 @@ class PipelineRuntimeConfig:
                 cmd.append("--disable-investor-flow")
             if not self.enable_investor_disclosure:
                 cmd.append("--disable-disclosure-context")
-            if not self.enable_investor_news:
-                cmd.append("--disable-news-context")
             if self.dart_api_key:
                 cmd.extend(["--dart-api-key", self.dart_api_key])
             if self.dart_corp_map_csv:
                 cmd.extend(["--dart-corp-map-csv", self.dart_corp_map_csv])
-            if self.news_scoring_mode:
-                cmd.extend(["--news-scoring-mode", self.news_scoring_mode])
-            if self.openai_api_key:
-                cmd.extend(["--openai-api-key", self.openai_api_key])
-            if self.openai_model:
-                cmd.extend(["--openai-model", self.openai_model])
             if self.naver_client_id:
                 cmd.extend(["--naver-client-id", self.naver_client_id])
             if self.naver_client_secret:
                 cmd.extend(["--naver-client-secret", self.naver_client_secret])
+        if self.openai_api_key:
+            cmd.extend(["--openai-api-key", self.openai_api_key])
+        if self.openai_model:
+            cmd.extend(["--openai-model", self.openai_model])
         if not self.use_external:
             cmd.append("--disable-external")
         if self.report_json:
@@ -393,7 +387,7 @@ class KakaoColabPredictionBot:
             user.get("id")
             or user.get("userKey")
             or (user.get("properties") or {}).get("plusfriendUserKey")
-            or "anonymous"
+            or ""
         )
 
     def _find_cached_prediction(self, symbol: str) -> pd.Series | None:
@@ -851,8 +845,7 @@ class KakaoColabPredictionBot:
 
         events = self._load_result_news()
         if events.empty or "Date" not in events.columns or "Symbol" not in events.columns:
-            self._console_log(f"{self._display_code(symbol)} 요약 원문이 없어 예측 결과만 제공합니다.")
-            return row
+            events = pd.DataFrame(columns=["Date", "Symbol", "source_type", "title"])
 
         target_dt = pd.to_datetime(prediction_date, errors="coerce")
         if pd.isna(target_dt):
@@ -881,6 +874,9 @@ class KakaoColabPredictionBot:
             self._console_log(
                 f"{self._display_code(symbol)} 요약 원문 없음 (기준일 {prediction_date}, 전일 포함 검색, symbol_events={len(same_symbol)})."
             )
+            has_existing_summary = bool(str(row.get("공시 요약", "")).strip()) or bool(str(row.get("뉴스 요약", "")).strip())
+            if has_existing_summary:
+                return row
 
         base = pd.DataFrame([{"Symbol": symbol, "종목명": str(row.get("종목명", self._display_code(symbol)))}])
         summarized = append_issue_summary_columns(

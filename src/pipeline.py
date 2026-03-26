@@ -255,7 +255,43 @@ def _print_backtest_console_summary(backtest: dict):
 
 
 def _print_prediction_console_summary(pred_df: pd.DataFrame):
-    formatter_print_prediction_console_summary(pred_df)
+    out = pred_df.copy()
+    required = {"recommendation", "portfolio_action", "trading_gate", "risk_flag", "prediction_reason", "confidence_label"}
+    if not required.issubset(set(out.columns)):
+        out = build_prediction_policy_frame(out)
+    if "confidence_score" not in out.columns:
+        out["confidence_score"] = 0.5
+    if "history_direction_accuracy" not in out.columns:
+        out["history_direction_accuracy"] = 0.5
+    formatter_print_prediction_console_summary(out)
+
+
+def _recommendation_from_signal(
+    signal_score: float | int | None,
+    predicted_return: float | int | None,
+    up_probability: float | int | None = None,
+    uncertainty_score: float | int | None = None,
+) -> str:
+    """Backward-compatible wrapper for tests/importers."""
+    return domain_recommendation_from_signal(signal_score, predicted_return, up_probability, uncertainty_score)
+
+
+def _policy_recommendation(row: pd.Series) -> str:
+    """Backward-compatible policy helper kept for test compatibility."""
+    return _recommendation_from_signal(
+        row.get("signal_score"),
+        row.get("predicted_return"),
+        row.get("up_probability"),
+        row.get("uncertainty_score"),
+    ) if not (
+        pd.to_numeric(pd.Series([row.get("nq_f_ret_1d")]), errors="coerce").iloc[0] <= -0.01
+        or pd.to_numeric(pd.Series([row.get("rsi_14")]), errors="coerce").iloc[0] >= 70.0
+    ) else "매도"
+
+
+def _apply_event_signal_boost(pred_df: pd.DataFrame) -> pd.DataFrame:
+    """Backward-compatible wrapper for event signal boost."""
+    return vectorized_event_signal_boost(pred_df)
 
 
 def _coverage_gate_status(cfg, external_coverage_ratio: float, investor_coverage_ratio: float) -> str:
@@ -436,8 +472,6 @@ def run_pipeline(
     config_json: str | None = None,
     enable_investor_flow: bool = True,
     enable_investor_disclosure: bool = True,
-    enable_investor_news: bool = True,
-    news_scoring_mode: str = "auto",
     openai_api_key: str | None = None,
     openai_model: str | None = None,
     naver_client_id: str | None = None,
@@ -510,14 +544,8 @@ def run_pipeline(
                 enabled=True,
                 enable_flow=enable_investor_flow,
                 enable_disclosure=enable_investor_disclosure,
-                enable_news=enable_investor_news,
                 dart_api_key=dart_api_key,
                 dart_corp_map_csv=dart_corp_map_csv,
-                news_scoring_mode=news_scoring_mode,
-                openai_api_key=effective_openai_api_key,
-                openai_model=effective_openai_model,
-                naver_client_id=naver_client_id,
-                naver_client_secret=naver_client_secret,
             ),
         )
         try:
@@ -783,8 +811,6 @@ def build_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fetch-investor-context", action="store_true", help="Fetch investor flow context features (foreign/institution flows)")
     parser.add_argument("--disable-investor-flow", action="store_true", help="Disable pykrx investor flow context")
     parser.add_argument("--disable-disclosure-context", action="store_true", help="Disable DART disclosure context")
-    parser.add_argument("--disable-news-context", action="store_true", help="Disable news context")
-    parser.add_argument("--news-scoring-mode", default="auto", choices=["auto", "rule", "ai"], help="News scoring mode")
     parser.add_argument("--openai-api-key", default=None, help="OpenAI API key for AI news scoring")
     parser.add_argument("--openai-model", default=None, help="OpenAI model for AI news scoring")
     parser.add_argument("--naver-client-id", default=None, help="Naver News Search API client id")
@@ -881,8 +907,6 @@ def main():
         config_json=args.config_json,
         enable_investor_flow=not args.disable_investor_flow,
         enable_investor_disclosure=not args.disable_disclosure_context,
-        enable_investor_news=not args.disable_news_context,
-        news_scoring_mode=args.news_scoring_mode,
         openai_api_key=args.openai_api_key,
         openai_model=args.openai_model,
         naver_client_id=args.naver_client_id,
