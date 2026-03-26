@@ -206,11 +206,22 @@ class KakaoColabPredictionBot:
         from_session: bool,
     ) -> dict[str, Any]:
         display_code = self._display_code(symbol)
-        self._update_session(user_id, symbol=symbol, intent="tracking")
 
         with self._state_lock:
             job_state = self._job_registry.get(symbol)
         if job_state and job_state.get("status") == "running":
+            prior_intent = self._session_intent(user_id)
+            if prior_intent != "waiting":
+                self._update_session(user_id, symbol=symbol, intent="waiting")
+                return self._build_response(
+                    f"{display_code} 예측을 시작합니다. 잠시 후 '결과'를 입력하면 최신 예측 결과를 안내해드릴게요.",
+                    quick_replies=[
+                        ("결과 확인", "결과"),
+                        ("최신화", "최신화"),
+                        ("도움말", "도움말"),
+                    ],
+                )
+            self._update_session(user_id, symbol=symbol, intent="running")
             return self._build_response(
                 f"{display_code} 예측이 현재 진행 중입니다. 잠시 후 '결과' 또는 '{display_code}'를 다시 입력해주세요.",
                 quick_replies=[
@@ -222,6 +233,7 @@ class KakaoColabPredictionBot:
 
         cached_row = None if force_refresh else self._find_cached_prediction(symbol)
         if cached_row is not None:
+            self._update_session(user_id, symbol=symbol, intent="tracking")
             cached_row = self._safe_attach_issue_summary(cached_row, symbol)
             try:
                 message = self._format_prediction_message(cached_row)
@@ -243,11 +255,14 @@ class KakaoColabPredictionBot:
             )
 
         if job_state and job_state.get("status") == "failed":
+            self._update_session(user_id, symbol=symbol, intent="tracking")
             return self._start_job_response(symbol, retry=True)
 
         if force_refresh and from_session:
+            self._update_session(user_id, symbol=symbol, intent="tracking")
             return self._start_job_response(symbol, retry=True)
 
+        self._update_session(user_id, symbol=symbol, intent="tracking")
         return self._start_job_response(symbol, retry=False)
 
     def _start_job_response(self, symbol: str, retry: bool) -> dict[str, Any]:
@@ -940,6 +955,14 @@ class KakaoColabPredictionBot:
             session = self._session_registry.get(user_id, {})
         symbol = session.get("last_symbol")
         return str(symbol) if symbol else None
+
+    def _session_intent(self, user_id: str | None) -> str:
+        if not user_id:
+            return ""
+        with self._state_lock:
+            session = self._session_registry.get(user_id, {})
+        intent = str(session.get("last_intent") or "").strip()
+        return intent
 
     def _is_help_request(self, text: str) -> bool:
         return text.strip().lower() in _HELP_KEYWORDS
