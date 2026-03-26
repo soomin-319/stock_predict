@@ -486,7 +486,7 @@ def run_pipeline(
     issue_summary_symbols: list[str] | None = None,
 ):
     effective_openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
-    effective_openai_model = openai_model or os.getenv("OPENAI_MODEL") or ("gpt-5" if effective_openai_api_key else None)
+    effective_openai_model = openai_model or os.getenv("OPENAI_MODEL") or ("gpt-5-mini" if effective_openai_api_key else None)
     total_steps = 13
     _print_progress(1, total_steps, "Loading app configuration")
     cfg_overrides: dict[str, dict[str, float]] = {"backtest": {}}

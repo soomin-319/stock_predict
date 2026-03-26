@@ -188,7 +188,7 @@ def test_append_issue_summary_columns_uses_default_model_when_only_openai_key(mo
     monkeypatch.setattr("src.reports.issue_summary._llm_symbol_issue_summary", _fake_llm)
     out = append_issue_summary_columns(base, context_raw_df=events, openai_api_key="sk-test", openai_model=None)
 
-    assert captured["model"] == "gpt-5"
+    assert captured["model"] == "gpt-5-mini"
     assert out.loc[0, "오늘 종목 이슈 한줄 요약"] == "ok"
 
 
@@ -264,7 +264,7 @@ def test_llm_symbol_issue_summary_uses_fallback_news_lines_when_llm_returns_empt
         symbol_name="삼성전자",
         events=events,
         api_key="sk-test",
-        model="gpt-5",
+        model="gpt-5-mini",
     )
 
     assert out is not None
