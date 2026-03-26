@@ -207,6 +207,8 @@ def _fetch_naver_news_items(
         return []
     rows: list[dict] = []
     seen: set[tuple[str, str]] = set()
+    start_date = pd.to_datetime(start_dt).normalize()
+    end_date = pd.to_datetime(end_dt).normalize()
     for query in _build_news_queries(symbol_name):
         params = urlencode({"query": query, "display": 50, "start": 1, "sort": "date"})
         req = Request(
@@ -229,8 +231,9 @@ def _fetch_naver_news_items(
             pub_dt = pd.to_datetime(pub_raw, utc=True, errors="coerce")
             if pd.isna(pub_dt):
                 continue
-            pub_dt = pub_dt.tz_localize(None)
-            if pub_dt < start_dt or pub_dt > (end_dt + pd.Timedelta(days=1)):
+            pub_kst = pub_dt.tz_convert("Asia/Seoul")
+            pub_date = pub_kst.tz_localize(None).normalize()
+            if pub_date < start_date or pub_date > end_date:
                 continue
             if symbol_name and symbol_name not in f"{title} {description}":
                 continue
@@ -241,12 +244,12 @@ def _fetch_naver_news_items(
             seen.add(dedupe_key)
             rows.append(
                 {
-                    "Date": pub_dt.normalize().strftime("%Y-%m-%d"),
+                    "Date": pub_date.strftime("%Y-%m-%d"),
                     "Symbol": symbol,
                     "source_type": "news",
                     "title": title,
                     "body": description,
-                    "published_at": pub_dt.isoformat(),
+                    "published_at": pub_kst.isoformat(),
                     "provider": "naver_news_api",
                     "url": str(item.get("originallink") or item.get("link") or ""),
                     "raw_id": origin,
@@ -394,5 +397,8 @@ def collect_context_raw_events(
         )
 
     out = pd.DataFrame(rows).drop_duplicates(subset=["Date", "Symbol", "source_type", "title", "raw_id"]).reset_index(drop=True)
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce").dt.normalize()
+    out = out[(out["Date"] >= start_dt.normalize()) & (out["Date"] <= end_dt.normalize())].copy()
+    out["Date"] = out["Date"].dt.strftime("%Y-%m-%d")
     out = out.sort_values(["Date", "Symbol", "source_type", "title"]).reset_index(drop=True)
     return out
