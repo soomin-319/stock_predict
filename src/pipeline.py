@@ -697,6 +697,9 @@ def run_pipeline(
     simple_path = _safe_to_csv(simple_df, simple_path)
     news_path = resolve_output_path("result_news.csv")
     news_path = _safe_to_csv(context_raw_df, news_path)
+    disclosure_path = resolve_output_path("result_disclosure.csv")
+    disclosure_df = context_raw_df[context_raw_df["source_type"].astype(str) == "disclosure"].copy() if "source_type" in context_raw_df.columns else pd.DataFrame()
+    disclosure_path = _safe_to_csv(disclosure_df, disclosure_path)
 
     report = {
         "universe_name": cfg.universe.name,
@@ -740,6 +743,7 @@ def run_pipeline(
             "result_detail_csv": str(detail_path),
             "result_simple_csv": str(simple_path),
             "result_news_csv": str(news_path),
+            "result_disclosure_csv": str(disclosure_path),
             "figure_dir": str(figure_dir_path),
             **fig_paths,
             "signal_hist": signal_hist,
