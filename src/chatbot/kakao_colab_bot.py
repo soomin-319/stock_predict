@@ -63,8 +63,6 @@ class PipelineRuntimeConfig:
     fetch_investor_context: bool = True
     enable_investor_flow: bool = True
     enable_investor_disclosure: bool = True
-    enable_investor_news: bool = True
-    news_scoring_mode: str = "auto"
     openai_api_key: str | None = None
     openai_model: str | None = None
     naver_client_id: str | None = None
@@ -92,22 +90,10 @@ class PipelineRuntimeConfig:
                 cmd.append("--disable-investor-flow")
             if not self.enable_investor_disclosure:
                 cmd.append("--disable-disclosure-context")
-            if not self.enable_investor_news:
-                cmd.append("--disable-news-context")
             if self.dart_api_key:
                 cmd.extend(["--dart-api-key", self.dart_api_key])
             if self.dart_corp_map_csv:
                 cmd.extend(["--dart-corp-map-csv", self.dart_corp_map_csv])
-            if self.news_scoring_mode:
-                cmd.extend(["--news-scoring-mode", self.news_scoring_mode])
-            if self.openai_api_key:
-                cmd.extend(["--openai-api-key", self.openai_api_key])
-            if self.openai_model:
-                cmd.extend(["--openai-model", self.openai_model])
-            if self.naver_client_id:
-                cmd.extend(["--naver-client-id", self.naver_client_id])
-            if self.naver_client_secret:
-                cmd.extend(["--naver-client-secret", self.naver_client_secret])
         if not self.use_external:
             cmd.append("--disable-external")
         if self.report_json:
@@ -393,7 +379,7 @@ class KakaoColabPredictionBot:
             user.get("id")
             or user.get("userKey")
             or (user.get("properties") or {}).get("plusfriendUserKey")
-            or "anonymous"
+            or ""
         )
 
     def _find_cached_prediction(self, symbol: str) -> pd.Series | None:
