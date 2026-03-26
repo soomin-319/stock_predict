@@ -209,6 +209,11 @@ class KakaoColabPredictionBot:
 
         with self._state_lock:
             job_state = self._job_registry.get(symbol)
+            has_active_runtime = symbol in self._active_processes
+        if job_state and job_state.get("status") == "running" and not has_active_runtime:
+            self._mark_job_failed(symbol, exit_code=-2, note="stale_running_state")
+            with self._state_lock:
+                job_state = self._job_registry.get(symbol)
         if job_state and job_state.get("status") == "running":
             prior_intent = self._session_intent(user_id)
             if prior_intent != "waiting":
@@ -256,6 +261,16 @@ class KakaoColabPredictionBot:
 
         if job_state and job_state.get("status") == "completed":
             self._update_session(user_id, symbol=symbol, intent="tracking")
+            elapsed = self._job_elapsed_seconds(job_state)
+            if elapsed is not None and elapsed >= 15.0:
+                return self._build_response(
+                    f"{display_code} 예측 완료 후 결과 파일에서 종목을 찾지 못했습니다. '최신화'로 다시 실행해주세요.",
+                    quick_replies=[
+                        ("최신화", "최신화"),
+                        ("다시 시도", display_code),
+                        ("도움말", "도움말"),
+                    ],
+                )
             return self._build_response(
                 f"{display_code} 예측은 완료됐지만 결과 파일 반영을 확인 중입니다. 잠시 후 '결과'를 다시 입력해주세요.",
                 quick_replies=[
@@ -695,6 +710,33 @@ class KakaoColabPredictionBot:
 
         with self._state_lock:
             self._active_processes.pop(symbol, None)
+
+    def _mark_job_failed(self, symbol: str, exit_code: int, note: str = ""):
+        with self._state_lock:
+            job_state = self._job_registry.get(symbol, {})
+            job_state.update(
+                {
+                    "status": "failed",
+                    "exit_code": int(exit_code),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "failure_note": str(note or ""),
+                }
+            )
+            self._job_registry[symbol] = job_state
+            self._save_registry(self.state_path, self._job_registry)
+
+    def _job_elapsed_seconds(self, job_state: dict[str, Any]) -> float | None:
+        completed_at = str(job_state.get("completed_at") or "").strip()
+        if not completed_at:
+            return None
+        try:
+            completed_dt = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+        except Exception:
+            return None
+        now_utc = datetime.now(timezone.utc)
+        if completed_dt.tzinfo is None:
+            completed_dt = completed_dt.replace(tzinfo=timezone.utc)
+        return max(0.0, (now_utc - completed_dt.astimezone(timezone.utc)).total_seconds())
 
     def _log_completion_preview(self, symbol: str):
         display_code = self._display_code(symbol)

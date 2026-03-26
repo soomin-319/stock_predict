@@ -398,6 +398,27 @@ def test_second_and_third_request_show_wait_then_running_message(tmp_path: Path)
     assert "005930 예측이 현재 진행 중입니다" in third_text
 
 
+def test_stale_running_state_is_downgraded_to_failed_and_prompts_retry(tmp_path: Path):
+    bot = make_bot(tmp_path)
+    bot._job_registry["005930.KS"] = {"status": "running", "submitted_at": "2026-03-26T00:00:00+00:00"}
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-stale-running"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "예측 작업이 실패했습니다" in text
+    assert bot._job_registry["005930.KS"]["status"] == "failed"
+
+
+def test_completed_without_result_for_long_time_prompts_refresh(tmp_path: Path):
+    bot = make_bot(tmp_path)
+    bot._job_registry["005930.KS"] = {"status": "completed", "completed_at": "2026-03-26T00:00:00+00:00"}
+    bot._session_registry["u-no-result"] = {"last_symbol": "005930.KS", "last_intent": "tracking"}
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "결과", "user": {"id": "u-no-result"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "결과 파일에서 종목을 찾지 못했습니다" in text
+    assert "최신화" in text
+
+
 def test_start_job_skips_disable_external_flag_when_external_features_enabled(tmp_path: Path):
     runner = RecordingRunner()
     runtime_config = PipelineRuntimeConfig(
