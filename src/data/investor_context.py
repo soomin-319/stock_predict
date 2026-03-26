@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import pandas as pd
+import yfinance as yf
 
 from src.data.pykrx_support import import_pykrx_stock
 
