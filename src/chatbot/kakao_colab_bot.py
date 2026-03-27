@@ -1208,16 +1208,31 @@ class KakaoColabPredictionBot:
     def _has_issue_summary(self, row: pd.Series) -> bool:
         disclosure = self._get_clean_issue_text(row.get("공시 요약"))
         news = self._get_clean_issue_text(row.get("뉴스 요약"))
-        placeholders = {
-            "요청 종목에 대해서만 요약을 생성합니다.",
-            "[공시 요약]\n- 요청 종목에 대해서만 요약을 생성합니다.",
-            "[뉴스 요약]\n- 요청 종목에 대해서만 요약을 생성합니다.",
-        }
         normalized_disclosure = disclosure.strip()
         normalized_news = news.strip()
-        has_real_disclosure = bool(normalized_disclosure and normalized_disclosure not in placeholders)
-        has_real_news = bool(normalized_news and normalized_news not in placeholders)
+        has_real_disclosure = bool(normalized_disclosure and not self._is_placeholder_issue_text(normalized_disclosure))
+        has_real_news = bool(normalized_news and not self._is_placeholder_issue_text(normalized_news))
         return has_real_disclosure or has_real_news
+
+    def _is_placeholder_issue_text(self, text: str) -> bool:
+        normalized = re.sub(r"\s+", " ", str(text or "").strip().lower())
+        if not normalized:
+            return True
+        exact_placeholders = {
+            "-",
+            "없음",
+            "당일 공시 없음.",
+            "당일 뉴스 없음.",
+            "요청 종목에 대해서만 요약을 생성합니다.",
+            "[공시 요약] - 요청 종목에 대해서만 요약을 생성합니다.",
+            "[뉴스 요약] - 요청 종목에 대해서만 요약을 생성합니다.",
+            "수집된 뉴스가 없어 뉴스 기반 해석 정보가 제한적입니다.",
+            "유의미한 공시 신호가 약해 공시 단독 영향은 제한적으로 보입니다.",
+        }
+        if normalized in exact_placeholders:
+            return True
+        sparse_markers = ["요약을 생성합니다", "당일 공시 없음", "당일 뉴스 없음", "수집된 뉴스가 없어", "정보가 제한적"]
+        return any(marker in normalized for marker in sparse_markers)
 
     def _cache_issue_summary(self, symbol: str, row: pd.Series) -> None:
         payload = {

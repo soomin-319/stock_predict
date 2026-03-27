@@ -520,6 +520,41 @@ def test_additional_symbol_request_generates_summary_when_placeholder_exists(tmp
     assert calls["count"] == 1
 
 
+def test_cached_prediction_with_empty_issue_placeholders_triggers_async_summary_progress(tmp_path: Path, monkeypatch):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "종목코드": "005930",
+                "종목명": "삼성전자",
+                "권고": "매수",
+                "내일 예상 종가": 71200,
+                "내일 예상 수익률(%)": "1.2%",
+                "상승확률(%)": "70.0%",
+                "예측 신뢰도": "80.0%",
+                "예측 이유": "r",
+                "공시 요약": "당일 공시 없음.",
+                "뉴스 요약": "당일 뉴스 없음.",
+            }
+        ]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+
+    bot = make_bot(tmp_path)
+    bot.runtime_config.async_issue_summary_on_demand = True
+    calls = {"count": 0}
+
+    def _fake_start(symbol, row):
+        calls["count"] += 1
+
+    monkeypatch.setattr(bot, "_start_issue_summary_background", _fake_start)
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-empty-issue"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "공시/뉴스 요약 작업을 진행 중" in text
+    assert calls["count"] == 1
+
+
 def test_repeated_request_while_running_shows_running_message(tmp_path: Path):
     runner = RecordingRunner()
     bot = make_bot(tmp_path, runner=runner)
