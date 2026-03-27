@@ -171,7 +171,7 @@ def test_cached_prediction_generates_issue_summary_for_each_requested_symbol_wit
     assert captured[1]["symbol"] == "000660.KS"
 
 
-def test_cached_prediction_uses_today_reference_date_when_detail_date_is_stale(tmp_path: Path, monkeypatch):
+def test_cached_prediction_uses_latest_prediction_date_when_detail_date_is_stale(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
     pd.DataFrame(
@@ -186,7 +186,7 @@ def test_cached_prediction_uses_today_reference_date_when_detail_date_is_stale(t
 
     def _fake_collect(symbol, reference_date):
         captured_ref.append(reference_date)
-        return pd.DataFrame([{"Date": "2026-03-26", "Symbol": "000660.KS", "source_type": "news", "title": "당일 뉴스"}])
+        return pd.DataFrame([{"Date": "2026-03-06", "Symbol": "000660.KS", "source_type": "news", "title": "예측일 뉴스"}])
 
     def _fake_append(pred_df, context_raw_df=None, **kwargs):
         out = pred_df.copy()
