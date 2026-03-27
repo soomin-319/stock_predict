@@ -78,6 +78,7 @@ class PipelineRuntimeConfig:
         symbol: str,
         add_symbols: list[str] | None = None,
         issue_summary_symbols: list[str] | None = None,
+        disable_issue_summary: bool = False,
     ) -> list[str]:
         normalized_add_symbols = [str(s) for s in (add_symbols or [symbol]) if str(s).strip()]
         normalized_issue_symbols = [str(s) for s in (issue_summary_symbols or [symbol]) if str(s).strip()]
@@ -115,6 +116,8 @@ class PipelineRuntimeConfig:
             cmd.extend(["--report-json", self.report_json])
         if self.figure_dir:
             cmd.extend(["--figure-dir", self.figure_dir])
+        if disable_issue_summary:
+            cmd.append("--disable-issue-summary")
         cmd.extend(self.extra_args)
         return [str(part) for part in cmd]
 
@@ -130,6 +133,7 @@ class PyngrokTunnelConfig:
 class KakaoColabPredictionBot:
     LIVE_EVENTS_TIMEOUT_SEC = 1.5
     ISSUE_SUMMARY_TIMEOUT_SEC = 2.5
+    BOOTSTRAP_JOB_KEY = "__bootstrap__"
 
     def __init__(
         self,
@@ -159,6 +163,9 @@ class KakaoColabPredictionBot:
         self._result_simple_cache: pd.DataFrame | None = None
         self._result_simple_cache_mtime_ns: int | None = None
         self._issue_summary_cache: dict[str, dict[str, Any]] = {}
+        self._issue_summary_jobs: dict[str, dict[str, Any]] = {}
+        self._issue_summary_timeout_symbols: set[str] = set()
+        self._queued_summary_symbols: set[str] = set()
         self._state_lock = threading.RLock()
         self._legacy_formatter_patched = False
         self._bootstrap_all_symbols_done = False
@@ -220,6 +227,23 @@ class KakaoColabPredictionBot:
     ) -> dict[str, Any]:
         display_code = self._display_code(symbol)
 
+        if self._is_bootstrap_required():
+            self._start_bootstrap_job(symbol)
+        if self._is_bootstrap_running():
+            self._queue_summary_after_bootstrap(symbol)
+            self._update_session(user_id, symbol=symbol, intent="running")
+            return self._build_response(
+                (
+                    "초기 전체 종목 예측(약 94개)이 진행 중입니다. "
+                    f"{display_code} 종목의 뉴스/공시 요약 요청을 접수했고, "
+                    "전체 예측 완료 후 자동으로 요약을 생성합니다. 잠시 후 다시 조회해주세요."
+                ),
+                quick_replies=[
+                    ("결과 확인", "결과"),
+                    ("도움말", "도움말"),
+                ],
+            )
+
         with self._state_lock:
             job_state = self._job_registry.get(symbol)
             has_active_runtime = symbol in self._active_processes
@@ -242,6 +266,19 @@ class KakaoColabPredictionBot:
         if cached_row is not None:
             self._update_session(user_id, symbol=symbol, intent="tracking")
             cached_row = self._safe_attach_issue_summary(cached_row, symbol)
+            if not self._has_issue_summary(cached_row) and self._is_issue_summary_running(symbol):
+                return self._build_response(
+                    (
+                        f"{display_code} 예측은 완료되었습니다. "
+                        "뉴스/공시 요약을 생성 중입니다. 잠시 후 '결과' 또는 "
+                        f"'{display_code}'를 다시 입력해주세요."
+                    ),
+                    quick_replies=[
+                        ("결과 확인", "결과"),
+                        ("최신화", "최신화"),
+                        ("도움말", "도움말"),
+                    ],
+                )
             try:
                 message = self._format_prediction_message(cached_row)
             except Exception as exc:
@@ -703,8 +740,13 @@ class KakaoColabPredictionBot:
             self._save_registry(self.state_path, self._job_registry)
 
         display_code = self._display_code(symbol)
+        is_bootstrap_job = symbol == self.BOOTSTRAP_JOB_KEY
         if status == "completed":
-            self._console_log(f"{display_code} 예측 작업 completed (exit_code=0). 결과 요청 시 최신 CSV를 기반으로 응답합니다.")
+            if is_bootstrap_job:
+                self._console_log("초기 전체 종목 예측 작업 completed (exit_code=0).")
+                self._start_queued_summaries_after_bootstrap()
+            else:
+                self._console_log(f"{display_code} 예측 작업 completed (exit_code=0). 결과 요청 시 최신 CSV를 기반으로 응답합니다.")
             completion_thread = threading.Thread(
                 target=self._log_completion_preview,
                 args=(symbol,),
@@ -712,7 +754,10 @@ class KakaoColabPredictionBot:
             )
             completion_thread.start()
         else:
-            self._console_log(f"{display_code} 예측 작업 failed (exit_code={int(exit_code)}). 로그를 확인해주세요.")
+            if is_bootstrap_job:
+                self._console_log(f"초기 전체 종목 예측 작업 failed (exit_code={int(exit_code)}). 로그를 확인해주세요.")
+            else:
+                self._console_log(f"{display_code} 예측 작업 failed (exit_code={int(exit_code)}). 로그를 확인해주세요.")
 
         with self._state_lock:
             self._active_processes.pop(symbol, None)
@@ -804,7 +849,7 @@ class KakaoColabPredictionBot:
             if bootstrap_symbols:
                 add_symbols = bootstrap_symbols
                 self._console_log(
-                    f"{self._display_code(symbol)} 최초 예측 요청: KRX 심볼 맵 전체 {len(add_symbols)}개 심볼에 대해 예측을 실행합니다."
+                    f"{self._display_code(symbol)} 최초 예측 요청: {len(add_symbols)}개 심볼에 대해 예측을 실행합니다."
                 )
             self._bootstrap_all_symbols_done = True
 
@@ -889,6 +934,123 @@ class KakaoColabPredictionBot:
             )
             self._save_registry(self.state_path, self._job_registry)
         return True
+
+    def _start_bootstrap_job(self, requested_symbol: str) -> bool:
+        with self._state_lock:
+            existing = self._job_registry.get(self.BOOTSTRAP_JOB_KEY, {})
+            if existing.get("status") == "running":
+                return True
+
+        bootstrap_symbols = self._load_bootstrap_symbols_from_krx_map()
+        if not bootstrap_symbols:
+            bootstrap_symbols = [requested_symbol]
+        self._bootstrap_all_symbols_done = True
+
+        command = self.runtime_config.build_command(
+            requested_symbol,
+            add_symbols=bootstrap_symbols,
+            issue_summary_symbols=[],
+            disable_issue_summary=True,
+        )
+        submitted_at = datetime.now(timezone.utc).isoformat()
+        display_code = "BOOTSTRAP"
+        log_path = self.log_dir / f"bootstrap_{submitted_at.replace(':', '').replace('+00:00', 'Z')}.log"
+        log_handle = log_path.open("w", encoding="utf-8")
+        self._console_log(
+            f"초기 전체 종목 예측 작업 시작: 심볼 {len(bootstrap_symbols)}개, 명령어={' '.join(command)}"
+        )
+        try:
+            process = self.process_runner(
+                command,
+                cwd=self.project_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as exc:
+            self._console_log(f"초기 전체 종목 예측 작업 시작 실패({type(exc).__name__}): {exc}")
+            try:
+                log_handle.close()
+            except Exception:
+                pass
+            with self._state_lock:
+                self._job_registry[self.BOOTSTRAP_JOB_KEY] = asdict(
+                    PredictionJobState(
+                        symbol=self.BOOTSTRAP_JOB_KEY,
+                        display_code=display_code,
+                        command=command,
+                        log_path=str(log_path.relative_to(self.project_root)),
+                        submitted_at=submitted_at,
+                        status="failed",
+                        exit_code=-1,
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                )
+                self._save_registry(self.state_path, self._job_registry)
+            return False
+
+        log_thread = None
+        if getattr(process, "stdout", None) is not None:
+            log_thread = threading.Thread(
+                target=self._stream_process_output,
+                args=(self.BOOTSTRAP_JOB_KEY, process, log_handle),
+                daemon=True,
+            )
+            log_thread.start()
+        monitor_thread = None
+        if getattr(process, "wait", None) is not None:
+            monitor_thread = threading.Thread(
+                target=self._monitor_process_completion,
+                args=(self.BOOTSTRAP_JOB_KEY, process),
+                daemon=True,
+            )
+            monitor_thread.start()
+
+        with self._state_lock:
+            self._active_processes[self.BOOTSTRAP_JOB_KEY] = {
+                "process": process,
+                "log_handle": log_handle,
+                "log_thread": log_thread,
+                "monitor_thread": monitor_thread,
+            }
+            self._job_registry[self.BOOTSTRAP_JOB_KEY] = asdict(
+                PredictionJobState(
+                    symbol=self.BOOTSTRAP_JOB_KEY,
+                    display_code=display_code,
+                    command=command,
+                    log_path=str(log_path.relative_to(self.project_root)),
+                    submitted_at=submitted_at,
+                    status="running",
+                    pid=getattr(process, "pid", None),
+                )
+            )
+            self._save_registry(self.state_path, self._job_registry)
+        return True
+
+    def _is_bootstrap_running(self) -> bool:
+        with self._state_lock:
+            state = self._job_registry.get(self.BOOTSTRAP_JOB_KEY, {})
+            runtime = self._active_processes.get(self.BOOTSTRAP_JOB_KEY)
+        return state.get("status") == "running" or runtime is not None
+
+    def _queue_summary_after_bootstrap(self, symbol: str) -> None:
+        with self._state_lock:
+            self._queued_summary_symbols.add(str(symbol))
+
+    def _start_queued_summaries_after_bootstrap(self) -> None:
+        with self._state_lock:
+            queued = sorted(self._queued_summary_symbols)
+            self._queued_summary_symbols.clear()
+        if not queued:
+            return
+        for symbol in queued:
+            row = self._find_cached_prediction(symbol)
+            if row is None:
+                continue
+            if self._has_issue_summary(row):
+                continue
+            self._start_issue_summary_background(symbol, row)
 
     def _prediction_date_for_symbol(self, symbol: str) -> str | None:
         today_kst = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Seoul")).date()
@@ -1030,6 +1192,9 @@ class KakaoColabPredictionBot:
             self._console_log(
                 f"{self._display_code(symbol)} 요약 생성 시간초과({self.ISSUE_SUMMARY_TIMEOUT_SEC:.1f}s)로 기존 응답을 유지합니다."
             )
+            with self._state_lock:
+                self._issue_summary_timeout_symbols.add(str(symbol))
+            self._start_issue_summary_background(symbol, row)
             return row
         summarized = summarized_df.iloc[0]
         out = row.copy()
@@ -1069,6 +1234,61 @@ class KakaoColabPredictionBot:
         }
         with self._state_lock:
             self._issue_summary_cache[str(symbol)] = payload
+            self._issue_summary_jobs[str(symbol)] = {
+                "status": "completed",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self._issue_summary_timeout_symbols.discard(str(symbol))
+
+    def _is_issue_summary_running(self, symbol: str) -> bool:
+        with self._state_lock:
+            if str(symbol) not in self._issue_summary_timeout_symbols:
+                return False
+            current = self._issue_summary_jobs.get(str(symbol), {})
+            return current.get("status") == "running"
+
+    def _start_issue_summary_background(self, symbol: str, row: pd.Series) -> None:
+        with self._state_lock:
+            current = self._issue_summary_jobs.get(str(symbol), {})
+            if current.get("status") == "running":
+                return
+            self._issue_summary_jobs[str(symbol)] = {
+                "status": "running",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        worker = threading.Thread(
+            target=self._run_issue_summary_background,
+            args=(str(symbol), row.copy()),
+            daemon=True,
+        )
+        worker.start()
+
+    def _run_issue_summary_background(self, symbol: str, row: pd.Series) -> None:
+        display_code = self._display_code(symbol)
+        try:
+            summarized = self._attach_live_issue_summary(row, symbol)
+            if self._has_issue_summary(summarized):
+                self._cache_issue_summary(symbol, summarized)
+                self._console_log(f"{display_code} 백그라운드 요약 생성 완료.")
+                return
+            with self._state_lock:
+                self._issue_summary_jobs[str(symbol)] = {
+                    "status": "failed",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "reason": "empty_summary",
+                }
+                self._issue_summary_timeout_symbols.discard(str(symbol))
+            self._console_log(f"{display_code} 백그라운드 요약 생성 결과가 비어 있어 재시도 대기 상태로 전환합니다.")
+        except Exception as exc:
+            with self._state_lock:
+                self._issue_summary_jobs[str(symbol)] = {
+                    "status": "failed",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
+                self._issue_summary_timeout_symbols.discard(str(symbol))
+            self._console_log(f"{display_code} 백그라운드 요약 생성 실패({type(exc).__name__}): {exc}")
 
     def _apply_issue_summary_cache(self, row: pd.Series, symbol: str) -> pd.Series:
         with self._state_lock:
