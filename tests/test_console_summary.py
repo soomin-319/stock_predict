@@ -33,6 +33,7 @@ def test_console_summary_uses_direction_accuracy_top10(capsys):
     assert "S11" in out and "S10" in out
     assert "S00" not in out and "S01" not in out
     assert "예측 신뢰도" in out
+    assert "포트폴리오 액션" not in out
     assert "예측 이유" not in out
 
 
