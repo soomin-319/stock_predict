@@ -438,7 +438,7 @@ def test_request_during_bootstrap_returns_global_progress_and_queues_summary(tmp
     release = threading.Event()
 
     def _slow_prewarm(*args, **kwargs):
-        release.wait(timeout=1.0)
+        release.wait()
         return {"ok": "1"}
 
     monkeypatch.setattr("src.chatbot.kakao_colab_bot.prewarm_prediction_cache", _slow_prewarm)
@@ -465,6 +465,24 @@ def test_request_during_bootstrap_returns_global_progress_and_queues_summary(tmp
     assert "요약 요청을 접수" in text
     assert "000660.KS" in bot._queued_summary_symbols
     release.set()
+
+
+def test_background_summary_uses_non_timeout_live_fetch(tmp_path: Path, monkeypatch):
+    bot = make_bot(tmp_path)
+    row = pd.Series({"종목코드": "005930", "종목명": "삼성전자"})
+    captured = {"flag": None}
+
+    def _fake_attach(target_row, symbol, use_timeout_for_live_fetch=True):
+        captured["flag"] = use_timeout_for_live_fetch
+        out = target_row.copy()
+        out["공시 요약"] = "실제 공시"
+        out["뉴스 요약"] = "실제 뉴스"
+        return out
+
+    monkeypatch.setattr(bot, "_attach_live_issue_summary", _fake_attach)
+    bot._run_issue_summary_background("005930.KS", row)
+
+    assert captured["flag"] is False
 
 
 def test_additional_symbol_request_generates_summary_when_placeholder_exists(tmp_path: Path, monkeypatch):

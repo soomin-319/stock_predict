@@ -1088,7 +1088,7 @@ class KakaoColabPredictionBot:
             merged = merged.drop_duplicates(subset=["Date", "Symbol", "source_type", "title"], keep="first")
         return merged
 
-    def _collect_live_symbol_events(self, symbol: str, reference_date: str) -> pd.DataFrame:
+    def _collect_live_symbol_events(self, symbol: str, reference_date: str, use_timeout: bool = True) -> pd.DataFrame:
         has_naver = bool(self.runtime_config.naver_client_id and self.runtime_config.naver_client_secret)
         has_dart = bool(self.runtime_config.dart_api_key)
         looks_demo_key = any(
@@ -1112,12 +1112,15 @@ class KakaoColabPredictionBot:
                     naver_client_id=self.runtime_config.naver_client_id,
                     naver_client_secret=self.runtime_config.naver_client_secret,
                 )
-            events = self._run_in_background_with_timeout(_fetch, timeout=self.LIVE_EVENTS_TIMEOUT_SEC)
-            if events is None:
-                self._console_log(
-                    f"{self._display_code(symbol)} 라이브 원문 수집 시간초과({self.LIVE_EVENTS_TIMEOUT_SEC:.1f}s)로 생략합니다."
-                )
-                return pd.DataFrame()
+            if use_timeout:
+                events = self._run_in_background_with_timeout(_fetch, timeout=self.LIVE_EVENTS_TIMEOUT_SEC)
+                if events is None:
+                    self._console_log(
+                        f"{self._display_code(symbol)} 라이브 원문 수집 시간초과({self.LIVE_EVENTS_TIMEOUT_SEC:.1f}s). 백그라운드 요약에서 계속 수집합니다."
+                    )
+                    return pd.DataFrame()
+            else:
+                events = _fetch()
             if events.empty:
                 return events
             events["Date"] = pd.to_datetime(events["Date"], errors="coerce").dt.normalize()
@@ -1126,7 +1129,7 @@ class KakaoColabPredictionBot:
             self._console_log(f"{self._display_code(symbol)} 라이브 원문 수집 실패 ({type(exc).__name__}): {exc}")
             return pd.DataFrame()
 
-    def _attach_live_issue_summary(self, row: pd.Series, symbol: str) -> pd.Series:
+    def _attach_live_issue_summary(self, row: pd.Series, symbol: str, use_timeout_for_live_fetch: bool = True) -> pd.Series:
         if self._has_issue_summary(row):
             self._cache_issue_summary(symbol, row)
             return row
@@ -1151,7 +1154,11 @@ class KakaoColabPredictionBot:
         for candidate_dt in candidate_dates:
             daily = same_symbol[same_symbol["Date"] == candidate_dt]
             if daily.empty and not live_fetch_attempted:
-                live_events = self._collect_live_symbol_events(symbol, candidate_dt.strftime("%Y-%m-%d"))
+                live_events = self._collect_live_symbol_events_with_compat(
+                    symbol=symbol,
+                    reference_date=candidate_dt.strftime("%Y-%m-%d"),
+                    use_timeout=use_timeout_for_live_fetch,
+                )
                 live_fetch_attempted = True
                 if not live_events.empty:
                     same_symbol = pd.concat([same_symbol, live_events], ignore_index=True)
@@ -1198,9 +1205,16 @@ class KakaoColabPredictionBot:
         )
         return out
 
+    def _collect_live_symbol_events_with_compat(self, symbol: str, reference_date: str, use_timeout: bool) -> pd.DataFrame:
+        try:
+            return self._collect_live_symbol_events(symbol, reference_date, use_timeout=use_timeout)
+        except TypeError:
+            # Backward compatibility for monkeypatched/test doubles still using the legacy signature.
+            return self._collect_live_symbol_events(symbol, reference_date)
+
     def _safe_attach_issue_summary(self, row: pd.Series, symbol: str) -> pd.Series:
         try:
-            return self._attach_live_issue_summary(row, symbol)
+            return self._attach_live_issue_summary(row, symbol, use_timeout_for_live_fetch=True)
         except Exception as exc:
             self._console_log(f"{self._display_code(symbol)} 요약 생성 오류({type(exc).__name__}): {exc}")
             return row
@@ -1274,7 +1288,7 @@ class KakaoColabPredictionBot:
     def _run_issue_summary_background(self, symbol: str, row: pd.Series) -> None:
         display_code = self._display_code(symbol)
         try:
-            summarized = self._attach_live_issue_summary(row, symbol)
+            summarized = self._attach_live_issue_summary(row, symbol, use_timeout_for_live_fetch=False)
             if self._has_issue_summary(summarized):
                 self._cache_issue_summary(symbol, summarized)
                 self._console_log(f"{display_code} 백그라운드 요약 생성 완료.")
