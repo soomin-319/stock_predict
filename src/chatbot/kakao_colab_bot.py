@@ -1222,6 +1222,9 @@ class KakaoColabPredictionBot:
             self._console_log(
                 f"{self._display_code(symbol)} 요약 생성 결과가 없어 기존 응답을 유지합니다."
             )
+            with self._state_lock:
+                self._issue_summary_timeout_symbols.add(str(symbol))
+            self._start_issue_summary_background(symbol, row)
             return row
         summarized = summarized_df.iloc[0]
         out = row.copy()
