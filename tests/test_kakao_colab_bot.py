@@ -472,7 +472,7 @@ def test_background_summary_uses_non_timeout_live_fetch(tmp_path: Path, monkeypa
     row = pd.Series({"종목코드": "005930", "종목명": "삼성전자"})
     captured = {"flag": None}
 
-    def _fake_attach(target_row, symbol, use_timeout_for_live_fetch=True):
+    def _fake_attach(target_row, symbol, use_timeout_for_live_fetch=True, **kwargs):
         captured["flag"] = use_timeout_for_live_fetch
         out = target_row.copy()
         out["공시 요약"] = "실제 공시"

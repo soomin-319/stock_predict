@@ -1129,7 +1129,13 @@ class KakaoColabPredictionBot:
             self._console_log(f"{self._display_code(symbol)} 라이브 원문 수집 실패 ({type(exc).__name__}): {exc}")
             return pd.DataFrame()
 
-    def _attach_live_issue_summary(self, row: pd.Series, symbol: str, use_timeout_for_live_fetch: bool = True) -> pd.Series:
+    def _attach_live_issue_summary(
+        self,
+        row: pd.Series,
+        symbol: str,
+        use_timeout_for_live_fetch: bool = True,
+        use_timeout_for_summary: bool = True,
+    ) -> pd.Series:
         if self._has_issue_summary(row):
             self._cache_issue_summary(symbol, row)
             return row
@@ -1161,7 +1167,16 @@ class KakaoColabPredictionBot:
                 )
                 live_fetch_attempted = True
                 if not live_events.empty:
-                    same_symbol = pd.concat([same_symbol, live_events], ignore_index=True)
+                    if same_symbol.empty:
+                        same_symbol = live_events.copy()
+                    else:
+                        same_symbol = pd.concat(
+                            [
+                                same_symbol.dropna(axis=1, how="all"),
+                                live_events.dropna(axis=1, how="all"),
+                            ],
+                            ignore_index=True,
+                        )
                     daily = same_symbol[same_symbol["Date"] == candidate_dt]
             if not daily.empty:
                 same_day = daily.copy()
@@ -1178,18 +1193,35 @@ class KakaoColabPredictionBot:
                 return row
 
         base = pd.DataFrame([{"Symbol": symbol, "종목명": str(row.get("종목명", self._display_code(symbol)))}])
-        summarized_df = self._run_in_background_with_timeout(
-            append_issue_summary_columns,
-            base,
-            timeout=self.ISSUE_SUMMARY_TIMEOUT_SEC,
-            context_raw_df=same_day.copy(),
-            openai_api_key=self.runtime_config.openai_api_key,
-            openai_model=self.runtime_config.openai_model,
-            summarize_symbols=[symbol],
-        )
+        if use_timeout_for_summary:
+            summarized_df = self._run_in_background_with_timeout(
+                append_issue_summary_columns,
+                base,
+                timeout=self.ISSUE_SUMMARY_TIMEOUT_SEC,
+                context_raw_df=same_day.copy(),
+                openai_api_key=self.runtime_config.openai_api_key,
+                openai_model=self.runtime_config.openai_model,
+                summarize_symbols=[symbol],
+            )
+            if summarized_df is None:
+                self._console_log(
+                    f"{self._display_code(symbol)} 요약 생성 시간초과({self.ISSUE_SUMMARY_TIMEOUT_SEC:.1f}s)로 기존 응답을 유지합니다."
+                )
+                with self._state_lock:
+                    self._issue_summary_timeout_symbols.add(str(symbol))
+                self._start_issue_summary_background(symbol, row)
+                return row
+        else:
+            summarized_df = append_issue_summary_columns(
+                base,
+                context_raw_df=same_day.copy(),
+                openai_api_key=self.runtime_config.openai_api_key,
+                openai_model=self.runtime_config.openai_model,
+                summarize_symbols=[symbol],
+            )
         if summarized_df is None:
             self._console_log(
-                f"{self._display_code(symbol)} 요약 생성 시간초과({self.ISSUE_SUMMARY_TIMEOUT_SEC:.1f}s)로 기존 응답을 유지합니다."
+                f"{self._display_code(symbol)} 요약 생성 결과가 없어 기존 응답을 유지합니다."
             )
             with self._state_lock:
                 self._issue_summary_timeout_symbols.add(str(symbol))
@@ -1214,7 +1246,12 @@ class KakaoColabPredictionBot:
 
     def _safe_attach_issue_summary(self, row: pd.Series, symbol: str) -> pd.Series:
         try:
-            return self._attach_live_issue_summary(row, symbol, use_timeout_for_live_fetch=True)
+            return self._attach_live_issue_summary(
+                row,
+                symbol,
+                use_timeout_for_live_fetch=True,
+                use_timeout_for_summary=True,
+            )
         except Exception as exc:
             self._console_log(f"{self._display_code(symbol)} 요약 생성 오류({type(exc).__name__}): {exc}")
             return row
@@ -1288,7 +1325,12 @@ class KakaoColabPredictionBot:
     def _run_issue_summary_background(self, symbol: str, row: pd.Series) -> None:
         display_code = self._display_code(symbol)
         try:
-            summarized = self._attach_live_issue_summary(row, symbol, use_timeout_for_live_fetch=False)
+            summarized = self._attach_live_issue_summary(
+                row,
+                symbol,
+                use_timeout_for_live_fetch=False,
+                use_timeout_for_summary=False,
+            )
             if self._has_issue_summary(summarized):
                 self._cache_issue_summary(symbol, summarized)
                 self._console_log(f"{display_code} 백그라운드 요약 생성 완료.")
