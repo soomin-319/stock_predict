@@ -167,7 +167,7 @@ def test_cached_prediction_generates_issue_summary_for_each_requested_symbol_wit
     assert "[공시 요약]" in text_a
     assert "[뉴스 요약]" in text_b
     assert captured[0]["symbol"] == "005930.KS"
-    assert captured[0]["dates"] in ([], ["2026-03-26"])
+    assert captured[0]["dates"] in ([], [datetime.now(timezone.utc).date().isoformat()])
     assert captured[1]["symbol"] == "000660.KS"
 
 
@@ -206,7 +206,7 @@ def test_cached_prediction_uses_latest_prediction_date_when_detail_date_is_stale
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-stale"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert captured_ref == []
+    assert captured_ref[0] == datetime.now(timezone.utc).date().isoformat()
     assert "[뉴스 요약]" in text
 
 

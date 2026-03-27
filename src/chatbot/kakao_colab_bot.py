@@ -1046,26 +1046,10 @@ class KakaoColabPredictionBot:
             self._start_issue_summary_background(symbol, row)
 
     def _prediction_date_for_symbol(self, symbol: str) -> str | None:
+        _ = symbol
         today_kst = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Seoul")).date()
-        if not self.result_detail_path.exists():
-            return today_kst.strftime("%Y-%m-%d")
-        try:
-            df = pd.read_csv(self.result_detail_path, dtype={"Symbol": str}, encoding="utf-8-sig")
-        except Exception:
-            return today_kst.strftime("%Y-%m-%d")
-        if df.empty or "Symbol" not in df.columns or "Date" not in df.columns:
-            return today_kst.strftime("%Y-%m-%d")
-        target = str(symbol)
-        matched = df[df["Symbol"].astype(str) == target].copy()
-        if matched.empty:
-            return today_kst.strftime("%Y-%m-%d")
-        dt = pd.to_datetime(matched["Date"], errors="coerce").dropna()
-        if dt.empty:
-            return today_kst.strftime("%Y-%m-%d")
-        latest_prediction_date = dt.max().normalize().date()
-        # Deterministic policy: prefer the latest model prediction date and
-        # only fall back to today when prediction metadata is unavailable.
-        return latest_prediction_date.strftime("%Y-%m-%d")
+        # 검색 기준일 정책: 공시/뉴스는 KST "오늘" 데이터만 조회한다.
+        return today_kst.strftime("%Y-%m-%d")
 
     def _load_result_news(self) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
