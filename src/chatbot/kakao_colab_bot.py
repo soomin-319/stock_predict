@@ -271,9 +271,8 @@ class KakaoColabPredictionBot:
                     self._start_issue_summary_background(symbol, cached_row)
                     return self._build_response(
                         (
-                            f"{display_code} 예측은 완료되었습니다. "
-                            "공시/뉴스 요약 작업을 진행 중입니다. 잠시 후 '결과' 또는 "
-                            f"'{display_code}'를 다시 입력해주세요."
+                            f"{display_code} 공시/뉴스 요약 작업을 진행 중입니다. "
+                            f"잠시 후 '결과' 또는 '{display_code}'를 다시 입력해주세요."
                         ),
                         quick_replies=[
                             ("결과 확인", "결과"),
@@ -1333,7 +1332,11 @@ class KakaoColabPredictionBot:
             )
             if self._has_issue_summary(summarized):
                 self._cache_issue_summary(symbol, summarized)
-                self._console_log(f"{display_code} 백그라운드 요약 생성 완료.")
+                disclosure_text = self._get_clean_issue_text(summarized.get("공시 요약")) or "확인된 핵심 공시 내용 없음"
+                news_text = self._get_clean_issue_text(summarized.get("뉴스 요약")) or "확인된 핵심 뉴스 내용 없음"
+                self._console_log(
+                    f"{display_code} 백그라운드 요약 생성 완료.\n[공시 요약]\n{disclosure_text}\n\n[뉴스 요약]\n{news_text}"
+                )
                 return
             with self._state_lock:
                 self._issue_summary_jobs[str(symbol)] = {
