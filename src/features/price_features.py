@@ -251,64 +251,70 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out["obv_change_5d"] = grouped["obv"].transform(lambda x: x.pct_change(5))
 
     # Investor-context engineered features
-    out["foreign_buy_signal"] = (out["foreign_net_buy"] > 0).astype(float)
-    out["institution_buy_signal"] = (out["institution_net_buy"] > 0).astype(float)
-    out["smart_money_buy_signal"] = ((out["foreign_net_buy"] + out["institution_net_buy"]) > 0).astype(float)
+    feature_cols: dict[str, pd.Series | np.ndarray] = {}
+    feature_cols["foreign_buy_signal"] = (out["foreign_net_buy"] > 0).astype(float)
+    feature_cols["institution_buy_signal"] = (out["institution_net_buy"] > 0).astype(float)
+    feature_cols["smart_money_buy_signal"] = ((out["foreign_net_buy"] + out["institution_net_buy"]) > 0).astype(float)
     value_traded_safe = out["value_traded"].replace(0, np.nan)
-    out["foreign_buy_ratio"] = (out["foreign_net_buy"] / value_traded_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    out["institution_buy_ratio"] = (out["institution_net_buy"] / value_traded_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    out["smart_money_strength"] = (
+    feature_cols["foreign_buy_ratio"] = (out["foreign_net_buy"] / value_traded_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    feature_cols["institution_buy_ratio"] = (out["institution_net_buy"] / value_traded_safe).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    feature_cols["smart_money_strength"] = (
         (out["foreign_net_buy"] + out["institution_net_buy"]) / value_traded_safe
     ).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    out["foreign_net_buy_z20"] = grouped["foreign_net_buy"].transform(lambda x: _rolling_zscore(x, 20))
-    out["institution_net_buy_z20"] = grouped["institution_net_buy"].transform(lambda x: _rolling_zscore(x, 20))
-    out["foreign_net_buy_3d"] = grouped["foreign_net_buy"].transform(lambda x: x.rolling(3).sum()).fillna(0.0)
-    out["foreign_net_buy_5d"] = grouped["foreign_net_buy"].transform(lambda x: x.rolling(5).sum()).fillna(0.0)
-    out["institution_net_buy_3d"] = grouped["institution_net_buy"].transform(lambda x: x.rolling(3).sum()).fillna(0.0)
-    out["institution_net_buy_5d"] = grouped["institution_net_buy"].transform(lambda x: x.rolling(5).sum()).fillna(0.0)
-    out["news_positive_signal"] = (
+    feature_cols["foreign_net_buy_z20"] = grouped["foreign_net_buy"].transform(lambda x: _rolling_zscore(x, 20))
+    feature_cols["institution_net_buy_z20"] = grouped["institution_net_buy"].transform(lambda x: _rolling_zscore(x, 20))
+    feature_cols["foreign_net_buy_3d"] = grouped["foreign_net_buy"].transform(lambda x: x.rolling(3).sum()).fillna(0.0)
+    feature_cols["foreign_net_buy_5d"] = grouped["foreign_net_buy"].transform(lambda x: x.rolling(5).sum()).fillna(0.0)
+    feature_cols["institution_net_buy_3d"] = grouped["institution_net_buy"].transform(lambda x: x.rolling(3).sum()).fillna(0.0)
+    feature_cols["institution_net_buy_5d"] = grouped["institution_net_buy"].transform(lambda x: x.rolling(5).sum()).fillna(0.0)
+    feature_cols["news_positive_signal"] = (
         out["news_relevance_score"] * (out["news_sentiment"] - 0.5).clip(lower=0.0) * 2.0
     )
-    out["news_negative_signal"] = (
+    feature_cols["news_negative_signal"] = (
         out["news_relevance_score"] * (0.5 - out["news_sentiment"]).clip(lower=0.0) * 2.0
     )
 
     rolling_high_252 = grouped["Close"].transform(lambda x: x.rolling(252, min_periods=20).max())
     prev_rolling_high_252 = grouped["Close"].transform(lambda x: x.shift(1).rolling(252, min_periods=20).max())
-    out["close_to_52w_high"] = out["Close"] / rolling_high_252.replace(0, np.nan)
-    out["near_52w_high_flag"] = (out["close_to_52w_high"] >= 0.95).astype(float)
-    out["breakout_52w_flag"] = (out["Close"] >= prev_rolling_high_252.fillna(np.inf)).astype(float)
+    close_to_52w_high = out["Close"] / rolling_high_252.replace(0, np.nan)
+    near_52w_high_flag = (close_to_52w_high >= 0.95).astype(float)
+    feature_cols["close_to_52w_high"] = close_to_52w_high
+    feature_cols["near_52w_high_flag"] = near_52w_high_flag
+    feature_cols["breakout_52w_flag"] = (out["Close"] >= prev_rolling_high_252.fillna(np.inf)).astype(float)
     top3_positive_count = (
         ((out["turnover_rank_daily"] <= 3) & (out["daily_return"] > 0)).astype(float).groupby(out["Date"]).transform("sum")
     )
-    out["leader_confirmation_flag"] = (
+    feature_cols["leader_confirmation_flag"] = (
         (out["turnover_rank_daily"] == 1)
         & (out["daily_return"] > 0)
         & (top3_positive_count >= 3)
     ).astype(float)
 
-    out["investor_event_score"] = (
+    feature_cols["investor_event_score"] = (
         0.35 * out["is_top_turnover_10"]
         + 0.20 * out["disclosure_score"]
-        + 0.20 * out["news_positive_signal"]
-        + 0.15 * out["smart_money_buy_signal"]
-        + 0.10 * out["near_52w_high_flag"]
+        + 0.20 * feature_cols["news_positive_signal"]
+        + 0.15 * feature_cols["smart_money_buy_signal"]
+        + 0.10 * near_52w_high_flag
     )
-    out["limit_hit_up_flag"] = (out["daily_return"] >= 0.295).astype(float)
-    out["limit_hit_down_flag"] = (out["daily_return"] <= -0.295).astype(float)
-    out["limit_event_flag"] = ((out["limit_hit_up_flag"] + out["limit_hit_down_flag"]) > 0).astype(float)
-    out["vi_after_return"] = out["daily_return"].fillna(0.0) * out["vi_flag"]
-    out["vi_after_volume_spike"] = out["vol_ratio_20"].replace([np.inf, -np.inf], np.nan).fillna(0.0) * out["vi_flag"]
-    out["short_sell_event_score"] = (
+    limit_hit_up_flag = (out["daily_return"] >= 0.295).astype(float)
+    limit_hit_down_flag = (out["daily_return"] <= -0.295).astype(float)
+    feature_cols["limit_hit_up_flag"] = limit_hit_up_flag
+    feature_cols["limit_hit_down_flag"] = limit_hit_down_flag
+    feature_cols["limit_event_flag"] = ((limit_hit_up_flag + limit_hit_down_flag) > 0).astype(float)
+    feature_cols["vi_after_return"] = out["daily_return"].fillna(0.0) * out["vi_flag"]
+    feature_cols["vi_after_volume_spike"] = out["vol_ratio_20"].replace([np.inf, -np.inf], np.nan).fillna(0.0) * out["vi_flag"]
+    feature_cols["short_sell_event_score"] = (
         0.5 * out["short_sell_overheat_flag"]
         + 0.3 * out["short_sell_flag"]
         + 0.2 * (out["short_sell_ratio"] > 0).astype(float)
     )
-    out["shareholder_return_score"] = (
+    feature_cols["shareholder_return_score"] = (
         0.4 * out["buyback_flag"]
         + 0.3 * out["share_cancellation_flag"]
         + 0.3 * out["value_up_disclosure_flag"]
     )
+    out = pd.concat([out, pd.DataFrame(feature_cols, index=out.index)], axis=1)
 
     drop_source_cols = [
         "개인순매수",
