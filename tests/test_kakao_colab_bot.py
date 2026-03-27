@@ -485,6 +485,26 @@ def test_background_summary_uses_non_timeout_live_fetch(tmp_path: Path, monkeypa
     assert captured["flag"] is False
 
 
+def test_background_summary_console_log_does_not_duplicate_section_headers(tmp_path: Path, monkeypatch):
+    bot = make_bot(tmp_path)
+    row = pd.Series({"종목코드": "005930", "종목명": "삼성전자"})
+    logs: list[str] = []
+
+    def _fake_attach(target_row, symbol, **kwargs):
+        out = target_row.copy()
+        out["공시 요약"] = "[공시 요약]\n- 확인된 핵심 공시 내용 없음"
+        out["뉴스 요약"] = "[뉴스 요약]\n- 테스트 뉴스"
+        return out
+
+    monkeypatch.setattr(bot, "_attach_live_issue_summary", _fake_attach)
+    monkeypatch.setattr(bot, "_console_log", lambda message: logs.append(message))
+    bot._run_issue_summary_background("005930.KS", row)
+
+    joined = "\n".join(logs)
+    assert joined.count("[공시 요약]") == 1
+    assert joined.count("[뉴스 요약]") == 1
+
+
 def test_additional_symbol_request_generates_summary_when_placeholder_exists(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True, exist_ok=True)

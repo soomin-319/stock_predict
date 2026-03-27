@@ -1334,8 +1334,14 @@ class KakaoColabPredictionBot:
                 self._cache_issue_summary(symbol, summarized)
                 disclosure_text = self._get_clean_issue_text(summarized.get("공시 요약")) or "확인된 핵심 공시 내용 없음"
                 news_text = self._get_clean_issue_text(summarized.get("뉴스 요약")) or "확인된 핵심 뉴스 내용 없음"
+                disclosure_lines = self._to_bullet_lines(disclosure_text) or ["확인된 핵심 공시 내용 없음"]
+                news_lines = self._to_bullet_lines(news_text) or ["확인된 핵심 뉴스 내용 없음"]
                 self._console_log(
-                    f"{display_code} 백그라운드 요약 생성 완료.\n[공시 요약]\n{disclosure_text}\n\n[뉴스 요약]\n{news_text}"
+                    f"{display_code} 백그라운드 요약 생성 완료.\n"
+                    "[공시 요약]\n"
+                    + "\n".join(f"- {line}" for line in disclosure_lines)
+                    + "\n\n[뉴스 요약]\n"
+                    + "\n".join(f"- {line}" for line in news_lines)
                 )
                 return
             with self._state_lock:
