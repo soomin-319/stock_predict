@@ -130,15 +130,12 @@ def run_colab_pipeline(
         config_json=config_json,
         enable_investor_flow=enable_investor_flow,
         enable_investor_disclosure=enable_investor_disclosure,
-        enable_investor_news=enable_investor_news,
-        news_scoring_mode=news_scoring_mode,
         openai_api_key=openai_api_key,
         openai_model=openai_model,
         enable_issue_summary=enable_issue_summary,
     )
 
     result_dir = PROJECT_ROOT / "result"
-    _print_colab_preview(result_dir / "result_simple.csv")
     return {
         "result_detail_csv": str(result_dir / "result_detail.csv"),
         "result_simple_csv": str(result_dir / "result_simple.csv"),

@@ -111,7 +111,6 @@ def print_prediction_console_summary(pred_df: pd.DataFrame):
                 "종목코드": str(r.get("종목코드", "")),
                 "종목명": str(r.get("종목명", "")),
                 "권고": str(r.get("권고", "")),
-                "포트폴리오 액션": str(r.get("포트폴리오 액션", "")),
                 "내일 예상 종가": str(r.get("내일 예상 종가", "-")),
                 "내일 예상 수익률(%)": str(r.get("내일 예상 수익률(%)", "-")),
                 "상승확률(%)": str(r.get("상승확률(%)", "-")),
@@ -119,7 +118,7 @@ def print_prediction_console_summary(pred_df: pd.DataFrame):
             }
         )
 
-    headers = ["종목코드", "종목명", "권고", "포트폴리오 액션", "내일 예상 종가", "내일 예상 수익률(%)", "상승확률(%)", "예측 신뢰도"]
+    headers = ["종목코드", "종목명", "권고", "내일 예상 종가", "내일 예상 수익률(%)", "상승확률(%)", "예측 신뢰도"]
     col_widths = {h: max(display_width(h), *(_display_width(row[h]) for row in rows)) for h in headers}
 
     print("\n=== Prediction ===")
@@ -131,7 +130,6 @@ def print_prediction_console_summary(pred_df: pd.DataFrame):
                     pad_display(row["종목코드"], col_widths["종목코드"], "left"),
                     pad_display(row["종목명"], col_widths["종목명"], "left"),
                     pad_display(row["권고"], col_widths["권고"], "left"),
-                    pad_display(row["포트폴리오 액션"], col_widths["포트폴리오 액션"], "left"),
                     pad_display(row["내일 예상 종가"], col_widths["내일 예상 종가"], "right"),
                     pad_display(row["내일 예상 수익률(%)"], col_widths["내일 예상 수익률(%)"], "right"),
                     pad_display(row["상승확률(%)"], col_widths["상승확률(%)"], "right"),
