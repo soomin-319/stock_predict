@@ -70,6 +70,7 @@ class PipelineRuntimeConfig:
     use_external: bool = False
     bootstrap_default_symbols: bool = True
     bootstrap_on_launch: bool = True
+    async_issue_summary_on_demand: bool = True
     real_start: str = "2018-01-01"
     prewarm_default_predictions: bool = True
     extra_args: tuple[str, ...] = ()
@@ -265,20 +266,35 @@ class KakaoColabPredictionBot:
         cached_row = None if force_refresh else self._find_cached_prediction(symbol)
         if cached_row is not None:
             self._update_session(user_id, symbol=symbol, intent="tracking")
-            cached_row = self._safe_attach_issue_summary(cached_row, symbol)
-            if not self._has_issue_summary(cached_row) and self._is_issue_summary_running(symbol):
-                return self._build_response(
-                    (
-                        f"{display_code} 예측은 완료되었습니다. "
-                        "뉴스/공시 요약을 생성 중입니다. 잠시 후 '결과' 또는 "
-                        f"'{display_code}'를 다시 입력해주세요."
-                    ),
-                    quick_replies=[
-                        ("결과 확인", "결과"),
-                        ("최신화", "최신화"),
-                        ("도움말", "도움말"),
-                    ],
-                )
+            if not self._has_issue_summary(cached_row):
+                if self.runtime_config.async_issue_summary_on_demand:
+                    self._start_issue_summary_background(symbol, cached_row)
+                    return self._build_response(
+                        (
+                            f"{display_code} 예측은 완료되었습니다. "
+                            "공시/뉴스 요약 작업을 진행 중입니다. 잠시 후 '결과' 또는 "
+                            f"'{display_code}'를 다시 입력해주세요."
+                        ),
+                        quick_replies=[
+                            ("결과 확인", "결과"),
+                            ("최신화", "최신화"),
+                            ("도움말", "도움말"),
+                        ],
+                    )
+                cached_row = self._safe_attach_issue_summary(cached_row, symbol)
+                if not self._has_issue_summary(cached_row) and self._is_issue_summary_running(symbol):
+                    return self._build_response(
+                        (
+                            f"{display_code} 예측은 완료되었습니다. "
+                            "뉴스/공시 요약을 생성 중입니다. 잠시 후 '결과' 또는 "
+                            f"'{display_code}'를 다시 입력해주세요."
+                        ),
+                        quick_replies=[
+                            ("결과 확인", "결과"),
+                            ("최신화", "최신화"),
+                            ("도움말", "도움말"),
+                        ],
+                    )
             try:
                 message = self._format_prediction_message(cached_row)
             except Exception as exc:

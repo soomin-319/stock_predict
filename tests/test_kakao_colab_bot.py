@@ -66,6 +66,7 @@ def make_bot(tmp_path: Path, runner=None) -> KakaoColabPredictionBot:
         naver_client_id="naver-id",
         naver_client_secret="naver-secret",
         bootstrap_default_symbols=False,
+        async_issue_summary_on_demand=False,
     )
     return KakaoColabPredictionBot(
         runtime_config=runtime_config,
@@ -338,10 +339,11 @@ def test_cached_prediction_still_returns_message_when_issue_summary_times_out(tm
     )
 
     bot = make_bot(tmp_path)
+    bot.runtime_config.async_issue_summary_on_demand = True
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-timeout"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert "뉴스/공시 요약을 생성 중" in text
+    assert "공시/뉴스 요약 작업을 진행 중" in text
 
 
 def test_build_response_truncates_overlong_simpletext_payload(tmp_path: Path):
@@ -1273,6 +1275,7 @@ def test_issue_summary_timeout_does_not_block_webhook_response(tmp_path: Path, m
     monkeypatch.setattr("src.chatbot.kakao_colab_bot.append_issue_summary_columns", _slow_summary)
 
     bot = make_bot(tmp_path)
+    bot.runtime_config.async_issue_summary_on_demand = True
     bot.ISSUE_SUMMARY_TIMEOUT_SEC = 0.01
 
     started = time.perf_counter()
@@ -1280,7 +1283,7 @@ def test_issue_summary_timeout_does_not_block_webhook_response(tmp_path: Path, m
     elapsed = time.perf_counter() - started
 
     text = response["template"]["outputs"][0]["simpleText"]["text"]
-    assert "뉴스/공시 요약을 생성 중" in text
+    assert "공시/뉴스 요약 작업을 진행 중" in text
     assert elapsed < 0.12
 
 
