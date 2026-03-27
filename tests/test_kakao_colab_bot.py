@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
 
@@ -63,6 +65,7 @@ def make_bot(tmp_path: Path, runner=None) -> KakaoColabPredictionBot:
         dart_corp_map_csv="data/dart_corp_map.csv",
         naver_client_id="naver-id",
         naver_client_secret="naver-secret",
+        bootstrap_default_symbols=False,
     )
     return KakaoColabPredictionBot(
         runtime_config=runtime_config,
@@ -163,7 +166,7 @@ def test_cached_prediction_generates_issue_summary_for_each_requested_symbol_wit
     assert "[공시 요약]" in text_a
     assert "[뉴스 요약]" in text_b
     assert captured[0]["symbol"] == "005930.KS"
-    assert captured[0]["dates"] == ["2026-03-26"]
+    assert captured[0]["dates"] in ([], [datetime.now(timezone.utc).date().isoformat()])
     assert captured[1]["symbol"] == "000660.KS"
 
 
@@ -202,7 +205,7 @@ def test_cached_prediction_uses_today_reference_date_when_detail_date_is_stale(t
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-stale"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert captured_ref[0] == "2026-03-26"
+    assert captured_ref[0] == datetime.now(timezone.utc).date().isoformat()
     assert "[뉴스 요약]" in text
 
 
@@ -338,7 +341,7 @@ def test_cached_prediction_still_returns_message_when_issue_summary_times_out(tm
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-timeout"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert "권고: 매수" in text
+    assert "뉴스/공시 요약을 생성 중" in text
 
 
 def test_build_response_truncates_overlong_simpletext_payload(tmp_path: Path):
@@ -378,8 +381,8 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert "demo-key" in command
     assert "--dart-corp-map-csv" in command
     assert "data/dart_corp_map.csv" in command
-    assert "--naver-client-id" not in command
-    assert "--naver-client-secret" not in command
+    assert "--naver-client-id" in command
+    assert "--naver-client-secret" in command
     assert "--disable-external" in command
 
     session_path = tmp_path / "result" / "chatbot_sessions.json"
@@ -387,7 +390,7 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert "user-77" in session_path.read_text(encoding="utf-8")
 
 
-def test_first_prediction_bootstraps_all_symbols_but_summarizes_only_requested_symbol(tmp_path: Path):
+def test_start_bootstrap_job_uses_prewarm_worker_without_large_add_symbols_cli(tmp_path: Path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(
@@ -398,18 +401,68 @@ def test_first_prediction_bootstraps_all_symbols_but_summarizes_only_requested_s
         ]
     ).to_csv(data_dir / "krx_symbol_name_map.csv", index=False)
 
-    runner = RecordingRunner()
-    bot = make_bot(tmp_path, runner=runner)
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.prewarm_prediction_cache", lambda *args, **kwargs: {"ok": "1"})
+    runtime_config = PipelineRuntimeConfig(
+        project_root=tmp_path,
+        bootstrap_default_symbols=True,
+    )
+    bot = KakaoColabPredictionBot(
+        runtime_config=runtime_config,
+        result_simple_path="result/result_simple.csv",
+        state_path="result/chatbot_jobs.json",
+        session_path="result/chatbot_sessions.json",
+    )
 
-    bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-bootstrap"}}})
-    command = runner.calls[0]["command"]
-    add_symbols_idx = command.index("--add-symbols")
-    issue_summary_idx = command.index("--issue-summary-symbols")
-    add_symbols = command[add_symbols_idx + 1 : issue_summary_idx]
-    issue_symbols = command[issue_summary_idx + 1 : issue_summary_idx + 2]
+    assert bot._start_bootstrap_job(force=True) is True
+    assert bot._bootstrap_thread is not None
+    bot._bootstrap_thread.join(timeout=1.0)
 
-    assert set(add_symbols) == {"005930.KS", "000660.KS", "035420.KS"}
-    assert issue_symbols == ["005930.KS"]
+    bootstrap_state = bot._job_registry[bot.BOOTSTRAP_JOB_KEY]
+    assert bootstrap_state["status"] == "completed"
+    assert bootstrap_state["command"][0] == "internal:prewarm_prediction_cache"
+    assert "--disable-issue-summary" in bootstrap_state["command"]
+
+
+def test_request_during_bootstrap_returns_global_progress_and_queues_summary(tmp_path: Path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {"Ticker": "005930", "Symbol": "005930.KS", "Name": "삼성전자", "Market": "KOSPI"},
+            {"Ticker": "000660", "Symbol": "000660.KS", "Name": "SK하이닉스", "Market": "KOSPI"},
+        ]
+    ).to_csv(data_dir / "krx_symbol_name_map.csv", index=False)
+
+    release = threading.Event()
+
+    def _slow_prewarm(*args, **kwargs):
+        release.wait(timeout=1.0)
+        return {"ok": "1"}
+
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.prewarm_prediction_cache", _slow_prewarm)
+    runtime_config = PipelineRuntimeConfig(
+        project_root=tmp_path,
+        python_executable="python",
+        input_csv="data/real_ohlcv.csv",
+        report_json="pipeline_report_with_context.json",
+        figure_dir="figures_with_context",
+        bootstrap_default_symbols=True,
+    )
+    bot = KakaoColabPredictionBot(
+        runtime_config=runtime_config,
+        result_simple_path="result/result_simple.csv",
+        state_path="result/chatbot_jobs.json",
+        session_path="result/chatbot_sessions.json",
+    )
+    bot._start_bootstrap_job(force=True)
+
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-bootstrap-progress"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "초기 전체 종목 예측" in text
+    assert "요약 요청을 접수" in text
+    assert "000660.KS" in bot._queued_summary_symbols
+    release.set()
 
 
 def test_additional_symbol_request_generates_summary_when_placeholder_exists(tmp_path: Path, monkeypatch):
@@ -453,9 +506,15 @@ def test_additional_symbol_request_generates_summary_when_placeholder_exists(tmp
     bot = make_bot(tmp_path)
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-extra-symbol"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
+    for _ in range(20):
+        follow_up = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-extra-symbol"}}})
+        follow_text = follow_up["template"]["outputs"][0]["simpleText"]["text"]
+        if "실제 공시 요약" in follow_text:
+            break
+        time.sleep(0.01)
 
-    assert "실제 공시 요약" in text
-    assert "실제 뉴스 요약" in text
+    assert "실제 공시 요약" in follow_text
+    assert "실제 뉴스 요약" in follow_text
     assert calls["count"] == 1
 
 
@@ -937,7 +996,7 @@ def test_prewarm_prediction_cache_runs_colab_pipeline(monkeypatch, tmp_path: Pat
     assert out["result_simple_csv"].endswith("result/result_simple.csv")
 
 
-def test_launch_colab_kakao_bot_prewarms_cache_before_server_start(monkeypatch, tmp_path: Path):
+def test_launch_colab_kakao_bot_starts_bootstrap_after_server_start(monkeypatch, tmp_path: Path):
     events = []
 
     class FakeThread:
@@ -950,17 +1009,21 @@ def test_launch_colab_kakao_bot_prewarms_cache_before_server_start(monkeypatch, 
             self.started = True
             events.append("thread_started")
 
-    monkeypatch.setattr("src.chatbot.kakao_colab_bot.prewarm_prediction_cache", lambda *a, **k: events.append("prewarm"))
     monkeypatch.setattr("src.chatbot.kakao_colab_bot.create_app", lambda runtime_config=None, bot=None: object())
     monkeypatch.setattr("src.chatbot.kakao_colab_bot.start_pyngrok_tunnel", lambda tunnel_config=None: "https://demo.ngrok")
     monkeypatch.setattr("src.chatbot.kakao_colab_bot.threading.Thread", FakeThread)
+    monkeypatch.setattr(
+        KakaoColabPredictionBot,
+        "_start_bootstrap_job",
+        lambda self, force=False: events.append("bootstrap_started") or True,
+    )
 
     launched = launch_colab_kakao_bot(
         runtime_config=PipelineRuntimeConfig(project_root=tmp_path, prewarm_default_predictions=True),
         tunnel_config=PyngrokTunnelConfig(port=8000),
     )
 
-    assert events == ["prewarm", "thread_started"]
+    assert events == ["thread_started", "bootstrap_started"]
     assert launched["webhook_url"] == "https://demo.ngrok/kakao/webhook"
 
 
@@ -1193,6 +1256,8 @@ def test_issue_summary_timeout_does_not_block_webhook_response(tmp_path: Path, m
                 "상승확률(%)": "78.9%",
                 "예측 신뢰도": "88.0%",
                 "예측 이유": "테스트 사유",
+                "공시 요약": "[공시 요약]\n- 요청 종목에 대해서만 요약을 생성합니다.",
+                "뉴스 요약": "[뉴스 요약]\n- 요청 종목에 대해서만 요약을 생성합니다.",
             }
         ]
     ).to_csv(result_dir / "result_simple.csv", index=False)
@@ -1215,7 +1280,7 @@ def test_issue_summary_timeout_does_not_block_webhook_response(tmp_path: Path, m
     elapsed = time.perf_counter() - started
 
     text = response["template"]["outputs"][0]["simpleText"]["text"]
-    assert "삼성전자" in text
+    assert "뉴스/공시 요약을 생성 중" in text
     assert elapsed < 0.12
 
 

@@ -130,8 +130,6 @@ def run_colab_pipeline(
         config_json=config_json,
         enable_investor_flow=enable_investor_flow,
         enable_investor_disclosure=enable_investor_disclosure,
-        enable_investor_news=enable_investor_news,
-        news_scoring_mode=news_scoring_mode,
         openai_api_key=openai_api_key,
         openai_model=openai_model,
         enable_issue_summary=enable_issue_summary,
