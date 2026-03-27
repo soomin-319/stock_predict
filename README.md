@@ -237,7 +237,8 @@ python src/pipeline.py \
 - 챗봇: 같은 종목으로 최신 예측 재실행
 
 ### pyngrok으로 코랩 공개 HTTPS URL 열기
-코랩에서는 `launch_colab_kakao_bot(...)`를 사용하면 Flask 서버 스레드 실행 + pyngrok 공개 HTTPS URL 생성까지 한 번에 처리할 수 있습니다. 이때 기본값으로 서버 시작 전에 기본 심볼 유니버스 예측을 한 번 미리 돌려 `result/result_simple.csv` 캐시를 채워두므로, 이후 사용자 요청에 더 빠르게 응답할 수 있습니다.
+코랩에서는 `launch_colab_kakao_bot(...)`를 사용하면 Flask 서버 스레드 실행 + pyngrok 공개 HTTPS URL 생성까지 한 번에 처리할 수 있습니다.  
+최신 동작 기준으로는 **사용자 첫 요청 시점이 아니라 ngrok 서버 실행 시점**에 전체 유니버스 예측(요약 비활성)을 백그라운드 bootstrap으로 시작합니다. bootstrap이 진행 중일 때 들어온 종목 요청은 진행 메시지로 응답되고, 해당 종목의 뉴스/공시 요약은 bootstrap 완료 후 이어서 처리됩니다.
 
 ```python
 import os
@@ -294,6 +295,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from src.chatbot.kakao_colab_bot import (
+    KakaoColabPredictionBot,
     PipelineRuntimeConfig,
     PyngrokTunnelConfig,
     create_app,
@@ -422,7 +424,8 @@ runtime_config = PipelineRuntimeConfig(
 # =========================
 # 2) Flask 앱 생성
 # =========================
-app = create_app(runtime_config=runtime_config)
+bot = KakaoColabPredictionBot(runtime_config=runtime_config)
+app = create_app(bot=bot)
 
 # 카카오에서 들어오는 메시지를 코랩 출력에 같이 보여주기 위한 로그
 @app.before_request
@@ -458,6 +461,9 @@ public_url = start_pyngrok_tunnel(
     )
 )
 
+# ngrok 공개 URL이 준비되면 전체 유니버스 bootstrap 예측 시작(요약 비활성)
+bot._start_bootstrap_job(force=False)
+
 webhook_url = f"{public_url}/kakao/webhook"
 health_url = f"{public_url}/health"
 
@@ -470,6 +476,7 @@ print("Active tunnels:", ngrok.get_tunnels())
 print("=" * 80)
 print("이제 카카오 오픈빌더 스킬 서버 URL에 위 Webhook URL을 넣으세요.")
 print("이 셀을 실행한 상태로 두면, 카카오톡에서 들어오는 메시지를 계속 처리합니다.")
+print("참고: 최초 전체 예측은 백그라운드에서 실행되며, 진행 로그는 result/chatbot_logs/를 확인하세요.")
 print("중지하려면 코랩에서 '런타임 > 실행 중단' 또는 셀 인터럽트를 누르세요.")
 print("=" * 80)
 
