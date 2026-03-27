@@ -69,6 +69,7 @@ class PipelineRuntimeConfig:
     naver_client_secret: str | None = None
     use_external: bool = False
     bootstrap_default_symbols: bool = True
+    bootstrap_on_launch: bool = True
     real_start: str = "2018-01-01"
     prewarm_default_predictions: bool = True
     extra_args: tuple[str, ...] = ()
@@ -166,6 +167,7 @@ class KakaoColabPredictionBot:
         self._issue_summary_jobs: dict[str, dict[str, Any]] = {}
         self._issue_summary_timeout_symbols: set[str] = set()
         self._queued_summary_symbols: set[str] = set()
+        self._bootstrap_thread: threading.Thread | None = None
         self._state_lock = threading.RLock()
         self._legacy_formatter_patched = False
         self._bootstrap_all_symbols_done = False
@@ -227,8 +229,6 @@ class KakaoColabPredictionBot:
     ) -> dict[str, Any]:
         display_code = self._display_code(symbol)
 
-        if self._is_bootstrap_required():
-            self._start_bootstrap_job(symbol)
         if self._is_bootstrap_running():
             self._queue_summary_after_bootstrap(symbol)
             self._update_session(user_id, symbol=symbol, intent="running")
@@ -935,104 +935,80 @@ class KakaoColabPredictionBot:
             self._save_registry(self.state_path, self._job_registry)
         return True
 
-    def _start_bootstrap_job(self, requested_symbol: str) -> bool:
+    def _start_bootstrap_job(self, force: bool = False) -> bool:
         with self._state_lock:
             existing = self._job_registry.get(self.BOOTSTRAP_JOB_KEY, {})
             if existing.get("status") == "running":
                 return True
+            if not force and existing.get("status") == "completed":
+                return True
 
-        bootstrap_symbols = self._load_bootstrap_symbols_from_krx_map()
-        if not bootstrap_symbols:
-            bootstrap_symbols = [requested_symbol]
-        self._bootstrap_all_symbols_done = True
-
-        command = self.runtime_config.build_command(
-            requested_symbol,
-            add_symbols=bootstrap_symbols,
-            issue_summary_symbols=[],
-            disable_issue_summary=True,
-        )
         submitted_at = datetime.now(timezone.utc).isoformat()
-        display_code = "BOOTSTRAP"
+        self._bootstrap_all_symbols_done = True
+        bootstrap_symbols = self._load_bootstrap_symbols_from_krx_map()
+        command = [
+            "internal:prewarm_prediction_cache",
+            f"--symbols={len(bootstrap_symbols) if bootstrap_symbols else 'default'}",
+            "--disable-issue-summary",
+        ]
         log_path = self.log_dir / f"bootstrap_{submitted_at.replace(':', '').replace('+00:00', 'Z')}.log"
-        log_handle = log_path.open("w", encoding="utf-8")
-        self._console_log(
-            f"초기 전체 종목 예측 작업 시작: 심볼 {len(bootstrap_symbols)}개, 명령어={' '.join(command)}"
-        )
-        try:
-            process = self.process_runner(
-                command,
-                cwd=self.project_root,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
-        except Exception as exc:
-            self._console_log(f"초기 전체 종목 예측 작업 시작 실패({type(exc).__name__}): {exc}")
-            try:
-                log_handle.close()
-            except Exception:
-                pass
-            with self._state_lock:
-                self._job_registry[self.BOOTSTRAP_JOB_KEY] = asdict(
-                    PredictionJobState(
-                        symbol=self.BOOTSTRAP_JOB_KEY,
-                        display_code=display_code,
-                        command=command,
-                        log_path=str(log_path.relative_to(self.project_root)),
-                        submitted_at=submitted_at,
-                        status="failed",
-                        exit_code=-1,
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                    )
-                )
-                self._save_registry(self.state_path, self._job_registry)
-            return False
-
-        log_thread = None
-        if getattr(process, "stdout", None) is not None:
-            log_thread = threading.Thread(
-                target=self._stream_process_output,
-                args=(self.BOOTSTRAP_JOB_KEY, process, log_handle),
-                daemon=True,
-            )
-            log_thread.start()
-        monitor_thread = None
-        if getattr(process, "wait", None) is not None:
-            monitor_thread = threading.Thread(
-                target=self._monitor_process_completion,
-                args=(self.BOOTSTRAP_JOB_KEY, process),
-                daemon=True,
-            )
-            monitor_thread.start()
+        self._console_log("초기 전체 종목 예측 작업 시작: prewarm_prediction_cache(enable_issue_summary=False)")
 
         with self._state_lock:
-            self._active_processes[self.BOOTSTRAP_JOB_KEY] = {
-                "process": process,
-                "log_handle": log_handle,
-                "log_thread": log_thread,
-                "monitor_thread": monitor_thread,
-            }
             self._job_registry[self.BOOTSTRAP_JOB_KEY] = asdict(
                 PredictionJobState(
                     symbol=self.BOOTSTRAP_JOB_KEY,
-                    display_code=display_code,
+                    display_code="BOOTSTRAP",
                     command=command,
                     log_path=str(log_path.relative_to(self.project_root)),
                     submitted_at=submitted_at,
                     status="running",
-                    pid=getattr(process, "pid", None),
                 )
             )
             self._save_registry(self.state_path, self._job_registry)
+
+        worker = threading.Thread(
+            target=self._run_bootstrap_prewarm_worker,
+            args=(log_path,),
+            daemon=True,
+        )
+        self._bootstrap_thread = worker
+        worker.start()
         return True
+
+    def _run_bootstrap_prewarm_worker(self, log_path: Path) -> None:
+        exit_code = 0
+        try:
+            outputs = prewarm_prediction_cache(self.runtime_config, force=False)
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(outputs, ensure_ascii=False, indent=2))
+                handle.write("\n")
+        except Exception as exc:
+            exit_code = 1
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(f"bootstrap_error={type(exc).__name__}: {exc}\n")
+
+        with self._state_lock:
+            state = self._job_registry.get(self.BOOTSTRAP_JOB_KEY, {})
+            state.update(
+                {
+                    "status": "completed" if exit_code == 0 else "failed",
+                    "exit_code": int(exit_code),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            self._job_registry[self.BOOTSTRAP_JOB_KEY] = state
+            self._save_registry(self.state_path, self._job_registry)
+        if exit_code == 0:
+            self._console_log("초기 전체 종목 예측 작업 completed (exit_code=0).")
+            self._start_queued_summaries_after_bootstrap()
+        else:
+            self._console_log("초기 전체 종목 예측 작업 failed (exit_code=1). 로그를 확인해주세요.")
 
     def _is_bootstrap_running(self) -> bool:
         with self._state_lock:
             state = self._job_registry.get(self.BOOTSTRAP_JOB_KEY, {})
-            runtime = self._active_processes.get(self.BOOTSTRAP_JOB_KEY)
-        return state.get("status") == "running" or runtime is not None
+        return state.get("status") == "running"
 
     def _queue_summary_after_bootstrap(self, symbol: str) -> None:
         with self._state_lock:
@@ -1559,10 +1535,8 @@ def launch_colab_kakao_bot(
 ):
     cfg = runtime_config or PipelineRuntimeConfig()
     should_prewarm = cfg.prewarm_default_predictions if prewarm_cache is None else prewarm_cache
-    if should_prewarm:
-        prewarm_prediction_cache(cfg, force=force_prewarm)
-
-    app = create_app(runtime_config=cfg)
+    service = KakaoColabPredictionBot(runtime_config=cfg)
+    app = create_app(bot=service, runtime_config=cfg)
     port = (tunnel_config or PyngrokTunnelConfig()).port
 
     server_thread = threading.Thread(
@@ -1572,8 +1546,11 @@ def launch_colab_kakao_bot(
     server_thread.start()
 
     public_url = start_pyngrok_tunnel(tunnel_config)
+    if should_prewarm and cfg.bootstrap_on_launch:
+        service._start_bootstrap_job(force=force_prewarm)
     return {
         "app": app,
+        "bot": service,
         "server_thread": server_thread,
         "public_url": public_url,
         "webhook_url": f"{public_url}/kakao/webhook",

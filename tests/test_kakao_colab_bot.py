@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -389,7 +390,7 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert "user-77" in session_path.read_text(encoding="utf-8")
 
 
-def test_first_prediction_bootstraps_all_symbols_but_summarizes_only_requested_symbol(tmp_path: Path):
+def test_start_bootstrap_job_uses_prewarm_worker_without_large_add_symbols_cli(tmp_path: Path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(
@@ -400,15 +401,9 @@ def test_first_prediction_bootstraps_all_symbols_but_summarizes_only_requested_s
         ]
     ).to_csv(data_dir / "krx_symbol_name_map.csv", index=False)
 
-    runner = RecordingRunner()
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.prewarm_prediction_cache", lambda *args, **kwargs: {"ok": "1"})
     runtime_config = PipelineRuntimeConfig(
         project_root=tmp_path,
-        python_executable="python",
-        input_csv="data/real_ohlcv.csv",
-        report_json="pipeline_report_with_context.json",
-        figure_dir="figures_with_context",
-        dart_api_key="demo-key",
-        dart_corp_map_csv="data/dart_corp_map.csv",
         bootstrap_default_symbols=True,
     )
     bot = KakaoColabPredictionBot(
@@ -416,24 +411,19 @@ def test_first_prediction_bootstraps_all_symbols_but_summarizes_only_requested_s
         result_simple_path="result/result_simple.csv",
         state_path="result/chatbot_jobs.json",
         session_path="result/chatbot_sessions.json",
-        process_runner=runner,
     )
 
-    response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-bootstrap"}}})
-    text = response["template"]["outputs"][0]["simpleText"]["text"]
-    command = runner.calls[0]["command"]
-    add_symbols_idx = command.index("--add-symbols")
-    issue_summary_idx = command.index("--issue-summary-symbols")
-    add_symbols = command[add_symbols_idx + 1 : issue_summary_idx]
-    issue_symbols = command[issue_summary_idx + 1 : issue_summary_idx + 1]
+    assert bot._start_bootstrap_job(force=True) is True
+    assert bot._bootstrap_thread is not None
+    bot._bootstrap_thread.join(timeout=1.0)
 
-    assert set(add_symbols) == {"005930.KS", "000660.KS", "035420.KS"}
-    assert issue_symbols == []
-    assert "--disable-issue-summary" in command
-    assert "초기 전체 종목 예측" in text
+    bootstrap_state = bot._job_registry[bot.BOOTSTRAP_JOB_KEY]
+    assert bootstrap_state["status"] == "completed"
+    assert bootstrap_state["command"][0] == "internal:prewarm_prediction_cache"
+    assert "--disable-issue-summary" in bootstrap_state["command"]
 
 
-def test_request_during_bootstrap_returns_global_progress_and_queues_summary(tmp_path: Path):
+def test_request_during_bootstrap_returns_global_progress_and_queues_summary(tmp_path: Path, monkeypatch):
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(
@@ -443,7 +433,13 @@ def test_request_during_bootstrap_returns_global_progress_and_queues_summary(tmp
         ]
     ).to_csv(data_dir / "krx_symbol_name_map.csv", index=False)
 
-    runner = RecordingRunner()
+    release = threading.Event()
+
+    def _slow_prewarm(*args, **kwargs):
+        release.wait(timeout=1.0)
+        return {"ok": "1"}
+
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.prewarm_prediction_cache", _slow_prewarm)
     runtime_config = PipelineRuntimeConfig(
         project_root=tmp_path,
         python_executable="python",
@@ -457,8 +453,8 @@ def test_request_during_bootstrap_returns_global_progress_and_queues_summary(tmp
         result_simple_path="result/result_simple.csv",
         state_path="result/chatbot_jobs.json",
         session_path="result/chatbot_sessions.json",
-        process_runner=runner,
     )
+    bot._start_bootstrap_job(force=True)
 
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-bootstrap-progress"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
@@ -466,6 +462,7 @@ def test_request_during_bootstrap_returns_global_progress_and_queues_summary(tmp
     assert "초기 전체 종목 예측" in text
     assert "요약 요청을 접수" in text
     assert "000660.KS" in bot._queued_summary_symbols
+    release.set()
 
 
 def test_additional_symbol_request_generates_summary_when_placeholder_exists(tmp_path: Path, monkeypatch):
@@ -999,7 +996,7 @@ def test_prewarm_prediction_cache_runs_colab_pipeline(monkeypatch, tmp_path: Pat
     assert out["result_simple_csv"].endswith("result/result_simple.csv")
 
 
-def test_launch_colab_kakao_bot_prewarms_cache_before_server_start(monkeypatch, tmp_path: Path):
+def test_launch_colab_kakao_bot_starts_bootstrap_after_server_start(monkeypatch, tmp_path: Path):
     events = []
 
     class FakeThread:
@@ -1012,17 +1009,21 @@ def test_launch_colab_kakao_bot_prewarms_cache_before_server_start(monkeypatch, 
             self.started = True
             events.append("thread_started")
 
-    monkeypatch.setattr("src.chatbot.kakao_colab_bot.prewarm_prediction_cache", lambda *a, **k: events.append("prewarm"))
     monkeypatch.setattr("src.chatbot.kakao_colab_bot.create_app", lambda runtime_config=None, bot=None: object())
     monkeypatch.setattr("src.chatbot.kakao_colab_bot.start_pyngrok_tunnel", lambda tunnel_config=None: "https://demo.ngrok")
     monkeypatch.setattr("src.chatbot.kakao_colab_bot.threading.Thread", FakeThread)
+    monkeypatch.setattr(
+        KakaoColabPredictionBot,
+        "_start_bootstrap_job",
+        lambda self, force=False: events.append("bootstrap_started") or True,
+    )
 
     launched = launch_colab_kakao_bot(
         runtime_config=PipelineRuntimeConfig(project_root=tmp_path, prewarm_default_predictions=True),
         tunnel_config=PyngrokTunnelConfig(port=8000),
     )
 
-    assert events == ["prewarm", "thread_started"]
+    assert events == ["thread_started", "bootstrap_started"]
     assert launched["webhook_url"] == "https://demo.ngrok/kakao/webhook"
 
 
