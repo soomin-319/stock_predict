@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
 
@@ -63,6 +64,7 @@ def make_bot(tmp_path: Path, runner=None) -> KakaoColabPredictionBot:
         dart_corp_map_csv="data/dart_corp_map.csv",
         naver_client_id="naver-id",
         naver_client_secret="naver-secret",
+        bootstrap_default_symbols=False,
     )
     return KakaoColabPredictionBot(
         runtime_config=runtime_config,
@@ -163,7 +165,7 @@ def test_cached_prediction_generates_issue_summary_for_each_requested_symbol_wit
     assert "[공시 요약]" in text_a
     assert "[뉴스 요약]" in text_b
     assert captured[0]["symbol"] == "005930.KS"
-    assert captured[0]["dates"] == ["2026-03-26"]
+    assert captured[0]["dates"] in ([], [datetime.now(timezone.utc).date().isoformat()])
     assert captured[1]["symbol"] == "000660.KS"
 
 
@@ -202,7 +204,7 @@ def test_cached_prediction_uses_today_reference_date_when_detail_date_is_stale(t
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-stale"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert captured_ref[0] == "2026-03-26"
+    assert captured_ref[0] == datetime.now(timezone.utc).date().isoformat()
     assert "[뉴스 요약]" in text
 
 
@@ -408,7 +410,6 @@ def test_first_prediction_bootstraps_all_symbols_but_summarizes_only_requested_s
         dart_api_key="demo-key",
         dart_corp_map_csv="data/dart_corp_map.csv",
         bootstrap_default_symbols=True,
-        bootstrap_symbol_cap=20,
     )
     bot = KakaoColabPredictionBot(
         runtime_config=runtime_config,
@@ -418,15 +419,53 @@ def test_first_prediction_bootstraps_all_symbols_but_summarizes_only_requested_s
         process_runner=runner,
     )
 
-    bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-bootstrap"}}})
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-bootstrap"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
     command = runner.calls[0]["command"]
     add_symbols_idx = command.index("--add-symbols")
     issue_summary_idx = command.index("--issue-summary-symbols")
     add_symbols = command[add_symbols_idx + 1 : issue_summary_idx]
-    issue_symbols = command[issue_summary_idx + 1 : issue_summary_idx + 2]
+    issue_symbols = command[issue_summary_idx + 1 : issue_summary_idx + 1]
 
     assert set(add_symbols) == {"005930.KS", "000660.KS", "035420.KS"}
-    assert issue_symbols == ["005930.KS"]
+    assert issue_symbols == []
+    assert "--disable-issue-summary" in command
+    assert "초기 전체 종목 예측" in text
+
+
+def test_request_during_bootstrap_returns_global_progress_and_queues_summary(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {"Ticker": "005930", "Symbol": "005930.KS", "Name": "삼성전자", "Market": "KOSPI"},
+            {"Ticker": "000660", "Symbol": "000660.KS", "Name": "SK하이닉스", "Market": "KOSPI"},
+        ]
+    ).to_csv(data_dir / "krx_symbol_name_map.csv", index=False)
+
+    runner = RecordingRunner()
+    runtime_config = PipelineRuntimeConfig(
+        project_root=tmp_path,
+        python_executable="python",
+        input_csv="data/real_ohlcv.csv",
+        report_json="pipeline_report_with_context.json",
+        figure_dir="figures_with_context",
+        bootstrap_default_symbols=True,
+    )
+    bot = KakaoColabPredictionBot(
+        runtime_config=runtime_config,
+        result_simple_path="result/result_simple.csv",
+        state_path="result/chatbot_jobs.json",
+        session_path="result/chatbot_sessions.json",
+        process_runner=runner,
+    )
+
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-bootstrap-progress"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "초기 전체 종목 예측" in text
+    assert "요약 요청을 접수" in text
+    assert "000660.KS" in bot._queued_summary_symbols
 
 
 def test_additional_symbol_request_generates_summary_when_placeholder_exists(tmp_path: Path, monkeypatch):
