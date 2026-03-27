@@ -10,7 +10,7 @@ import sys
 import threading
 from difflib import SequenceMatcher
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -168,6 +168,8 @@ class KakaoColabPredictionBot:
         self._issue_summary_jobs: dict[str, dict[str, Any]] = {}
         self._issue_summary_timeout_symbols: set[str] = set()
         self._queued_summary_symbols: set[str] = set()
+        self._live_events_cache: dict[tuple[str, str], tuple[datetime, pd.DataFrame]] = {}
+        self._live_events_cache_ttl = timedelta(minutes=15)
         self._bootstrap_thread: threading.Thread | None = None
         self._state_lock = threading.RLock()
         self._legacy_formatter_patched = False
@@ -1061,8 +1063,9 @@ class KakaoColabPredictionBot:
         if dt.empty:
             return today_kst.strftime("%Y-%m-%d")
         latest_prediction_date = dt.max().normalize().date()
-        reference_date = max(today_kst, latest_prediction_date)
-        return reference_date.strftime("%Y-%m-%d")
+        # Deterministic policy: prefer the latest model prediction date and
+        # only fall back to today when prediction metadata is unavailable.
+        return latest_prediction_date.strftime("%Y-%m-%d")
 
     def _load_result_news(self) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
@@ -1088,6 +1091,14 @@ class KakaoColabPredictionBot:
         return merged
 
     def _collect_live_symbol_events(self, symbol: str, reference_date: str, use_timeout: bool = True) -> pd.DataFrame:
+        cache_key = (str(symbol), str(reference_date))
+        now_utc = datetime.now(timezone.utc)
+        cached = self._live_events_cache.get(cache_key)
+        if cached is not None:
+            cached_at, cached_df = cached
+            if now_utc - cached_at <= self._live_events_cache_ttl:
+                return cached_df.copy()
+
         has_naver = bool(self.runtime_config.naver_client_id and self.runtime_config.naver_client_secret)
         has_dart = bool(self.runtime_config.dart_api_key)
         looks_demo_key = any(
@@ -1123,6 +1134,7 @@ class KakaoColabPredictionBot:
             if events.empty:
                 return events
             events["Date"] = pd.to_datetime(events["Date"], errors="coerce").dt.normalize()
+            self._live_events_cache[cache_key] = (now_utc, events.copy())
             return events
         except Exception as exc:
             self._console_log(f"{self._display_code(symbol)} 라이브 원문 수집 실패 ({type(exc).__name__}): {exc}")

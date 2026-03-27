@@ -409,20 +409,29 @@ def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: lis
 
 
 def _calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Index | list | tuple | pd.Series) -> pd.Series:
+    raw_probs = pd.Series(up_probs, dtype=float).clip(0.0, 1.0)
     if oof_df.empty or "up_probability" not in oof_df.columns or "target_log_return" not in oof_df.columns:
-        return pd.Series(up_probs, dtype=float)
+        return raw_probs
 
     cal = oof_df[["up_probability", "target_log_return"]].copy().dropna()
     if cal.empty or cal["up_probability"].nunique() < 3:
-        return pd.Series(up_probs, dtype=float)
+        return raw_probs
 
     y = (cal["target_log_return"] > 0).astype(int)
     try:
         iso = IsotonicRegression(out_of_bounds="clip")
         iso.fit(cal["up_probability"].astype(float).values, y.values)
-        return pd.Series(iso.predict(pd.Series(up_probs, dtype=float).values), dtype=float).clip(0.0, 1.0)
+        calibrated = pd.Series(iso.predict(raw_probs.values), dtype=float).clip(0.0, 1.0)
+        raw_unique = raw_probs.round(6).nunique()
+        calibrated_unique = calibrated.round(6).nunique()
+        # Guard against isotonic plateaus collapsing discrimination on
+        # small-symbol latest snapshots (e.g., every symbol showing the same
+        # up-probability). In this case keep ranking by blending toward raw.
+        if raw_unique >= 4 and calibrated_unique <= 2:
+            return (0.3 * calibrated + 0.7 * raw_probs).clip(0.0, 1.0)
+        return calibrated
     except Exception:
-        return pd.Series(up_probs, dtype=float)
+        return raw_probs
 
 
 def _safe_to_csv(df: pd.DataFrame, path: Path) -> Path:

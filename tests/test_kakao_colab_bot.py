@@ -167,11 +167,11 @@ def test_cached_prediction_generates_issue_summary_for_each_requested_symbol_wit
     assert "[공시 요약]" in text_a
     assert "[뉴스 요약]" in text_b
     assert captured[0]["symbol"] == "005930.KS"
-    assert captured[0]["dates"] in ([], [datetime.now(timezone.utc).date().isoformat()])
+    assert captured[0]["dates"] in ([], ["2026-03-26"])
     assert captured[1]["symbol"] == "000660.KS"
 
 
-def test_cached_prediction_uses_today_reference_date_when_detail_date_is_stale(tmp_path: Path, monkeypatch):
+def test_cached_prediction_uses_latest_prediction_date_when_detail_date_is_stale(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
     pd.DataFrame(
@@ -186,7 +186,7 @@ def test_cached_prediction_uses_today_reference_date_when_detail_date_is_stale(t
 
     def _fake_collect(symbol, reference_date):
         captured_ref.append(reference_date)
-        return pd.DataFrame([{"Date": "2026-03-26", "Symbol": "000660.KS", "source_type": "news", "title": "당일 뉴스"}])
+        return pd.DataFrame([{"Date": "2026-03-06", "Symbol": "000660.KS", "source_type": "news", "title": "예측일 뉴스"}])
 
     def _fake_append(pred_df, context_raw_df=None, **kwargs):
         out = pred_df.copy()
@@ -206,8 +206,46 @@ def test_cached_prediction_uses_today_reference_date_when_detail_date_is_stale(t
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-stale"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert captured_ref[0] == datetime.now(timezone.utc).date().isoformat()
+    assert captured_ref == []
     assert "[뉴스 요약]" in text
+
+
+def test_collect_live_events_uses_short_ttl_cache(tmp_path: Path, monkeypatch):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [{"종목코드": "005930", "종목명": "삼성전자", "권고": "매수", "내일 예상 종가": 71200, "내일 예상 수익률(%)": "1.2%", "상승확률(%)": "78.0%", "예측 신뢰도": "88.0%", "예측 이유": "테스트"}]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+    pd.DataFrame([{"Symbol": "005930.KS", "Date": "2026-03-26"}]).to_csv(result_dir / "result_detail.csv", index=False)
+
+    calls = {"count": 0}
+
+    def _fake_collect_context_raw_events(*args, **kwargs):
+        calls["count"] += 1
+        return pd.DataFrame([{"Date": "2026-03-26", "Symbol": "005930.KS", "source_type": "news", "title": "당일 뉴스"}])
+
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.collect_context_raw_events", _fake_collect_context_raw_events)
+    runtime_config = PipelineRuntimeConfig(
+        project_root=tmp_path,
+        python_executable="python",
+        input_csv="data/real_ohlcv.csv",
+        report_json="pipeline_report_with_context.json",
+        figure_dir="figures_with_context",
+        naver_client_id="real_id",
+        naver_client_secret="real_secret",
+        bootstrap_default_symbols=False,
+        async_issue_summary_on_demand=False,
+    )
+    bot = KakaoColabPredictionBot(
+        runtime_config=runtime_config,
+        result_simple_path="result/result_simple.csv",
+        state_path="result/chatbot_jobs.json",
+        session_path="result/chatbot_sessions.json",
+    )
+    _ = bot._collect_live_symbol_events("005930.KS", "2026-03-26")
+    _ = bot._collect_live_symbol_events("005930.KS", "2026-03-26")
+
+    assert calls["count"] == 1
 
 
 def test_cached_prediction_uses_today_only_when_today_events_are_missing(tmp_path: Path, monkeypatch):
