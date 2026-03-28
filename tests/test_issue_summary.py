@@ -76,6 +76,8 @@ def test_build_result_simple_excludes_removed_columns_and_keeps_issue_summary_co
     assert "공시 요약" in simple.columns
     assert "종합 판단" not in simple.columns
     assert "주의사항" not in simple.columns
+    assert "원문 개수" not in simple.columns
+    assert "핵심 원문 목록" not in simple.columns
 
 
 def test_append_issue_summary_columns_uses_llm_for_summary_only(monkeypatch):
