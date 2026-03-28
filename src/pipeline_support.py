@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from src.config.settings import SignalConfig
+from src.config.settings import InvestmentCriteriaConfig, SignalConfig
 from src.domain.signal_policy import build_prediction_policy_frame, confidence_label, vectorized_event_signal_boost
 from src.inference.predict import build_prediction_frame, signal_label_series
 from src.models.lgbm_heads import MultiHeadPrediction
@@ -26,6 +26,14 @@ OPTIONAL_PREDICTION_COLUMNS = [
     "near_52w_high_flag",
     "breakout_52w_flag",
     "leader_confirmation_flag",
+    "is_top_turnover_15",
+    "dual_high_conviction_buy_flag",
+    "distance_to_52w_high",
+    "nasdaq_tailwind_flag",
+    "nasdaq_headwind_flag",
+    "rsi_buy_watch_flag",
+    "news_same_day_signal",
+    "disclosure_same_day_signal",
     "ks11_ret_1d",
     "market_type",
 ]
@@ -57,6 +65,7 @@ def build_scored_prediction_frame(
     context: PredictionFrameContext,
     *,
     calibration_source: pd.DataFrame | None = None,
+    investment_criteria: InvestmentCriteriaConfig | None = None,
 ) -> pd.DataFrame:
     scored = build_prediction_frame(latest_df, pred, signal_cfg)
     scored = _copy_optional_prediction_columns(scored, latest_df)
@@ -78,7 +87,7 @@ def build_scored_prediction_frame(
         ]:
             if column in calibration_source.columns and column not in scored.columns:
                 scored[column] = calibration_source[column].values
-    scored = vectorized_event_signal_boost(scored)
+    scored = vectorized_event_signal_boost(scored, cfg=investment_criteria)
     if "signal_score" in scored.columns:
         scored["signal_label"] = signal_label_series(scored["signal_score"])
     return scored
@@ -94,7 +103,11 @@ def build_symbol_history_accuracy(scored_oof: pd.DataFrame) -> pd.DataFrame:
     return tmp.groupby("Symbol", as_index=False)["history_direction_accuracy"].mean()
 
 
-def finalize_latest_prediction_frame(pred_df: pd.DataFrame, symbol_name_map: dict[str, str]) -> pd.DataFrame:
+def finalize_latest_prediction_frame(
+    pred_df: pd.DataFrame,
+    symbol_name_map: dict[str, str],
+    investment_criteria: InvestmentCriteriaConfig | None = None,
+) -> pd.DataFrame:
     out = pred_df.copy()
     out["symbol_name"] = out["Symbol"].astype(str).map(symbol_name_map).fillna(out["Symbol"].astype(str))
     out["confidence_score"] = (1 - out["uncertainty_score"].fillna(1)).clip(lower=0, upper=1)
@@ -105,7 +118,7 @@ def finalize_latest_prediction_frame(pred_df: pd.DataFrame, symbol_name_map: dic
             + (pd.to_numeric(out["predicted_return_5d"], errors="coerce").fillna(0.0) > 0).astype(int)
             + (pd.to_numeric(out["predicted_return_20d"], errors="coerce").fillna(0.0) > 0).astype(int)
         )
-    out = build_prediction_policy_frame(out)
+    out = build_prediction_policy_frame(out, cfg=investment_criteria)
     return out
 
 
