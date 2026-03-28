@@ -218,6 +218,62 @@ def _build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
     return formatter_build_result_simple(out)
 
 
+def _drop_empty_detail_columns(detail_df: pd.DataFrame) -> pd.DataFrame:
+    """Drop optional detail columns that are entirely empty in current run outputs."""
+    optional_cols = [
+        "foreign_net_buy",
+        "institution_net_buy",
+        "disclosure_score",
+        "news_sentiment",
+        "news_relevance_score",
+        "news_impact_score",
+        "news_article_count",
+        "rsi_pullback_buy_flag",
+        "rsi_overbought_sell_flag",
+        "foreign_buy_signal",
+        "institution_buy_signal",
+        "smart_money_buy_signal",
+        "foreign_buy_ratio",
+        "institution_buy_ratio",
+        "smart_money_strength",
+        "foreign_net_buy_z20",
+        "institution_net_buy_z20",
+        "foreign_net_buy_3d",
+        "foreign_net_buy_5d",
+        "institution_net_buy_3d",
+        "institution_net_buy_5d",
+        "news_positive_signal",
+        "news_negative_signal",
+        "near_52w_high_flag",
+        "breakout_52w_flag",
+        "leader_confirmation_flag",
+        "investor_event_score",
+        "target_up",
+        "target_log_return_5d",
+        "target_up_5d",
+        "target_close_5d",
+        "target_log_return_20d",
+        "target_up_20d",
+        "target_close_20d",
+    ]
+    drop_cols: list[str] = []
+    for col in optional_cols:
+        if col not in detail_df.columns:
+            continue
+        series = detail_df[col]
+        if pd.api.types.is_numeric_dtype(series):
+            if series.notna().sum() == 0:
+                drop_cols.append(col)
+            continue
+        normalized = series.astype(str).str.strip()
+        non_empty = normalized[~normalized.isin({"", "-", "nan", "None"})]
+        if non_empty.empty:
+            drop_cols.append(col)
+    if not drop_cols:
+        return detail_df
+    return detail_df.drop(columns=drop_cols, errors="ignore")
+
+
 def _backtest_summary_fields(backtest: dict) -> dict[str, float]:
     keys = [
         "days",
@@ -724,6 +780,7 @@ def run_pipeline(
     detail_df["history_direction_accuracy_display"] = detail_df["history_direction_accuracy"].map(
         lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
     )
+    detail_df = _drop_empty_detail_columns(detail_df)
     simple_df = _build_result_simple(detail_df)
 
     detail_path = resolve_output_path("result_detail.csv")
