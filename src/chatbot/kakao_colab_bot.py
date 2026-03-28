@@ -509,8 +509,16 @@ class KakaoColabPredictionBot:
         if simple_df.empty or "종목코드" not in simple_df.columns:
             return None
 
-        target_code = self._display_code(symbol)
-        matched = simple_df[simple_df["종목코드"].astype(str).str.zfill(6) == target_code.zfill(6)]
+        target_code = self._display_code(symbol).zfill(6)
+        raw_codes = simple_df["종목코드"].astype(str).str.strip()
+        stripped_suffix = raw_codes.str.upper().str.replace(r"\.(KS|KQ)$", "", regex=True)
+        extracted_digits = stripped_suffix.str.extract(r"(\d{1,6})", expand=False).fillna("").str.zfill(6)
+
+        matched = simple_df[
+            (raw_codes.str.zfill(6) == target_code)
+            | (stripped_suffix.str.zfill(6) == target_code)
+            | (extracted_digits == target_code)
+        ]
         if matched.empty:
             return None
         row = matched.iloc[0].copy()
