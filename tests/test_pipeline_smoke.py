@@ -167,8 +167,8 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "종목코드" in simple_df.columns
     assert "종목명" in simple_df.columns
     assert "권고" in simple_df.columns
-    assert "포트폴리오 액션" in simple_df.columns
-    assert "거래 게이트" in simple_df.columns
+    assert "포트폴리오 액션" not in simple_df.columns
+    assert "거래 게이트" not in simple_df.columns
     assert "내일 예상 종가" in simple_df.columns
     assert "내일 예상 수익률(%)" in simple_df.columns
     assert "5일 예상 수익률(%)" in simple_df.columns
