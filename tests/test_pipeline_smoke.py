@@ -140,6 +140,11 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert Path(payload["artifacts"]["actual_vs_predicted_price"]).exists()
     assert Path(payload["artifacts"]["pm_report_json"]).exists()
     assert Path(payload["artifacts"]["symbol_summary_png"]).exists()
+
+    news_df = pd.read_csv(payload["artifacts"]["result_news_csv"])
+    disclosure_df = pd.read_csv(payload["artifacts"]["result_disclosure_csv"])
+    assert "뉴스 요약" in news_df.columns
+    assert "공시 요약" in disclosure_df.columns
     assert Path(payload["artifacts"]["symbol_level_figure_dir"]).exists()
     assert payload["artifacts"]["symbol_level_figure_count"] > 0
     assert Path(payload["artifacts"]["symbol_level_recent_month_dir"]).exists()

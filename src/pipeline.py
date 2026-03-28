@@ -286,6 +286,28 @@ def _drop_empty_detail_columns(detail_df: pd.DataFrame) -> pd.DataFrame:
     return detail_df.drop(columns=drop_cols, errors="ignore")
 
 
+def _build_issue_summary_snapshot(pred_df: pd.DataFrame) -> pd.DataFrame:
+    summary_cols = [
+        "Symbol",
+        "symbol_name",
+        "오늘 종목 이슈 한줄 요약",
+        "공시 요약",
+        "뉴스 요약",
+        "종합 판단",
+        "주의사항",
+    ]
+    available = [c for c in summary_cols if c in pred_df.columns]
+    if "Symbol" not in available:
+        return pd.DataFrame(columns=summary_cols)
+    snapshot = pred_df[available].copy()
+    if "symbol_name" not in snapshot.columns:
+        snapshot["symbol_name"] = snapshot["Symbol"].astype(str)
+    for col in summary_cols:
+        if col not in snapshot.columns:
+            snapshot[col] = "-"
+    return snapshot[summary_cols]
+
+
 def _backtest_summary_fields(backtest: dict) -> dict[str, float]:
     keys = [
         "days",
@@ -693,7 +715,13 @@ def run_pipeline(
 
     oof_pred = _prediction_from_oof_df(oof)
     oof_pred.up_probability = _calibrate_up_probability(oof, oof_pred.up_probability).values
-    scored_oof = build_scored_prediction_frame(oof, oof_pred, cfg.signal, prediction_context)
+    scored_oof = build_scored_prediction_frame(
+        oof,
+        oof_pred,
+        cfg.signal,
+        prediction_context,
+        investment_criteria=cfg.investment_criteria,
+    )
     scored_oof["coverage_gate_status"] = coverage_gate_status
 
     tune_df, eval_df = _split_oof_for_tuning_and_eval(scored_oof, tune_ratio=0.7)
@@ -705,7 +733,13 @@ def run_pipeline(
     cfg.signal.rel_strength_weight = tuned["rel_strength_weight"]
     cfg.signal.uncertainty_penalty = tuned["uncertainty_penalty"]
 
-    scored_oof = build_scored_prediction_frame(oof, oof_pred, cfg.signal, prediction_context)
+    scored_oof = build_scored_prediction_frame(
+        oof,
+        oof_pred,
+        cfg.signal,
+        prediction_context,
+        investment_criteria=cfg.investment_criteria,
+    )
     scored_oof["coverage_gate_status"] = coverage_gate_status
     tune_df, eval_df = _split_oof_for_tuning_and_eval(scored_oof, tune_ratio=0.7)
 
@@ -807,6 +841,7 @@ def run_pipeline(
 
     simple_path = resolve_output_path("result_simple.csv")
     simple_path = _safe_to_csv(simple_df, simple_path)
+    issue_snapshot = _build_issue_summary_snapshot(pred_df)
     export_context_df = context_raw_df.copy()
     if not export_context_df.empty and "Date" in export_context_df.columns:
         export_context_df["Date"] = pd.to_datetime(export_context_df["Date"], errors="coerce").dt.normalize()
@@ -818,6 +853,18 @@ def run_pipeline(
         if "source_type" in export_context_df.columns
         else pd.DataFrame()
     )
+    if not news_df.empty:
+        news_df = news_df.merge(issue_snapshot, on="Symbol", how="left")
+    elif not issue_snapshot.empty:
+        today_kst = pd.Timestamp.now(tz="Asia/Seoul").normalize().tz_localize(None)
+        news_df = issue_snapshot.copy()
+        news_df["Date"] = today_kst
+        news_df["source_type"] = "news_summary"
+        news_df["title"] = news_df["뉴스 요약"].fillna("-")
+        news_df["published_at"] = ""
+        news_df["provider"] = "summary"
+        news_df["url"] = ""
+        news_df["raw_id"] = ""
     news_path = _safe_to_csv(news_df, news_path)
     disclosure_path = resolve_output_path("result_disclosure.csv")
     disclosure_df = (
@@ -825,6 +872,18 @@ def run_pipeline(
         if "source_type" in export_context_df.columns
         else pd.DataFrame()
     )
+    if not disclosure_df.empty:
+        disclosure_df = disclosure_df.merge(issue_snapshot, on="Symbol", how="left")
+    elif not issue_snapshot.empty:
+        today_kst = pd.Timestamp.now(tz="Asia/Seoul").normalize().tz_localize(None)
+        disclosure_df = issue_snapshot.copy()
+        disclosure_df["Date"] = today_kst
+        disclosure_df["source_type"] = "disclosure_summary"
+        disclosure_df["title"] = disclosure_df["공시 요약"].fillna("-")
+        disclosure_df["published_at"] = ""
+        disclosure_df["provider"] = "summary"
+        disclosure_df["url"] = ""
+        disclosure_df["raw_id"] = ""
     disclosure_path = _safe_to_csv(disclosure_df, disclosure_path)
 
     report = {
