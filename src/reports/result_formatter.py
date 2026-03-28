@@ -47,8 +47,6 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
             "종목코드",
             "종목명",
             "권고",
-            "portfolio_action",
-            "trading_gate",
             "risk_flag",
             "predicted_close",
             "predicted_return",
@@ -57,7 +55,7 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
             *([c for c in ["up_probability_5d", "up_probability_20d"] if c in out.columns]),
             "예측 신뢰도",
             "예측 이유",
-            *([c for c in ["오늘 종목 이슈 한줄 요약", "공시 요약", "뉴스 요약", "종합 판단", "주의사항", "원문 개수", "핵심 원문 목록"] if c in out.columns]),
+            *([c for c in ["공시 요약", "뉴스 요약"] if c in out.columns]),
         ]
     ].rename(
         columns={
@@ -67,8 +65,6 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
             "predicted_return_20d": "20일 예상 수익률(%)",
             "up_probability_5d": "5일 상승확률(%)",
             "up_probability_20d": "20일 상승확률(%)",
-            "portfolio_action": "포트폴리오 액션",
-            "trading_gate": "거래 게이트",
         }
     )
     simple["내일 예상 종가"] = pd.to_numeric(simple["내일 예상 종가"], errors="coerce").map(
