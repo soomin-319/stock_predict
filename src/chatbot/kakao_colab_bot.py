@@ -232,6 +232,13 @@ class KakaoColabPredictionBot:
     ) -> dict[str, Any]:
         display_code = self._display_code(symbol)
 
+        if force_refresh:
+            with self._state_lock:
+                job_state_for_refresh = self._job_registry.get(symbol)
+                has_active_runtime = symbol in self._active_processes
+            if job_state_for_refresh and job_state_for_refresh.get("status") == "running" and not has_active_runtime:
+                self._mark_job_failed(symbol, exit_code=-2, note="stale_running_state")
+
         if self._is_bootstrap_running():
             self._queue_summary_after_bootstrap(symbol)
             self._update_session(user_id, symbol=symbol, intent="running")
@@ -264,6 +271,10 @@ class KakaoColabPredictionBot:
                     ("도움말", "도움말"),
                 ],
             )
+
+        if force_refresh:
+            self._update_session(user_id, symbol=symbol, intent="tracking")
+            return self._start_job_response(symbol, retry=True)
 
         cached_row = None if force_refresh else self._find_cached_prediction(symbol)
         if cached_row is not None:
@@ -320,7 +331,10 @@ class KakaoColabPredictionBot:
             elapsed = self._job_elapsed_seconds(job_state)
             if elapsed is not None and elapsed >= 15.0:
                 return self._build_response(
-                    f"{display_code} 예측 완료 후 결과 파일에서 종목을 찾지 못했습니다. '최신화'로 다시 실행해주세요.",
+                    (
+                        f"{display_code} 직전 예측 결과가 결과 파일에 반영되지 않았습니다. "
+                        "'최신화'를 입력하면 동일 종목의 예측과 뉴스/공시 요약을 다시 실행합니다."
+                    ),
                     quick_replies=[
                         ("최신화", "최신화"),
                         ("다시 시도", display_code),
@@ -346,10 +360,6 @@ class KakaoColabPredictionBot:
                     ("도움말", "도움말"),
                 ],
             )
-
-        if force_refresh and from_session:
-            self._update_session(user_id, symbol=symbol, intent="tracking")
-            return self._start_job_response(symbol, retry=True)
 
         self._update_session(user_id, symbol=symbol, intent="tracking")
         return self._start_job_response(symbol, retry=False)
@@ -499,8 +509,16 @@ class KakaoColabPredictionBot:
         if simple_df.empty or "종목코드" not in simple_df.columns:
             return None
 
-        target_code = self._display_code(symbol)
-        matched = simple_df[simple_df["종목코드"].astype(str).str.zfill(6) == target_code.zfill(6)]
+        target_code = self._display_code(symbol).zfill(6)
+        raw_codes = simple_df["종목코드"].astype(str).str.strip()
+        stripped_suffix = raw_codes.str.upper().str.replace(r"\.(KS|KQ)$", "", regex=True)
+        extracted_digits = stripped_suffix.str.extract(r"(\d{1,6})", expand=False).fillna("").str.zfill(6)
+
+        matched = simple_df[
+            (raw_codes.str.zfill(6) == target_code)
+            | (stripped_suffix.str.zfill(6) == target_code)
+            | (extracted_digits == target_code)
+        ]
         if matched.empty:
             return None
         row = matched.iloc[0].copy()
@@ -1046,9 +1064,30 @@ class KakaoColabPredictionBot:
             self._start_issue_summary_background(symbol, row)
 
     def _prediction_date_for_symbol(self, symbol: str) -> str | None:
-        _ = symbol
+        # 우선순위: result_detail의 해당 종목 최신 예측일 -> 없으면 KST 오늘
+        if self.result_detail_path.exists():
+            try:
+                detail_df = pd.read_csv(self.result_detail_path, dtype={"Symbol": str}, encoding="utf-8-sig")
+                if not detail_df.empty and {"Symbol", "Date"}.issubset(set(detail_df.columns)):
+                    symbols = detail_df["Symbol"].astype(str).str.strip()
+                    target = str(symbol).strip()
+                    target_display = self._display_code(target)
+                    symbol_match = (
+                        symbols == target
+                    ) | (
+                        symbols.str.split(".").str[0].str.zfill(6) == target_display.zfill(6)
+                    )
+                    matched = detail_df.loc[symbol_match].copy()
+                    if not matched.empty:
+                        matched["Date"] = pd.to_datetime(matched["Date"], errors="coerce")
+                        matched = matched.dropna(subset=["Date"])
+                        if not matched.empty:
+                            latest_date = matched["Date"].max().date()
+                            return latest_date.strftime("%Y-%m-%d")
+            except Exception as exc:
+                self._console_log(f"{self._display_code(symbol)} 예측일 조회 실패 ({type(exc).__name__}): {exc}")
+
         today_kst = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Seoul")).date()
-        # 검색 기준일 정책: 공시/뉴스는 KST "오늘" 데이터만 조회한다.
         return today_kst.strftime("%Y-%m-%d")
 
     def _load_result_news(self) -> pd.DataFrame:
@@ -1070,6 +1109,11 @@ class KakaoColabPredictionBot:
             merged["Date"] = pd.to_datetime(merged["Date"], errors="coerce").dt.normalize()
         if "Symbol" in merged.columns:
             merged["Symbol"] = merged["Symbol"].astype(str)
+        if "source_type" in merged.columns:
+            normalized_source = merged["source_type"].astype(str).str.strip().str.lower()
+            merged["source_type"] = normalized_source.map(
+                lambda s: "news" if "news" in s else ("disclosure" if "disclosure" in s else s)
+            )
         if "title" in merged.columns:
             merged = merged.drop_duplicates(subset=["Date", "Symbol", "source_type", "title"], keep="first")
         return merged
