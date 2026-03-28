@@ -114,6 +114,39 @@ def test_returns_cached_prediction_message_from_kakao_payload(tmp_path: Path):
     assert response["template"]["quickReplies"][0]["label"] == "최신화"
 
 
+def test_returns_cached_prediction_when_result_stock_code_has_market_suffix(tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "종목코드": "034020.KS",
+                "종목명": "두산에너빌리티",
+                "권고": "관망",
+                "내일 예상 종가": 30100,
+                "내일 예상 수익률(%)": "0.321%",
+                "상승확률(%)": "51.2%",
+                "예측 신뢰도": "61.0%",
+                "예측 이유": "테스트 사유",
+            }
+        ]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload(
+        {
+            "userRequest": {
+                "utterance": "034020",
+                "user": {"id": "user-suffix"},
+            }
+        }
+    )
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "두산에너빌리티" in text
+    assert "권고: 관망" in text
+
+
 def test_cached_prediction_generates_issue_summary_for_each_requested_symbol_with_prediction_date_filter(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
@@ -662,8 +695,21 @@ def test_completed_without_result_for_long_time_prompts_refresh(tmp_path: Path):
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "결과", "user": {"id": "u-no-result"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert "결과 파일에서 종목을 찾지 못했습니다" in text
-    assert "최신화" in text
+    assert "결과 파일에 반영되지 않았습니다" in text
+    assert "뉴스/공시 요약을 다시 실행" in text
+
+
+def test_refresh_restarts_prediction_even_when_previous_job_is_completed_without_cached_row(tmp_path: Path):
+    runner = RecordingRunner()
+    bot = make_bot(tmp_path, runner=runner)
+    bot._job_registry["005930.KS"] = {"status": "completed", "completed_at": "2026-03-26T00:00:00+00:00"}
+    bot._session_registry["u-refresh"] = {"last_symbol": "005930.KS", "last_intent": "tracking"}
+
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "최신화", "user": {"id": "u-refresh"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "최신 예측을 다시 시작합니다" in text
+    assert len(runner.calls) == 1
 
 
 def test_start_job_skips_disable_external_flag_when_external_features_enabled(tmp_path: Path):
