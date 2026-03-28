@@ -8,7 +8,7 @@ from src.config.settings import AppConfig
 from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
 from src.models.lgbm_heads import MultiHeadStockModel
-from src.pipeline import _split_oof_for_tuning_and_eval, build_cli_parser, resolve_output_path, run_pipeline
+from src.pipeline import _drop_empty_detail_columns, _split_oof_for_tuning_and_eval, build_cli_parser, resolve_output_path, run_pipeline
 from src.pipeline_support import PredictionFrameContext, build_scored_prediction_frame
 
 
@@ -80,6 +80,28 @@ def test_resolve_output_path_windows_tmp_mapping():
     out = resolve_output_path("/tmp/predictions.csv", is_windows=True)
     assert out.parent.name == "result"
     assert out.name == "predictions.csv"
+
+
+def test_drop_empty_detail_columns_removes_only_empty_optional_fields():
+    detail_df = pd.DataFrame(
+        [
+            {
+                "Date": "2026-03-28",
+                "Symbol": "005930.KS",
+                "foreign_net_buy": np.nan,
+                "news_sentiment": np.nan,
+                "target_up_20d": np.nan,
+                "predicted_return": 0.012,
+            }
+        ]
+    )
+
+    cleaned = _drop_empty_detail_columns(detail_df)
+
+    assert "foreign_net_buy" not in cleaned.columns
+    assert "news_sentiment" not in cleaned.columns
+    assert "target_up_20d" not in cleaned.columns
+    assert "predicted_return" in cleaned.columns
 
 
 def test_run_pipeline_generates_report_and_figures(tmp_path):
@@ -167,8 +189,8 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "종목코드" in simple_df.columns
     assert "종목명" in simple_df.columns
     assert "권고" in simple_df.columns
-    assert "포트폴리오 액션" in simple_df.columns
-    assert "거래 게이트" in simple_df.columns
+    assert "포트폴리오 액션" not in simple_df.columns
+    assert "거래 게이트" not in simple_df.columns
     assert "내일 예상 종가" in simple_df.columns
     assert "내일 예상 수익률(%)" in simple_df.columns
     assert "5일 예상 수익률(%)" in simple_df.columns

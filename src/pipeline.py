@@ -27,6 +27,7 @@ from src.domain.signal_policy import (
     vectorized_event_signal_boost,
 )
 from src.features.external_features import add_external_market_features_with_coverage
+from src.features.investment_signals import add_investment_signal_features
 from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
 from src.models.lgbm_heads import MultiHeadPrediction, MultiHeadStockModel
@@ -180,6 +181,17 @@ def _feature_columns(df: pd.DataFrame) -> list[str]:
         "share_cancellation_flag",
         "shareholder_return_score",
         "short_sell_event_score",
+        "is_top_turnover_15",
+        "foreign_high_conviction_buy_flag",
+        "institution_high_conviction_buy_flag",
+        "dual_high_conviction_buy_flag",
+        "distance_to_52w_high",
+        "nasdaq_tailwind_flag",
+        "nasdaq_headwind_flag",
+        "rsi_buy_watch_flag",
+        "news_same_day_signal",
+        "disclosure_same_day_signal",
+        "jongbae_score",
     }
     return [
         c
@@ -216,6 +228,62 @@ def _build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
     if not {"recommendation", "portfolio_action", "trading_gate", "risk_flag", "prediction_reason", "confidence_label"}.issubset(set(out.columns)):
         out = build_prediction_policy_frame(out)
     return formatter_build_result_simple(out)
+
+
+def _drop_empty_detail_columns(detail_df: pd.DataFrame) -> pd.DataFrame:
+    """Drop optional detail columns that are entirely empty in current run outputs."""
+    optional_cols = [
+        "foreign_net_buy",
+        "institution_net_buy",
+        "disclosure_score",
+        "news_sentiment",
+        "news_relevance_score",
+        "news_impact_score",
+        "news_article_count",
+        "rsi_pullback_buy_flag",
+        "rsi_overbought_sell_flag",
+        "foreign_buy_signal",
+        "institution_buy_signal",
+        "smart_money_buy_signal",
+        "foreign_buy_ratio",
+        "institution_buy_ratio",
+        "smart_money_strength",
+        "foreign_net_buy_z20",
+        "institution_net_buy_z20",
+        "foreign_net_buy_3d",
+        "foreign_net_buy_5d",
+        "institution_net_buy_3d",
+        "institution_net_buy_5d",
+        "news_positive_signal",
+        "news_negative_signal",
+        "near_52w_high_flag",
+        "breakout_52w_flag",
+        "leader_confirmation_flag",
+        "investor_event_score",
+        "target_up",
+        "target_log_return_5d",
+        "target_up_5d",
+        "target_close_5d",
+        "target_log_return_20d",
+        "target_up_20d",
+        "target_close_20d",
+    ]
+    drop_cols: list[str] = []
+    for col in optional_cols:
+        if col not in detail_df.columns:
+            continue
+        series = detail_df[col]
+        if pd.api.types.is_numeric_dtype(series):
+            if series.notna().sum() == 0:
+                drop_cols.append(col)
+            continue
+        normalized = series.astype(str).str.strip()
+        non_empty = normalized[~normalized.isin({"", "-", "nan", "None"})]
+        if non_empty.empty:
+            drop_cols.append(col)
+    if not drop_cols:
+        return detail_df
+    return detail_df.drop(columns=drop_cols, errors="ignore")
 
 
 def _backtest_summary_fields(backtest: dict) -> dict[str, float]:
@@ -585,6 +653,7 @@ def run_pipeline(
     if cfg.external.enabled and use_external:
         feat, external_coverage = add_external_market_features_with_coverage(feat, cfg.external.market_symbols)
     feat = annotate_market_regime(feat)
+    feat = add_investment_signal_features(feat, cfg.investment_criteria)
     feat = feat.dropna(subset=["target_log_return"]).copy()
     feature_columns = _feature_columns(feat)
 
@@ -664,13 +733,19 @@ def run_pipeline(
     latest = feat.sort_values("Date").groupby("Symbol", as_index=False).tail(1)
     latest_pred = model.predict(latest)
     latest_pred.up_probability = _calibrate_up_probability(scored_oof, latest_pred.up_probability).values
-    pred_df = build_scored_prediction_frame(latest, latest_pred, cfg.signal, prediction_context)
+    pred_df = build_scored_prediction_frame(
+        latest,
+        latest_pred,
+        cfg.signal,
+        prediction_context,
+        investment_criteria=cfg.investment_criteria,
+    )
     pred_df["coverage_gate_status"] = coverage_gate_status
     symbol_name_map = get_symbol_name_map(pred_df["Symbol"].dropna().astype(str).tolist())
     sym_acc = build_symbol_history_accuracy(scored_oof)
     pred_df = pred_df.merge(sym_acc, on="Symbol", how="left")
     pred_df["history_direction_accuracy"] = pred_df["history_direction_accuracy"].fillna(0.5)
-    pred_df = finalize_latest_prediction_frame(pred_df, symbol_name_map)
+    pred_df = finalize_latest_prediction_frame(pred_df, symbol_name_map, investment_criteria=cfg.investment_criteria)
     if enable_issue_summary:
         pred_df = append_issue_summary_columns(
             pred_df,
@@ -724,6 +799,7 @@ def run_pipeline(
     detail_df["history_direction_accuracy_display"] = detail_df["history_direction_accuracy"].map(
         lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
     )
+    detail_df = _drop_empty_detail_columns(detail_df)
     simple_df = _build_result_simple(detail_df)
 
     detail_path = resolve_output_path("result_detail.csv")

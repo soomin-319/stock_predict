@@ -52,6 +52,21 @@ class SignalConfig:
 
 
 @dataclass
+class InvestmentCriteriaConfig:
+    top_turnover_rank: int = 15
+    high_conviction_net_buy_krw: float = 100_000_000_000.0  # 1,000억
+    rsi_buy_watch_low: float = 30.0
+    rsi_buy_watch_high: float = 35.0
+    rsi_overbought: float = 70.0
+    nasdaq_tailwind_threshold: float = 0.01
+    nasdaq_headwind_threshold: float = -0.01
+    near_52w_distance_threshold: float = 0.03
+    leader_top_n: int = 3
+    leader_min_co_movers: int = 2
+    leader_min_return: float = 0.0
+
+
+@dataclass
 class BacktestConfig:
     top_k: int = 20
     portfolio_value: float = 1_000_000_000.0
@@ -77,6 +92,7 @@ class AppConfig:
     external: ExternalFeatureConfig = field(default_factory=ExternalFeatureConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     signal: SignalConfig = field(default_factory=SignalConfig)
+    investment_criteria: InvestmentCriteriaConfig = field(default_factory=InvestmentCriteriaConfig)
     backtest: BacktestConfig = field(default_factory=BacktestConfig)
 
 
