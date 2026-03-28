@@ -662,8 +662,21 @@ def test_completed_without_result_for_long_time_prompts_refresh(tmp_path: Path):
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "결과", "user": {"id": "u-no-result"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert "결과 파일에서 종목을 찾지 못했습니다" in text
-    assert "최신화" in text
+    assert "결과 파일에 반영되지 않았습니다" in text
+    assert "뉴스/공시 요약을 다시 실행" in text
+
+
+def test_refresh_restarts_prediction_even_when_previous_job_is_completed_without_cached_row(tmp_path: Path):
+    runner = RecordingRunner()
+    bot = make_bot(tmp_path, runner=runner)
+    bot._job_registry["005930.KS"] = {"status": "completed", "completed_at": "2026-03-26T00:00:00+00:00"}
+    bot._session_registry["u-refresh"] = {"last_symbol": "005930.KS", "last_intent": "tracking"}
+
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "최신화", "user": {"id": "u-refresh"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "최신 예측을 다시 시작합니다" in text
+    assert len(runner.calls) == 1
 
 
 def test_start_job_skips_disable_external_flag_when_external_features_enabled(tmp_path: Path):
