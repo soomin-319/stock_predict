@@ -232,6 +232,13 @@ class KakaoColabPredictionBot:
     ) -> dict[str, Any]:
         display_code = self._display_code(symbol)
 
+        if force_refresh:
+            with self._state_lock:
+                job_state_for_refresh = self._job_registry.get(symbol)
+                has_active_runtime = symbol in self._active_processes
+            if job_state_for_refresh and job_state_for_refresh.get("status") == "running" and not has_active_runtime:
+                self._mark_job_failed(symbol, exit_code=-2, note="stale_running_state")
+
         if self._is_bootstrap_running():
             self._queue_summary_after_bootstrap(symbol)
             self._update_session(user_id, symbol=symbol, intent="running")
@@ -264,6 +271,10 @@ class KakaoColabPredictionBot:
                     ("도움말", "도움말"),
                 ],
             )
+
+        if force_refresh:
+            self._update_session(user_id, symbol=symbol, intent="tracking")
+            return self._start_job_response(symbol, retry=True)
 
         cached_row = None if force_refresh else self._find_cached_prediction(symbol)
         if cached_row is not None:
@@ -320,7 +331,10 @@ class KakaoColabPredictionBot:
             elapsed = self._job_elapsed_seconds(job_state)
             if elapsed is not None and elapsed >= 15.0:
                 return self._build_response(
-                    f"{display_code} 예측 완료 후 결과 파일에서 종목을 찾지 못했습니다. '최신화'로 다시 실행해주세요.",
+                    (
+                        f"{display_code} 직전 예측 결과가 결과 파일에 반영되지 않았습니다. "
+                        "'최신화'를 입력하면 동일 종목의 예측과 뉴스/공시 요약을 다시 실행합니다."
+                    ),
                     quick_replies=[
                         ("최신화", "최신화"),
                         ("다시 시도", display_code),
@@ -346,10 +360,6 @@ class KakaoColabPredictionBot:
                     ("도움말", "도움말"),
                 ],
             )
-
-        if force_refresh and from_session:
-            self._update_session(user_id, symbol=symbol, intent="tracking")
-            return self._start_job_response(symbol, retry=True)
 
         self._update_session(user_id, symbol=symbol, intent="tracking")
         return self._start_job_response(symbol, retry=False)
