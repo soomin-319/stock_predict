@@ -1575,10 +1575,15 @@ def _is_ngrok_download_forbidden_error(exc: Exception) -> bool:
     return "http error 403" in msg and "downloading ngrok" in msg
 
 
+def _is_ngrok_install_http_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "downloading ngrok" in msg and ("http error 403" in msg or "http error 500" in msg)
+
+
 def _download_ngrok_binary_for_colab(target_path: Path) -> Path:
     download_urls = (
-        "https://bin.ngrok.com/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip",
         "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip",
+        "https://bin.ngrok.com/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip",
     )
     target_path.parent.mkdir(parents=True, exist_ok=True)
     for url in download_urls:
@@ -1605,15 +1610,17 @@ def start_pyngrok_tunnel(tunnel_config: PyngrokTunnelConfig | None = None) -> st
 
     config = tunnel_config or PyngrokTunnelConfig()
     pyngrok_config = conf.PyngrokConfig(ngrok_path=config.ngrok_path) if config.ngrok_path else conf.get_default()
+    fallback_applied = False
 
     if config.auth_token:
         try:
             ngrok.set_auth_token(config.auth_token, pyngrok_config=pyngrok_config)
         except Exception as exc:
-            if not (_is_colab_runtime() and _is_ngrok_download_forbidden_error(exc)):
+            if not (_is_colab_runtime() and _is_ngrok_install_http_error(exc)):
                 raise
             fallback_path = _download_ngrok_binary_for_colab(Path("/tmp/ngrok"))
             pyngrok_config = conf.PyngrokConfig(ngrok_path=str(fallback_path))
+            fallback_applied = True
             ngrok.set_auth_token(config.auth_token, pyngrok_config=pyngrok_config)
 
     connect_kwargs: dict[str, Any] = {
@@ -1627,6 +1634,11 @@ def start_pyngrok_tunnel(tunnel_config: PyngrokTunnelConfig | None = None) -> st
     try:
         listener = ngrok.connect(pyngrok_config=pyngrok_config, **connect_kwargs)
     except Exception as exc:
+        if _is_colab_runtime() and _is_ngrok_install_http_error(exc) and not fallback_applied:
+            fallback_path = _download_ngrok_binary_for_colab(Path("/tmp/ngrok"))
+            pyngrok_config = conf.PyngrokConfig(ngrok_path=str(fallback_path))
+            listener = ngrok.connect(pyngrok_config=pyngrok_config, **connect_kwargs)
+            return str(listener.public_url).rstrip("/")
         msg = str(exc)
         already_online = "ERR_NGROK_334" in msg or "already online" in msg.lower()
         if not already_online:
