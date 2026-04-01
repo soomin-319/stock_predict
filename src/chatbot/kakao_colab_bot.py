@@ -5,9 +5,13 @@ import concurrent.futures
 import json
 import re
 import hashlib
+import os
 import subprocess
 import sys
+import tempfile
 import threading
+import urllib.request
+import zipfile
 from difflib import SequenceMatcher
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -130,6 +134,7 @@ class PyngrokTunnelConfig:
     auth_token: str | None = None
     domain: str | None = None
     bind_tls: bool = True
+    ngrok_path: str | None = None
 
 
 class KakaoColabPredictionBot:
@@ -1561,14 +1566,62 @@ def _write_prewarm_meta(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def _is_colab_runtime() -> bool:
+    return "google.colab" in sys.modules or Path("/content").exists()
+
+
+def _is_ngrok_download_forbidden_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "http error 403" in msg and "downloading ngrok" in msg
+
+
+def _is_ngrok_install_http_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "downloading ngrok" in msg and ("http error 403" in msg or "http error 500" in msg)
+
+
+def _download_ngrok_binary_for_colab(target_path: Path) -> Path:
+    download_urls = (
+        "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip",
+        "https://bin.ngrok.com/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip",
+    )
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    for url in download_urls:
+        with tempfile.TemporaryDirectory(prefix="ngrok_dl_") as tmp_dir:
+            zip_path = Path(tmp_dir) / "ngrok.zip"
+            try:
+                with urllib.request.urlopen(url, timeout=30) as response:
+                    zip_path.write_bytes(response.read())
+                with zipfile.ZipFile(zip_path) as zf:
+                    zf.extract("ngrok", path=tmp_dir)
+                extracted = Path(tmp_dir) / "ngrok"
+                target_path.write_bytes(extracted.read_bytes())
+                os.chmod(target_path, 0o755)
+                return target_path
+            except Exception:
+                continue
+    raise RuntimeError("ngrok 바이너리 다운로드에 실패했습니다. 네트워크/방화벽 설정을 확인하세요.")
+
+
 def start_pyngrok_tunnel(tunnel_config: PyngrokTunnelConfig | None = None) -> str:
     # pyngrok is imported here so the rest of the chatbot module can still be
     # imported without opening a tunnel until the Colab launcher is actually used.
-    from pyngrok import ngrok
+    from pyngrok import conf, ngrok
 
     config = tunnel_config or PyngrokTunnelConfig()
+    pyngrok_config = conf.PyngrokConfig(ngrok_path=config.ngrok_path) if config.ngrok_path else conf.get_default()
+    fallback_applied = False
+
     if config.auth_token:
-        ngrok.set_auth_token(config.auth_token)
+        try:
+            ngrok.set_auth_token(config.auth_token, pyngrok_config=pyngrok_config)
+        except Exception as exc:
+            if not (_is_colab_runtime() and _is_ngrok_install_http_error(exc)):
+                raise
+            fallback_path = _download_ngrok_binary_for_colab(Path("/tmp/ngrok"))
+            pyngrok_config = conf.PyngrokConfig(ngrok_path=str(fallback_path))
+            fallback_applied = True
+            ngrok.set_auth_token(config.auth_token, pyngrok_config=pyngrok_config)
 
     connect_kwargs: dict[str, Any] = {
         "addr": config.port,
@@ -1579,8 +1632,13 @@ def start_pyngrok_tunnel(tunnel_config: PyngrokTunnelConfig | None = None) -> st
         connect_kwargs["domain"] = config.domain
 
     try:
-        listener = ngrok.connect(**connect_kwargs)
+        listener = ngrok.connect(pyngrok_config=pyngrok_config, **connect_kwargs)
     except Exception as exc:
+        if _is_colab_runtime() and _is_ngrok_install_http_error(exc) and not fallback_applied:
+            fallback_path = _download_ngrok_binary_for_colab(Path("/tmp/ngrok"))
+            pyngrok_config = conf.PyngrokConfig(ngrok_path=str(fallback_path))
+            listener = ngrok.connect(pyngrok_config=pyngrok_config, **connect_kwargs)
+            return str(listener.public_url).rstrip("/")
         msg = str(exc)
         already_online = "ERR_NGROK_334" in msg or "already online" in msg.lower()
         if not already_online:
@@ -1590,10 +1648,10 @@ def start_pyngrok_tunnel(tunnel_config: PyngrokTunnelConfig | None = None) -> st
         endpoint_url = endpoint_match.group(1) if endpoint_match else None
         if endpoint_url:
             try:
-                ngrok.disconnect(endpoint_url)
+                ngrok.disconnect(endpoint_url, pyngrok_config=pyngrok_config)
             except Exception:
                 pass
-        listener = ngrok.connect(**connect_kwargs)
+        listener = ngrok.connect(pyngrok_config=pyngrok_config, **connect_kwargs)
     return str(listener.public_url).rstrip("/")
 
 
