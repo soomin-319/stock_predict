@@ -502,8 +502,29 @@ except KeyboardInterrupt:
 카카오 오픈빌더 스킬 서버의 URL은 `POST /kakao/webhook` 엔드포인트에 연결하면 됩니다. 헬스체크는 `GET /health`입니다.
 
 ### 직접 실행
+로컬에서 Flask 서버만 띄우는 경우(`http://127.0.0.1:8000`)에는 pyngrok 토큰이 필요 없습니다.  
+다만 **카카오 오픈빌더에서 외부 HTTPS URL로 호출하려면** `--use-pyngrok` + `--ngrok-auth-token`을 함께 지정해야 합니다.
+
+#### 1) 로컬 개발/디버깅용(터널 없음)
 ```bash
 python -m src.chatbot.kakao_colab_bot \
+  --dart-api-key "YOUR_DART_API_KEY" \
+  --openai-api-key "YOUR_OPENAI_API_KEY" \
+  --openai-model "gpt-5" \
+  --naver-client-id "YOUR_NAVER_CLIENT_ID" \
+  --naver-client-secret "YOUR_NAVER_CLIENT_SECRET" \
+  --input data/real_ohlcv.csv \
+  --report-json pipeline_report_with_context.json \
+  --figure-dir figures_with_context
+```
+
+#### 2) 카카오 연동용(공개 HTTPS 터널 사용)
+```bash
+python -m src.chatbot.kakao_colab_bot \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --use-pyngrok \
+  --ngrok-auth-token "YOUR_NGROK_AUTHTOKEN" \
   --dart-api-key "YOUR_DART_API_KEY" \
   --openai-api-key "YOUR_OPENAI_API_KEY" \
   --openai-model "gpt-5" \
