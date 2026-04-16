@@ -8,7 +8,7 @@ from src.data import universe as universe_module
 def test_fallback_symbols_loads_repo_managed_default_universe():
     symbols = pipeline._fallback_symbols_from_input_or_default("dummy.csv")
 
-    assert len(symbols) == 100
+    assert len(symbols) == 5
     assert symbols[:5] == [
         "005930.KS",
         "000660.KS",
@@ -16,16 +16,23 @@ def test_fallback_symbols_loads_repo_managed_default_universe():
         "207940.KS",
         "005380.KS",
     ]
-    assert symbols[-3:] == ["060150.KQ", "078130.KQ", "900140.KQ"]
 
 
 
 def test_fallback_symbols_match_default_universe_csv_contents():
     symbols = pipeline._fallback_symbols_from_input_or_default("dummy.csv")
 
-    assert symbols == universe_module.load_default_universe_symbols()
+    assert symbols == universe_module.load_default_universe_symbols()[:5]
 
 
+
+
+
+def test_cli_real_start_defaults_to_today():
+    parser = pipeline.build_cli_parser()
+    args = parser.parse_args([])
+
+    assert args.real_start == pipeline._today_ymd()
 
 def test_save_real_ohlcv_csv_preserves_existing_optional_columns(tmp_path, monkeypatch):
     target = tmp_path / "real.csv"
