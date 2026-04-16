@@ -1531,6 +1531,7 @@ def _runtime_cache_signature(cfg: PipelineRuntimeConfig, project_root: Path) -> 
         return {"mtime_ns": stat.st_mtime_ns, "size": stat.st_size}
 
     return {
+        "cache_date_kst": datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d"),
         "input_csv": str(cfg.input_csv),
         "input_stat": _stat_payload(input_path),
         "default_universe_stat": _stat_payload(universe_path),
