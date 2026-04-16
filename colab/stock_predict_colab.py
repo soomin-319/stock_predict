@@ -105,7 +105,6 @@ def run_colab_pipeline(
     bootstrap_default_symbols: bool = True,
     real_start: str = _today_ymd(),
     config_json: str | None = None,
-    enable_issue_summary: bool = True,
 ) -> dict[str, str]:
     pipeline_input = input_csv
     if bootstrap_default_symbols and _should_bootstrap_default_symbols(input_csv):
@@ -132,7 +131,6 @@ def run_colab_pipeline(
         enable_investor_disclosure=enable_investor_disclosure,
         openai_api_key=openai_api_key,
         openai_model=openai_model,
-        enable_issue_summary=enable_issue_summary,
     )
 
     result_dir = PROJECT_ROOT / "result"

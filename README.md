@@ -238,7 +238,7 @@ python src/pipeline.py \
 
 ### pyngrok으로 코랩 공개 HTTPS URL 열기
 코랩에서는 `launch_colab_kakao_bot(...)`를 사용하면 Flask 서버 스레드 실행 + pyngrok 공개 HTTPS URL 생성까지 한 번에 처리할 수 있습니다.  
-최신 동작 기준으로는 **사용자 첫 요청 시점이 아니라 ngrok 서버 실행 시점**에 전체 유니버스 예측(요약 비활성)을 백그라운드 bootstrap으로 시작합니다. bootstrap이 진행 중일 때 들어온 종목 요청은 진행 메시지로 응답되고, 해당 종목의 뉴스/공시 요약은 bootstrap 완료 후 이어서 처리됩니다.
+최신 동작 기준으로는 **사용자 첫 요청 시점이 아니라 ngrok 서버 실행 시점**에 전체 유니버스 예측(뉴스/공시 요약 포함)을 백그라운드 bootstrap으로 시작합니다. bootstrap이 진행 중일 때 들어온 종목 요청은 진행 메시지로 응답됩니다.
 
 ```python
 import os
@@ -481,7 +481,7 @@ public_url = start_pyngrok_tunnel(
     )
 )
 
-# ngrok 공개 URL이 준비되면 전체 유니버스 bootstrap 예측 시작(요약 비활성)
+# ngrok 공개 URL이 준비되면 전체 유니버스 bootstrap 예측 시작(뉴스/공시 요약 포함)
 bot._start_bootstrap_job(force=False)
 
 webhook_url = f"{public_url}/kakao/webhook"
