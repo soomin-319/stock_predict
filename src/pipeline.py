@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -60,10 +61,17 @@ from src.validation.walk_forward import walk_forward_validate_with_oof
 from src.validation.metrics import probability_calibration_metrics
 
 
-def _fallback_symbols_from_input_or_default(input_csv: str) -> list[str]:
-    """Return the repo-managed default fetch universe used when no explicit fetch universe is provided."""
+def _fallback_symbols_from_input_or_default(input_csv: str, limit: int = 5) -> list[str]:
+    """Return the repo-managed default fetch universe subset used when no explicit fetch universe is provided."""
     _ = input_csv
-    return load_default_universe_symbols()
+    symbols = load_default_universe_symbols()
+    if limit <= 0:
+        return symbols
+    return symbols[:limit]
+
+
+def _today_ymd() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
 
 
 def _project_result_dir() -> Path:
@@ -1017,7 +1025,7 @@ def build_cli_parser() -> argparse.ArgumentParser:
         default=None,
         help="Symbols used when --fetch-real is enabled (no auto KRX universe)",
     )
-    parser.add_argument("--real-start", default="2018-01-01", help="Start date for real data fetch")
+    parser.add_argument("--real-start", default=_today_ymd(), help="Start date for real data fetch")
     parser.add_argument(
         "--add-symbols",
         nargs="*",

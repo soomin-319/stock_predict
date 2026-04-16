@@ -30,8 +30,8 @@ python src/pipeline.py --fetch-real --input data/real_ohlcv.csv
 
 > 참고: 자동 KRX 유니버스 생성은 비활성화되었습니다.  
 > `--fetch-real` 사용 시 `--real-symbols` 또는 `--universe-csv`를 우선 사용합니다.  
-> 둘 다 없으면 저장소에 포함된 기본 유니버스 CSV(`data/default_universe_kospi50_kosdaq50.csv`)의 100개 심볼(KOSPI 50 + KOSDAQ 50 스타일)로 자동 수집을 진행합니다.  
-> 코랩 `run_colab_pipeline()`의 첫 실행도 같은 원칙을 따르며, `data/sample_ohlcv.csv` 같은 데모 입력이 감지되면 먼저 같은 기본 100종목을 `data/real_ohlcv.csv`로 수집한 뒤 예측을 진행합니다.
+> 둘 다 없으면 저장소에 포함된 기본 유니버스 CSV(`data/default_universe_kospi50_kosdaq50.csv`)에서 **위에서부터 5개 심볼**만 골라 자동 수집을 진행합니다.  
+> 이때 시작일(`--real-start`) 기본값은 **실행 당일(오늘 날짜)** 이며, 코랩 `run_colab_pipeline()` 부트스트랩도 같은 규칙으로 `data/real_ohlcv.csv`를 만든 뒤 예측을 진행합니다.
 
 ### 2-1) 기존 입력 CSV에 종목 추가 수집(`--add-symbols`)
 이미 가지고 있는 `data/real_ohlcv.csv`에 특정 종목만 더 붙이고 싶으면 `--add-symbols`를 사용합니다.  
