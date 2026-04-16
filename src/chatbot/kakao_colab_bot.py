@@ -84,7 +84,6 @@ class PipelineRuntimeConfig:
         symbol: str,
         add_symbols: list[str] | None = None,
         issue_summary_symbols: list[str] | None = None,
-        disable_issue_summary: bool = False,
     ) -> list[str]:
         normalized_add_symbols = [str(s) for s in (add_symbols or [symbol]) if str(s).strip()]
         normalized_issue_symbols = [str(s) for s in (issue_summary_symbols or [symbol]) if str(s).strip()]
@@ -122,8 +121,6 @@ class PipelineRuntimeConfig:
             cmd.extend(["--report-json", self.report_json])
         if self.figure_dir:
             cmd.extend(["--figure-dir", self.figure_dir])
-        if disable_issue_summary:
-            cmd.append("--disable-issue-summary")
         cmd.extend(self.extra_args)
         return [str(part) for part in cmd]
 
@@ -284,6 +281,9 @@ class KakaoColabPredictionBot:
         cached_row = None if force_refresh else self._find_cached_prediction(symbol)
         if cached_row is not None:
             self._update_session(user_id, symbol=symbol, intent="tracking")
+            if self._is_prediction_row_stale(cached_row):
+                self._console_log(f"{display_code} 캐시 예측 기준일이 오래되어 최신 예측을 재실행합니다.")
+                return self._start_job_response(symbol, retry=True)
             if not self._has_issue_summary(cached_row):
                 if self.runtime_config.async_issue_summary_on_demand:
                     self._start_issue_summary_background(symbol, cached_row)
@@ -527,7 +527,36 @@ class KakaoColabPredictionBot:
         if matched.empty:
             return None
         row = matched.iloc[0].copy()
+        detail_date = self._latest_prediction_date_from_detail(symbol)
+        if detail_date:
+            row["Date"] = detail_date
         return self._apply_issue_summary_cache(row, symbol)
+
+    def _latest_prediction_date_from_detail(self, symbol: str) -> str | None:
+        if not self.result_detail_path.exists():
+            return None
+        try:
+            detail_df = pd.read_csv(self.result_detail_path, dtype={"Symbol": str}, encoding="utf-8-sig")
+        except Exception:
+            return None
+        if detail_df.empty or "Symbol" not in detail_df.columns or "Date" not in detail_df.columns:
+            return None
+
+        normalized = normalize_user_symbols([symbol])
+        symbol_aliases = {str(symbol)}
+        if normalized:
+            symbol_aliases.add(str(normalized[0]))
+        display_code = self._display_code(symbol)
+        symbol_aliases.update({f"{display_code}.KS", f"{display_code}.KQ"})
+
+        matched = detail_df[detail_df["Symbol"].astype(str).isin(symbol_aliases)].copy()
+        if matched.empty:
+            return None
+        matched["Date"] = pd.to_datetime(matched["Date"], errors="coerce")
+        matched = matched.dropna(subset=["Date"])
+        if matched.empty:
+            return None
+        return matched["Date"].max().strftime("%Y-%m-%d")
 
     def _load_cached_result_simple(self) -> pd.DataFrame:
         if not self.result_simple_path.exists():
@@ -989,10 +1018,10 @@ class KakaoColabPredictionBot:
         command = [
             "internal:prewarm_prediction_cache",
             f"--symbols={len(bootstrap_symbols) if bootstrap_symbols else 'default'}",
-            "--disable-issue-summary",
+            "--issue-summary-enabled",
         ]
         log_path = self.log_dir / f"bootstrap_{submitted_at.replace(':', '').replace('+00:00', 'Z')}.log"
-        self._console_log("초기 전체 종목 예측 작업 시작: prewarm_prediction_cache(enable_issue_summary=False)")
+        self._console_log("초기 전체 종목 예측 작업 시작: prewarm_prediction_cache(issue_summary=enabled)")
 
         with self._state_lock:
             self._job_registry[self.BOOTSTRAP_JOB_KEY] = asdict(
@@ -1073,6 +1102,18 @@ class KakaoColabPredictionBot:
         today_kst = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Seoul")).date()
         # 검색 기준일 정책: 공시/뉴스는 KST "오늘" 데이터만 조회한다.
         return today_kst.strftime("%Y-%m-%d")
+
+    def _is_prediction_row_stale(self, row: pd.Series) -> bool:
+        today_kst = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Seoul")).date()
+        for key in ("예측 기준일", "Date", "예측일"):
+            if key not in row.index:
+                continue
+            value = pd.to_datetime(row.get(key), errors="coerce")
+            if pd.isna(value):
+                continue
+            age_days = (today_kst - value.date()).days
+            return age_days > 30
+        return False
 
     def _load_result_news(self) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
@@ -1534,6 +1575,7 @@ def _runtime_cache_signature(cfg: PipelineRuntimeConfig, project_root: Path) -> 
         return {"mtime_ns": stat.st_mtime_ns, "size": stat.st_size}
 
     return {
+        "cache_date_kst": datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d"),
         "input_csv": str(cfg.input_csv),
         "input_stat": _stat_payload(input_path),
         "default_universe_stat": _stat_payload(universe_path),
@@ -1687,7 +1729,6 @@ def prewarm_prediction_cache(runtime_config: PipelineRuntimeConfig | None = None
         dart_corp_map_csv=cfg.dart_corp_map_csv,
         bootstrap_default_symbols=cfg.bootstrap_default_symbols,
         real_start=cfg.real_start,
-        enable_issue_summary=False,
     )
     _write_prewarm_meta(meta_path, {"signature": signature, "signature_hash": signature_hash})
     print(f"[KAKAO BOT] 기본 심볼 예측 캐시 준비 완료: {outputs.get('result_simple_csv', '')}")
