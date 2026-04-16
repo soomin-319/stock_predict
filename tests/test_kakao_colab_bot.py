@@ -204,7 +204,7 @@ def test_cached_prediction_generates_issue_summary_for_each_requested_symbol_wit
     assert captured[1]["symbol"] == "000660.KS"
 
 
-def test_cached_prediction_uses_latest_prediction_date_when_detail_date_is_stale(tmp_path: Path, monkeypatch):
+def test_cached_prediction_retries_when_detail_date_is_too_old(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
     pd.DataFrame(
@@ -215,32 +215,11 @@ def test_cached_prediction_uses_latest_prediction_date_when_detail_date_is_stale
         result_dir / "result_news.csv", index=False
     )
 
-    captured_ref: list[str] = []
-
-    def _fake_collect(symbol, reference_date):
-        captured_ref.append(reference_date)
-        return pd.DataFrame([{"Date": "2026-03-06", "Symbol": "000660.KS", "source_type": "news", "title": "예측일 뉴스"}])
-
-    def _fake_append(pred_df, context_raw_df=None, **kwargs):
-        out = pred_df.copy()
-        out["오늘 종목 이슈 한줄 요약"] = "요약"
-        out["공시 요약"] = "[공시 요약]\n- 없음"
-        out["뉴스 요약"] = "[뉴스 요약]\n- 당일 뉴스"
-        out["종합 판단"] = "중립"
-        out["주의사항"] = "참고용"
-        out["원문 개수"] = 1
-        out["핵심 원문 목록"] = "[]"
-        return out
-
-    monkeypatch.setattr(KakaoColabPredictionBot, "_collect_live_symbol_events", lambda self, symbol, reference_date: _fake_collect(symbol, reference_date))
-    monkeypatch.setattr("src.chatbot.kakao_colab_bot.append_issue_summary_columns", _fake_append)
-
     bot = make_bot(tmp_path)
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-stale"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert captured_ref[0] == datetime.now(timezone.utc).date().isoformat()
-    assert "[뉴스 요약]" in text
+    assert "최신 예측을 다시 시작합니다" in text
 
 
 def test_collect_live_events_uses_short_ttl_cache(tmp_path: Path, monkeypatch):

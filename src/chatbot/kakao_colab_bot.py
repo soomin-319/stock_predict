@@ -281,6 +281,9 @@ class KakaoColabPredictionBot:
         cached_row = None if force_refresh else self._find_cached_prediction(symbol)
         if cached_row is not None:
             self._update_session(user_id, symbol=symbol, intent="tracking")
+            if self._is_prediction_row_stale(cached_row):
+                self._console_log(f"{display_code} 캐시 예측 기준일이 오래되어 최신 예측을 재실행합니다.")
+                return self._start_job_response(symbol, retry=True)
             if not self._has_issue_summary(cached_row):
                 if self.runtime_config.async_issue_summary_on_demand:
                     self._start_issue_summary_background(symbol, cached_row)
@@ -524,7 +527,36 @@ class KakaoColabPredictionBot:
         if matched.empty:
             return None
         row = matched.iloc[0].copy()
+        detail_date = self._latest_prediction_date_from_detail(symbol)
+        if detail_date:
+            row["Date"] = detail_date
         return self._apply_issue_summary_cache(row, symbol)
+
+    def _latest_prediction_date_from_detail(self, symbol: str) -> str | None:
+        if not self.result_detail_path.exists():
+            return None
+        try:
+            detail_df = pd.read_csv(self.result_detail_path, dtype={"Symbol": str}, encoding="utf-8-sig")
+        except Exception:
+            return None
+        if detail_df.empty or "Symbol" not in detail_df.columns or "Date" not in detail_df.columns:
+            return None
+
+        normalized = normalize_user_symbols([symbol])
+        symbol_aliases = {str(symbol)}
+        if normalized:
+            symbol_aliases.add(str(normalized[0]))
+        display_code = self._display_code(symbol)
+        symbol_aliases.update({f"{display_code}.KS", f"{display_code}.KQ"})
+
+        matched = detail_df[detail_df["Symbol"].astype(str).isin(symbol_aliases)].copy()
+        if matched.empty:
+            return None
+        matched["Date"] = pd.to_datetime(matched["Date"], errors="coerce")
+        matched = matched.dropna(subset=["Date"])
+        if matched.empty:
+            return None
+        return matched["Date"].max().strftime("%Y-%m-%d")
 
     def _load_cached_result_simple(self) -> pd.DataFrame:
         if not self.result_simple_path.exists():
@@ -1070,6 +1102,18 @@ class KakaoColabPredictionBot:
         today_kst = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Seoul")).date()
         # 검색 기준일 정책: 공시/뉴스는 KST "오늘" 데이터만 조회한다.
         return today_kst.strftime("%Y-%m-%d")
+
+    def _is_prediction_row_stale(self, row: pd.Series) -> bool:
+        today_kst = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Seoul")).date()
+        for key in ("예측 기준일", "Date", "예측일"):
+            if key not in row.index:
+                continue
+            value = pd.to_datetime(row.get(key), errors="coerce")
+            if pd.isna(value):
+                continue
+            age_days = (today_kst - value.date()).days
+            return age_days > 30
+        return False
 
     def _load_result_news(self) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
