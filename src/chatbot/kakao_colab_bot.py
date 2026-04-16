@@ -65,7 +65,6 @@ class PipelineRuntimeConfig:
     dart_api_key: str | None = None
     dart_corp_map_csv: str | None = "data/dart_corp_map.csv"
     fetch_investor_context: bool = True
-    enable_investor_flow: bool = True
     enable_investor_disclosure: bool = True
     openai_api_key: str | None = None
     openai_model: str | None = None
@@ -99,8 +98,6 @@ class PipelineRuntimeConfig:
         ]
         if self.fetch_investor_context:
             cmd.append("--fetch-investor-context")
-            if not self.enable_investor_flow:
-                cmd.append("--disable-investor-flow")
             if not self.enable_investor_disclosure:
                 cmd.append("--disable-disclosure-context")
             if self.dart_api_key:

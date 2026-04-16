@@ -3,35 +3,14 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Iterable
-from datetime import datetime
 import contextlib
 import io
 import logging
 import warnings
-from functools import lru_cache, partial
+from functools import partial
 
 import pandas as pd
 import yfinance as yf
-
-from src.data.pykrx_support import import_pykrx_stock
-
-
-_import_pykrx_stock = import_pykrx_stock
-
-
-@lru_cache(maxsize=1)
-def _market_ticker_sets() -> tuple[set[str], set[str]]:
-    stock = _import_pykrx_stock()
-    if stock is None:
-        return set(), set()
-    try:
-        kospi = set(stock.get_market_ticker_list(market="KOSPI"))
-        kosdaq = set(stock.get_market_ticker_list(market="KOSDAQ"))
-        return kospi, kosdaq
-    except Exception:
-        return set(), set()
-
-
 
 def _to_yfinance_symbol(user_input: str) -> str:
     s = str(user_input).strip().upper()
@@ -41,11 +20,6 @@ def _to_yfinance_symbol(user_input: str) -> str:
         return s
 
     if s.isdigit() and len(s) == 6:
-        kospi, kosdaq = _market_ticker_sets()
-        if s in kospi:
-            return f"{s}.KS"
-        if s in kosdaq:
-            return f"{s}.KQ"
         return f"{s}.KS"
     return s
 
@@ -94,54 +68,10 @@ def _safe_download_ohlcv(symbol: str, start: str, end: str | None = None) -> pd.
 
 
 
-def _fetch_krx_ohlcv(symbol: str, start: str, end: str | None = None) -> pd.DataFrame:
-    if not symbol.endswith((".KS", ".KQ")):
-        return pd.DataFrame()
-    stock = _import_pykrx_stock()
-    if stock is None:
-        return pd.DataFrame()
-
-    ticker = symbol.split(".")[0]
-    start_s = pd.to_datetime(start).strftime("%Y%m%d")
-    end_s = pd.to_datetime(end).strftime("%Y%m%d") if end else datetime.now().strftime("%Y%m%d")
-
-    try:
-        df = stock.get_market_ohlcv_by_date(start_s, end_s, ticker)
-    except Exception:
-        return pd.DataFrame()
-
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    renamed = df.rename(
-        columns={
-            "시가": "Open",
-            "고가": "High",
-            "저가": "Low",
-            "종가": "Close",
-            "거래량": "Volume",
-        }
-    )
-    required = ["Open", "High", "Low", "Close", "Volume"]
-    if any(c not in renamed.columns for c in required):
-        return pd.DataFrame()
-
-    out = renamed[required].copy().reset_index()
-    first_col = out.columns[0]
-    out = out.rename(columns={first_col: "Date"})
-    out["Date"] = pd.to_datetime(out["Date"])
-    out["Symbol"] = symbol
-    return out[["Date", "Open", "High", "Low", "Close", "Volume", "Symbol"]]
-
-
-
 def _fetch_single_symbol(symbol: str, start: str, end: str | None = None) -> pd.DataFrame:
     df = _safe_download_ohlcv(symbol, start=start, end=end)
     if df is None or df.empty:
-        df = _fetch_krx_ohlcv(symbol, start=start, end=end)
-        if df.empty:
-            return pd.DataFrame()
-        return df[["Date", "Open", "High", "Low", "Close", "Volume", "Symbol"]]
+        return pd.DataFrame()
 
     df = _normalize_yf_columns(df).reset_index()
     required = ["Date", "Open", "High", "Low", "Close", "Volume"]
@@ -169,7 +99,7 @@ def fetch_real_ohlcv(symbols: Iterable[str], start: str = "2020-01-01", end: str
 
     frames = [frame for frame in frames if frame is not None and not frame.empty]
     if not frames:
-        raise RuntimeError("No data fetched from providers (yfinance/pykrx)")
+        raise RuntimeError("No data fetched from provider (yfinance)")
 
     all_df = pd.concat(frames, axis=0, ignore_index=True)
     all_df = all_df[["Date", "Symbol", "Open", "High", "Low", "Close", "Volume"]]

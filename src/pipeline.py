@@ -574,7 +574,6 @@ def run_pipeline(
     dart_api_key: str | None = None,
     dart_corp_map_csv: str | None = None,
     config_json: str | None = None,
-    enable_investor_flow: bool = True,
     enable_investor_disclosure: bool = True,
     openai_api_key: str | None = None,
     openai_model: str | None = None,
@@ -648,7 +647,6 @@ def run_pipeline(
             data,
             InvestorContextConfig(
                 enabled=True,
-                enable_flow=enable_investor_flow,
                 enable_disclosure=enable_investor_disclosure,
                 dart_api_key=dart_api_key,
                 dart_corp_map_csv=dart_corp_map_csv,
@@ -970,7 +968,6 @@ def build_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fetch-real", action="store_true", help="Fetch real OHLCV from yfinance before running")
     parser.add_argument("--disable-external", action="store_true", help="Disable external market feature download")
     parser.add_argument("--fetch-investor-context", action="store_true", help="Fetch investor flow context features (foreign/institution flows)")
-    parser.add_argument("--disable-investor-flow", action="store_true", help="Disable pykrx investor flow context")
     parser.add_argument("--disable-disclosure-context", action="store_true", help="Disable DART disclosure context")
     parser.add_argument("--openai-api-key", default=None, help="OpenAI API key for AI news scoring")
     parser.add_argument("--openai-model", default=None, help="OpenAI model for AI news scoring")
@@ -1065,7 +1062,6 @@ def main():
         dart_api_key=args.dart_api_key,
         dart_corp_map_csv=args.dart_corp_map_csv,
         config_json=args.config_json,
-        enable_investor_flow=not args.disable_investor_flow,
         enable_investor_disclosure=not args.disable_disclosure_context,
         openai_api_key=args.openai_api_key,
         openai_model=args.openai_model,

@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.config.settings import AppConfig
 from src.features.price_features import build_features
@@ -484,32 +485,12 @@ def test_append_real_ohlcv_csv_no_data_does_not_crash(tmp_path, monkeypatch):
     assert out.loc[0, "Symbol"] == "AAA"
 
 
-def test_fetch_real_ohlcv_falls_back_to_pykrx(monkeypatch):
+def test_fetch_real_ohlcv_raises_when_yfinance_returns_empty(monkeypatch):
     import src.data.fetch_real_data as fr
 
     def _empty_download(*args, **kwargs):
         return pd.DataFrame()
 
-    class _MockStock:
-        @staticmethod
-        def get_market_ohlcv_by_date(start, end, ticker):
-            idx = pd.to_datetime(["2024-01-01", "2024-01-02"])
-            return pd.DataFrame(
-                {
-                    "시가": [1, 2],
-                    "고가": [1, 2],
-                    "저가": [1, 2],
-                    "종가": [1, 2],
-                    "거래량": [100, 200],
-                },
-                index=idx,
-            )
-
     monkeypatch.setattr(fr, "_safe_download_ohlcv", _empty_download)
-    monkeypatch.setattr(fr, "_import_pykrx_stock", lambda: _MockStock)
-
-    out = fr.fetch_real_ohlcv(["005930.KS"], start="2024-01-01")
-
-    assert not out.empty
-    assert set(["Date", "Symbol", "Open", "High", "Low", "Close", "Volume"]).issubset(out.columns)
-    assert out["Symbol"].iloc[0] == "005930.KS"
+    with pytest.raises(RuntimeError):
+        fr.fetch_real_ohlcv(["005930.KS"], start="2024-01-01")

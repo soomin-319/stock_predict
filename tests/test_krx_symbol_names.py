@@ -12,7 +12,6 @@ def test_get_symbol_name_map_uses_csv_mapping(monkeypatch, tmp_path: Path):
     )
     monkeypatch.setattr(krx_universe, "KRX_SYMBOL_NAME_CSV", csv_path)
     krx_universe._load_krx_symbol_name_df.cache_clear()
-    monkeypatch.setattr(krx_universe, "import_pykrx_stock", lambda: None)
 
     assert krx_universe.get_symbol_name_map(["005930.KS", "000660.KS"]) == {
         "005930.KS": "삼성전자",
@@ -21,7 +20,7 @@ def test_get_symbol_name_map_uses_csv_mapping(monkeypatch, tmp_path: Path):
 
 
 
-def test_get_symbol_name_map_falls_back_to_pykrx_for_missing_csv_entries(monkeypatch, tmp_path: Path):
+def test_get_symbol_name_map_returns_symbol_for_missing_csv_entries(monkeypatch, tmp_path: Path):
     csv_path = tmp_path / "krx_symbol_name_map.csv"
     csv_path.write_text(
         "Ticker,Symbol,Name,Market\n005930,005930.KS,삼성전자,KOSPI\n",
@@ -30,16 +29,9 @@ def test_get_symbol_name_map_falls_back_to_pykrx_for_missing_csv_entries(monkeyp
     monkeypatch.setattr(krx_universe, "KRX_SYMBOL_NAME_CSV", csv_path)
     krx_universe._load_krx_symbol_name_df.cache_clear()
 
-    class _Stock:
-        @staticmethod
-        def get_market_ticker_name(ticker):
-            return {"000660": "SK하이닉스"}.get(ticker)
-
-    monkeypatch.setattr(krx_universe, "import_pykrx_stock", lambda: _Stock())
-
     assert krx_universe.get_symbol_name_map(["005930.KS", "000660.KS"]) == {
         "005930.KS": "삼성전자",
-        "000660.KS": "SK하이닉스",
+        "000660.KS": "000660.KS",
     }
 
 
@@ -52,7 +44,6 @@ def test_find_symbol_candidates_by_name_returns_exact_then_similar_matches_from_
     )
     monkeypatch.setattr(krx_universe, "KRX_SYMBOL_NAME_CSV", csv_path)
     krx_universe._load_krx_symbol_name_df.cache_clear()
-    monkeypatch.setattr(krx_universe, "import_pykrx_stock", lambda: None)
 
     candidates = krx_universe.find_symbol_candidates_by_name("삼성전자")
 

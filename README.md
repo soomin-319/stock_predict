@@ -99,7 +99,6 @@ python src/pipeline.py \
 - `--add-symbols`: 기존 입력 CSV에 사용자 심볼 추가 수집
 - `--disable-external`: 외부 시장 지표 feature 비활성화
 - `--fetch-investor-context`: 투자자 수급 컨텍스트(외국인/기관 순매수) 연동 활성화
-- `--disable-investor-flow`: 투자자 수급(pykrx) 비활성화
 - `--disable-disclosure-context`: 공시 컨텍스트 비활성화
 - `--disable-news-context`: 뉴스 컨텍스트 비활성화
 - `--news-scoring-mode`: `auto` / `rule` / `ai`
