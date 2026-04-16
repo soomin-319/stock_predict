@@ -5,7 +5,6 @@ pytest
 yfinance
 matplotlib
 lightgbm
-pykrx
 openai
 flask
 pyngrok

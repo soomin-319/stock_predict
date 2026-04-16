@@ -6,8 +6,6 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.data.pykrx_support import import_pykrx_stock
-
 
 KRX_SYMBOL_NAME_CSV = Path(__file__).resolve().parents[2] / "data" / "krx_symbol_name_map.csv"
 
@@ -62,21 +60,8 @@ def get_symbol_name_map(symbols: list[str]) -> dict[str, str]:
         else:
             unresolved.append(s)
 
-    if not unresolved:
-        return out
-
-    stock = import_pykrx_stock()
-    if stock is None:
+    if unresolved:
         out.update({str(symbol): str(symbol) for symbol in unresolved})
-        return out
-
-    for symbol in unresolved:
-        s = str(symbol)
-        ticker = s.split(".")[0].zfill(6)
-        try:
-            out[s] = stock.get_market_ticker_name(ticker) or s
-        except Exception:
-            out[s] = s
     return out
 
 
@@ -116,42 +101,5 @@ def find_symbol_candidates_by_name(query: str, limit: int | None = None) -> list
     for record in sorted(records, key=lambda item: (-float(item["score"]), str(item["name"]), str(item["ticker"]))):
         deduped.setdefault(str(record["ticker"]), record)
 
-    if deduped:
-        candidates = list(deduped.values())
-        return candidates if limit is None else candidates[:limit]
-
-    stock = import_pykrx_stock()
-    if stock is None:
-        return []
-
-    fallback_records: list[dict[str, str | float]] = []
-    for market, suffix in (("KOSPI", ".KS"), ("KOSDAQ", ".KQ")):
-        try:
-            tickers = stock.get_market_ticker_list(market=market)
-        except Exception:
-            continue
-        for ticker in tickers:
-            try:
-                name = stock.get_market_ticker_name(ticker)
-            except Exception:
-                continue
-            if not name:
-                continue
-            score = _score_name_match(normalized_query, _normalize_name(name))
-            if score < 0.45:
-                continue
-            fallback_records.append(
-                {
-                    "symbol": f"{ticker}{suffix}",
-                    "ticker": str(ticker).zfill(6),
-                    "name": str(name),
-                    "market": market,
-                    "score": float(score),
-                }
-            )
-
-    deduped_fallback: dict[str, dict[str, str | float]] = {}
-    for record in sorted(fallback_records, key=lambda item: (-float(item["score"]), str(item["name"]), str(item["ticker"]))):
-        deduped_fallback.setdefault(str(record["ticker"]), record)
-    fallback_candidates = list(deduped_fallback.values())
-    return fallback_candidates if limit is None else fallback_candidates[:limit]
+    candidates = list(deduped.values())
+    return candidates if limit is None else candidates[:limit]

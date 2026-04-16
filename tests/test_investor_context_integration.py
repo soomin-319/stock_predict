@@ -30,7 +30,7 @@ def test_investor_context_disabled_returns_defaults():
 def test_investor_context_enabled_graceful_without_sources(monkeypatch):
     import src.data.investor_context as ic
 
-    monkeypatch.setattr(ic, "_fetch_flow_pykrx", lambda *a, **k: (pd.DataFrame(), {"requested": 1, "successful": 0, "failed": 1}))
+    monkeypatch.setattr(ic, "_fetch_flow", lambda *a, **k: (pd.DataFrame(), {"requested": 1, "successful": 0, "failed": 1}))
     monkeypatch.setattr(ic, "_fetch_disclosure_scores", lambda *a, **k: (pd.DataFrame(), {"requested": 1, "successful": 0, "failed": 1}))
 
     out, cov = add_investor_context_with_coverage(_sample_df(), InvestorContextConfig(enabled=True))
@@ -43,7 +43,7 @@ def test_investor_context_enabled_graceful_without_sources(monkeypatch):
 def test_investor_context_news_coverage_is_fixed_zero(monkeypatch):
     import src.data.investor_context as ic
 
-    monkeypatch.setattr(ic, "_fetch_flow_pykrx", lambda *a, **k: (pd.DataFrame(), {"requested": 1, "successful": 0, "failed": 1}))
+    monkeypatch.setattr(ic, "_fetch_flow", lambda *a, **k: (pd.DataFrame(), {"requested": 1, "successful": 0, "failed": 1}))
     monkeypatch.setattr(ic, "_fetch_disclosure_scores", lambda *a, **k: (pd.DataFrame(), {"requested": 1, "successful": 0, "failed": 1}))
 
     out, cov = add_investor_context_with_coverage(_sample_df(), InvestorContextConfig(enabled=True))
@@ -52,13 +52,10 @@ def test_investor_context_news_coverage_is_fixed_zero(monkeypatch):
     assert "news_sentiment" in out.columns
 
 
-def test_fetch_flow_pykrx_uses_shared_import_helper(monkeypatch):
+def test_fetch_flow_returns_empty_without_krx_source(monkeypatch):
     import src.data.investor_context as ic
 
-    monkeypatch.setattr(ic, "import_pykrx_stock", lambda: None)
-
-    out, cov = ic._fetch_flow_pykrx(["005930.KS"], "2024-01-01", "2024-01-31")
+    out, cov = ic._fetch_flow(["005930.KS"], "2024-01-01", "2024-01-31")
 
     assert out.empty
     assert cov == {"requested": 1, "successful": 0, "failed": 1}
-

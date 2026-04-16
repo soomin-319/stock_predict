@@ -10,8 +10,6 @@ from urllib.request import Request, urlopen
 import pandas as pd
 import yfinance as yf
 
-from src.data.pykrx_support import import_pykrx_stock
-
 
 
 
@@ -19,7 +17,6 @@ from src.data.pykrx_support import import_pykrx_stock
 class InvestorContextConfig:
     enabled: bool = False
     enable_disclosure: bool = True
-    enable_flow: bool = True
     dart_api_key: str | None = None
     dart_corp_map_csv: str | None = None
 
@@ -51,44 +48,11 @@ def _empty_context(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     }
 
 
-def _fetch_flow_pykrx(symbols: list[str], start: str, end: str) -> tuple[pd.DataFrame, dict]:
+def _fetch_flow(symbols: list[str], start: str, end: str) -> tuple[pd.DataFrame, dict]:
     coverage = {"requested": len(symbols), "successful": 0, "failed": 0}
-    stock = import_pykrx_stock()
-    if stock is None:
-        coverage["failed"] = len(symbols)
-        return pd.DataFrame(columns=["Date", "Symbol", "foreign_net_buy", "institution_net_buy"]), coverage
-
-    rows = []
-    for symbol in symbols:
-        ticker = _symbol_to_ticker(symbol)
-        if not ticker:
-            coverage["failed"] += 1
-            continue
-        try:
-            frame = stock.get_market_trading_value_by_date(start.replace("-", ""), end.replace("-", ""), ticker)
-            if frame is None or frame.empty:
-                coverage["failed"] += 1
-                continue
-            frame = frame.reset_index().rename(columns={"날짜": "Date"})
-            if "기관합계" not in frame.columns or "외국인합계" not in frame.columns:
-                coverage["failed"] += 1
-                continue
-            part = pd.DataFrame(
-                {
-                    "Date": pd.to_datetime(frame["Date"]),
-                    "Symbol": symbol,
-                    "foreign_net_buy": pd.to_numeric(frame["외국인합계"], errors="coerce"),
-                    "institution_net_buy": pd.to_numeric(frame["기관합계"], errors="coerce"),
-                }
-            )
-            rows.append(part)
-            coverage["successful"] += 1
-        except Exception:
-            coverage["failed"] += 1
-
-    if not rows:
-        return pd.DataFrame(columns=["Date", "Symbol", "foreign_net_buy", "institution_net_buy"]), coverage
-    return pd.concat(rows, ignore_index=True), coverage
+    _ = (start, end)
+    coverage["failed"] = len(symbols)
+    return pd.DataFrame(columns=["Date", "Symbol", "foreign_net_buy", "institution_net_buy"]), coverage
 
 
 def _load_dart_corp_map(path: str | None) -> dict[str, str]:
@@ -282,11 +246,10 @@ def add_investor_context_with_coverage(df: pd.DataFrame, cfg: InvestorContextCon
         "news": {"requested": 0, "successful": 0, "failed": 0},
     }
 
-    if cfg.enable_flow:
-        flow_df, flow_cov = _fetch_flow_pykrx(symbols, start, end)
-        coverage["flow"] = flow_cov
-        if not flow_df.empty:
-            out = out.merge(flow_df, on=["Date", "Symbol"], how="left")
+    flow_df, flow_cov = _fetch_flow(symbols, start, end)
+    coverage["flow"] = flow_cov
+    if not flow_df.empty:
+        out = out.merge(flow_df, on=["Date", "Symbol"], how="left")
 
     if cfg.enable_disclosure:
         disc_df, disc_cov = _fetch_disclosure_scores(symbols, start, end, cfg.dart_api_key, cfg.dart_corp_map_csv)
