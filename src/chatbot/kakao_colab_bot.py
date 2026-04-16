@@ -84,7 +84,6 @@ class PipelineRuntimeConfig:
         symbol: str,
         add_symbols: list[str] | None = None,
         issue_summary_symbols: list[str] | None = None,
-        disable_issue_summary: bool = False,
     ) -> list[str]:
         normalized_add_symbols = [str(s) for s in (add_symbols or [symbol]) if str(s).strip()]
         normalized_issue_symbols = [str(s) for s in (issue_summary_symbols or [symbol]) if str(s).strip()]
@@ -122,8 +121,6 @@ class PipelineRuntimeConfig:
             cmd.extend(["--report-json", self.report_json])
         if self.figure_dir:
             cmd.extend(["--figure-dir", self.figure_dir])
-        if disable_issue_summary:
-            cmd.append("--disable-issue-summary")
         cmd.extend(self.extra_args)
         return [str(part) for part in cmd]
 
@@ -989,10 +986,10 @@ class KakaoColabPredictionBot:
         command = [
             "internal:prewarm_prediction_cache",
             f"--symbols={len(bootstrap_symbols) if bootstrap_symbols else 'default'}",
-            "--disable-issue-summary",
+            "--issue-summary-enabled",
         ]
         log_path = self.log_dir / f"bootstrap_{submitted_at.replace(':', '').replace('+00:00', 'Z')}.log"
-        self._console_log("초기 전체 종목 예측 작업 시작: prewarm_prediction_cache(enable_issue_summary=False)")
+        self._console_log("초기 전체 종목 예측 작업 시작: prewarm_prediction_cache(issue_summary=enabled)")
 
         with self._state_lock:
             self._job_registry[self.BOOTSTRAP_JOB_KEY] = asdict(
@@ -1534,6 +1531,7 @@ def _runtime_cache_signature(cfg: PipelineRuntimeConfig, project_root: Path) -> 
         return {"mtime_ns": stat.st_mtime_ns, "size": stat.st_size}
 
     return {
+        "cache_date_kst": datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d"),
         "input_csv": str(cfg.input_csv),
         "input_stat": _stat_payload(input_path),
         "default_universe_stat": _stat_payload(universe_path),
@@ -1687,7 +1685,6 @@ def prewarm_prediction_cache(runtime_config: PipelineRuntimeConfig | None = None
         dart_corp_map_csv=cfg.dart_corp_map_csv,
         bootstrap_default_symbols=cfg.bootstrap_default_symbols,
         real_start=cfg.real_start,
-        enable_issue_summary=False,
     )
     _write_prewarm_meta(meta_path, {"signature": signature, "signature_hash": signature_hash})
     print(f"[KAKAO BOT] 기본 심볼 예측 캐시 준비 완료: {outputs.get('result_simple_csv', '')}")

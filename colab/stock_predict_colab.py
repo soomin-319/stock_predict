@@ -33,7 +33,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.fetch_real_data import save_real_ohlcv_csv
-from src.pipeline import _fallback_symbols_from_input_or_default, run_pipeline
+from src.pipeline import _fallback_symbols_from_input_or_default, _today_ymd, run_pipeline
 
 
 def _resolve_project_path(path: str | Path) -> Path:
@@ -103,9 +103,8 @@ def run_colab_pipeline(
     dart_api_key: str | None = None,
     dart_corp_map_csv: str | None = None,
     bootstrap_default_symbols: bool = True,
-    real_start: str = "2018-01-01",
+    real_start: str = _today_ymd(),
     config_json: str | None = None,
-    enable_issue_summary: bool = True,
 ) -> dict[str, str]:
     pipeline_input = input_csv
     if bootstrap_default_symbols and _should_bootstrap_default_symbols(input_csv):
@@ -132,7 +131,6 @@ def run_colab_pipeline(
         enable_investor_disclosure=enable_investor_disclosure,
         openai_api_key=openai_api_key,
         openai_model=openai_model,
-        enable_issue_summary=enable_issue_summary,
     )
 
     result_dir = PROJECT_ROOT / "result"

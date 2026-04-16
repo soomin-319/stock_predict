@@ -493,7 +493,7 @@ def test_start_bootstrap_job_uses_prewarm_worker_without_large_add_symbols_cli(t
     bootstrap_state = bot._job_registry[bot.BOOTSTRAP_JOB_KEY]
     assert bootstrap_state["status"] == "completed"
     assert bootstrap_state["command"][0] == "internal:prewarm_prediction_cache"
-    assert "--disable-issue-summary" in bootstrap_state["command"]
+    assert "--issue-summary-enabled" in bootstrap_state["command"]
 
 
 def test_request_during_bootstrap_returns_global_progress_and_queues_summary(tmp_path: Path, monkeypatch):
@@ -1069,7 +1069,7 @@ def test_start_pyngrok_tunnel_returns_public_url(monkeypatch):
         public_url = "https://demo.ngrok-free.app/"
 
     class FakeNgrok:
-        def set_auth_token(self, token):
+        def set_auth_token(self, token, **kwargs):
             calls["auth_token"] = token
 
         def connect(self, **kwargs):
@@ -1078,6 +1078,17 @@ def test_start_pyngrok_tunnel_returns_public_url(monkeypatch):
 
     fake_module = ModuleType("pyngrok")
     fake_module.ngrok = FakeNgrok()
+
+    class _FakeConf:
+        @staticmethod
+        def get_default():
+            return object()
+
+        class PyngrokConfig:
+            def __init__(self, ngrok_path=None):
+                self.ngrok_path = ngrok_path
+
+    fake_module.conf = _FakeConf
     monkeypatch.setitem(sys.modules, "pyngrok", fake_module)
 
     public_url = start_pyngrok_tunnel(
@@ -1108,11 +1119,22 @@ def test_start_pyngrok_tunnel_disconnects_existing_endpoint_on_err_ngrok_334(mon
                 )
             return FakeListener()
 
-        def disconnect(self, url):
+        def disconnect(self, url, **kwargs):
             calls["disconnected"] = url
 
     fake_module = ModuleType("pyngrok")
     fake_module.ngrok = FakeNgrok()
+
+    class _FakeConf:
+        @staticmethod
+        def get_default():
+            return object()
+
+        class PyngrokConfig:
+            def __init__(self, ngrok_path=None):
+                self.ngrok_path = ngrok_path
+
+    fake_module.conf = _FakeConf
     monkeypatch.setitem(sys.modules, "pyngrok", fake_module)
 
     public_url = start_pyngrok_tunnel(PyngrokTunnelConfig(port=8000))
@@ -1151,7 +1173,6 @@ def test_prewarm_prediction_cache_runs_colab_pipeline(monkeypatch, tmp_path: Pat
     assert captured["use_investor_context"] is True
     assert captured["bootstrap_default_symbols"] is True
     assert captured["real_start"] == "2020-01-01"
-    assert captured["enable_issue_summary"] is False
     assert out["result_simple_csv"].endswith("result/result_simple.csv")
 
 
@@ -1243,6 +1264,40 @@ def test_prewarm_prediction_cache_reuses_cache_only_when_signature_matches(monke
     assert out["result_simple_csv"].endswith("result/result_simple.csv")
 
     input_path.write_text("Date,Symbol,Open,High,Low,Close,Volume\n2024-01-02,005930.KS,1,1,1,1,1\n", encoding="utf-8")
+    out = prewarm_prediction_cache(runtime_config, force=False)
+
+    assert called["count"] == 1
+    assert out["result_simple_csv"].endswith("result/result_simple.csv")
+
+
+def test_prewarm_prediction_cache_invalidates_stale_daily_signature(monkeypatch, tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True, exist_ok=True)
+    (result_dir / "result_simple.csv").write_text("종목코드,종목명\n005930,삼성전자\n", encoding="utf-8-sig")
+
+    runtime_config = PipelineRuntimeConfig(project_root=tmp_path, input_csv="data/real_ohlcv.csv")
+    input_path = tmp_path / "data" / "real_ohlcv.csv"
+    input_path.parent.mkdir(parents=True, exist_ok=True)
+    input_path.write_text("Date,Symbol,Open,High,Low,Close,Volume\n", encoding="utf-8")
+    universe_path = tmp_path / "data" / "default_universe_kospi50_kosdaq50.csv"
+    universe_path.write_text("Symbol\n005930.KS\n", encoding="utf-8")
+
+    stale_signature = _runtime_cache_signature(runtime_config, tmp_path)
+    stale_signature["cache_date_kst"] = "2026-03-06"
+    meta_path = result_dir / "prewarm_cache_meta.json"
+    meta_path.write_text(
+        json.dumps({"signature": stale_signature, "signature_hash": _cache_signature_hash(stale_signature)}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    called = {"count": 0}
+
+    def _fake_run_colab_pipeline(**kwargs):
+        called["count"] += 1
+        return {"result_simple_csv": str(result_dir / "result_simple.csv")}
+
+    monkeypatch.setattr("colab.stock_predict_colab.run_colab_pipeline", _fake_run_colab_pipeline)
+
     out = prewarm_prediction_cache(runtime_config, force=False)
 
     assert called["count"] == 1

@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -60,10 +61,17 @@ from src.validation.walk_forward import walk_forward_validate_with_oof
 from src.validation.metrics import probability_calibration_metrics
 
 
-def _fallback_symbols_from_input_or_default(input_csv: str) -> list[str]:
-    """Return the repo-managed default fetch universe used when no explicit fetch universe is provided."""
+def _fallback_symbols_from_input_or_default(input_csv: str, limit: int = 5) -> list[str]:
+    """Return the repo-managed default fetch universe subset used when no explicit fetch universe is provided."""
     _ = input_csv
-    return load_default_universe_symbols()
+    symbols = load_default_universe_symbols()
+    if limit <= 0:
+        return symbols
+    return symbols[:limit]
+
+
+def _today_ymd() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
 
 
 def _project_result_dir() -> Path:
@@ -581,7 +589,6 @@ def run_pipeline(
     portfolio_value: float | None = None,
     max_daily_participation: float | None = None,
     max_positions_per_market_type: int | None = None,
-    enable_issue_summary: bool = True,
     issue_summary_symbols: list[str] | None = None,
 ):
     effective_openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
@@ -648,7 +655,7 @@ def run_pipeline(
             ),
         )
 
-    should_collect_context_raw = bool(enable_issue_summary and (dart_api_key or (naver_client_id and naver_client_secret)))
+    should_collect_context_raw = bool(dart_api_key or (naver_client_id and naver_client_secret))
     if should_collect_context_raw:
         try:
             context_symbols = sorted(data["Symbol"].dropna().astype(str).unique().tolist())
@@ -780,16 +787,13 @@ def run_pipeline(
     pred_df = pred_df.merge(sym_acc, on="Symbol", how="left")
     pred_df["history_direction_accuracy"] = pred_df["history_direction_accuracy"].fillna(0.5)
     pred_df = finalize_latest_prediction_frame(pred_df, symbol_name_map, investment_criteria=cfg.investment_criteria)
-    if enable_issue_summary:
-        pred_df = append_issue_summary_columns(
-            pred_df,
-            context_raw_df=context_raw_df,
-            openai_api_key=effective_openai_api_key,
-            openai_model=effective_openai_model,
-            summarize_symbols=issue_summary_symbols,
-        )
-    else:
-        pred_df = append_issue_summary_columns(pred_df, summarize_symbols=[])
+    pred_df = append_issue_summary_columns(
+        pred_df,
+        context_raw_df=context_raw_df,
+        openai_api_key=effective_openai_api_key,
+        openai_model=effective_openai_model,
+        summarize_symbols=issue_summary_symbols,
+    )
     pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: _format_percentage_text(v, digits=1, unit_interval=True))
     pred_df["예측 이유"] = pred_df["prediction_reason"]
     pred_df["권고"] = pred_df["recommendation"]
@@ -1004,7 +1008,6 @@ def build_cli_parser() -> argparse.ArgumentParser:
         default=None,
         help="Maximum number of holdings allowed per market_type bucket",
     )
-    parser.add_argument("--disable-issue-summary", action="store_true", help="Disable news/disclosure summary generation")
     parser.add_argument(
         "--issue-summary-symbols",
         nargs="*",
@@ -1017,7 +1020,7 @@ def build_cli_parser() -> argparse.ArgumentParser:
         default=None,
         help="Symbols used when --fetch-real is enabled (no auto KRX universe)",
     )
-    parser.add_argument("--real-start", default="2018-01-01", help="Start date for real data fetch")
+    parser.add_argument("--real-start", default=_today_ymd(), help="Start date for real data fetch")
     parser.add_argument(
         "--add-symbols",
         nargs="*",
@@ -1077,7 +1080,6 @@ def main():
         portfolio_value=args.portfolio_value,
         max_daily_participation=args.max_daily_participation,
         max_positions_per_market_type=args.max_positions_per_market_type,
-        enable_issue_summary=not args.disable_issue_summary,
         issue_summary_symbols=args.issue_summary_symbols,
     )
 
