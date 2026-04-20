@@ -74,6 +74,25 @@ def _today_ymd() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
+def _is_default_real_ohlcv_path(input_csv: str) -> bool:
+    normalized = Path(input_csv).as_posix().lower()
+    return normalized.endswith("data/real_ohlcv.csv")
+
+
+def _resolve_fetch_symbols(real_symbols: list[str] | None, universe_csv: str | None, input_csv: str) -> list[str]:
+    symbols = real_symbols
+    if not symbols and universe_csv:
+        try:
+            symbols = load_universe_symbols(universe_csv)
+            print(f"Loaded symbols from universe CSV: {len(symbols)}")
+        except Exception as exc:
+            print(f"[경고] universe CSV 로드 실패: {exc}")
+
+    if not symbols:
+        symbols = _fallback_symbols_from_input_or_default(input_csv)
+    return symbols
+
+
 def _project_result_dir() -> Path:
     root = Path(__file__).resolve().parents[1]
     out = root / "result"
@@ -1037,19 +1056,12 @@ def main():
         if symbols_to_add:
             append_real_ohlcv_csv(input_csv, symbols=symbols_to_add, start=args.real_start)
             print(f"Added symbols to {input_csv}: {len(symbols_to_add)}")
-    if args.fetch_real:
-        symbols = args.real_symbols
-        if not symbols and args.universe_csv:
-            try:
-                symbols = load_universe_symbols(args.universe_csv)
-                print(f"Loaded symbols from universe CSV: {len(symbols)}")
-            except Exception as exc:
-                print(f"[경고] universe CSV 로드 실패: {exc}")
-
-        if not symbols:
-            symbols = _fallback_symbols_from_input_or_default(input_csv)
-
+    should_refresh_real_ohlcv = args.fetch_real or _is_default_real_ohlcv_path(input_csv)
+    if should_refresh_real_ohlcv:
+        symbols = _resolve_fetch_symbols(args.real_symbols, args.universe_csv, input_csv)
         save_real_ohlcv_csv(input_csv, symbols=symbols, start=args.real_start)
+        if not args.fetch_real:
+            print(f"Auto-refreshed latest real OHLCV data: {input_csv}")
 
     run_pipeline(
         args.input,
