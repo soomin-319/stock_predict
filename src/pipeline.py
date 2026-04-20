@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from sklearn.isotonic import IsotonicRegression
 
@@ -72,6 +74,18 @@ def _fallback_symbols_from_input_or_default(input_csv: str, limit: int = 5) -> l
 
 def _today_ymd() -> str:
     return datetime.now().strftime("%Y-%m-%d")
+
+
+def seed_everything(seed: int) -> None:
+    """Seed Python / NumPy RNGs and common env-var RNG hooks.
+
+    Model-specific seeds (LightGBM, sklearn) are set via each estimator's
+    ``random_state``; this call pins everything shared across the process so
+    runs with the same config are reproducible.
+    """
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
 
 
 def _resolve_fetch_symbols(real_symbols: list[str] | None, universe_csv: str | None, input_csv: str) -> list[str]:
@@ -623,6 +637,10 @@ def run_pipeline(
 ):
     effective_openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
     effective_openai_model = openai_model or os.getenv("OPENAI_MODEL") or ("gpt-5-mini" if effective_openai_api_key else None)
+    dart_api_key = dart_api_key or os.getenv("DART_API_KEY")
+    dart_corp_map_csv = dart_corp_map_csv or os.getenv("DART_CORP_MAP_CSV")
+    naver_client_id = naver_client_id or os.getenv("NAVER_CLIENT_ID")
+    naver_client_secret = naver_client_secret or os.getenv("NAVER_CLIENT_SECRET")
     total_steps = 13
     _print_progress(1, total_steps, "Loading app configuration")
     cfg_overrides: dict[str, dict[str, float]] = {"backtest": {}}
@@ -647,6 +665,7 @@ def run_pipeline(
     if not cfg_overrides["backtest"]:
         cfg_overrides = {}
     cfg = load_app_config(config_json, overrides=cfg_overrides or None)
+    seed_everything(cfg.training.random_state)
 
     _print_progress(2, total_steps, f"Loading input data: {input_csv}")
 
@@ -1066,6 +1085,10 @@ def build_cli_parser() -> argparse.ArgumentParser:
 def main():
     parser = build_cli_parser()
     args = parser.parse_args()
+
+    # Lock RNGs before any data fetching / model training so runs are reproducible.
+    seed_cfg = load_app_config(args.config_json).training.random_state
+    seed_everything(seed_cfg)
 
     input_csv = args.input
     if args.add_symbols:

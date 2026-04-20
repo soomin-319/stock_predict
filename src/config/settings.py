@@ -41,6 +41,12 @@ class TrainingConfig:
     model_n_jobs: int = -1
     walk_forward_n_jobs: int = 1
     use_gpu: bool = False
+    # Gap between train end and validation start to prevent look-ahead leakage
+    # from multi-horizon targets whose realisation overlaps the validation window.
+    # Set to max forecast horizon in trading days (e.g. 20 for 20d target).
+    purge_gap_days: int = 20
+    # Additional buffer after purge to dampen serial-correlation carryover.
+    embargo_days: int = 0
 
 
 @dataclass

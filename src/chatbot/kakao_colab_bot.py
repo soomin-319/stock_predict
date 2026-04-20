@@ -100,16 +100,8 @@ class PipelineRuntimeConfig:
             cmd.append("--fetch-investor-context")
             if not self.enable_investor_disclosure:
                 cmd.append("--disable-disclosure-context")
-            if self.dart_api_key:
-                cmd.extend(["--dart-api-key", self.dart_api_key])
             if self.dart_corp_map_csv:
                 cmd.extend(["--dart-corp-map-csv", self.dart_corp_map_csv])
-            if self.naver_client_id:
-                cmd.extend(["--naver-client-id", self.naver_client_id])
-            if self.naver_client_secret:
-                cmd.extend(["--naver-client-secret", self.naver_client_secret])
-        if self.openai_api_key:
-            cmd.extend(["--openai-api-key", self.openai_api_key])
         if self.openai_model:
             cmd.extend(["--openai-model", self.openai_model])
         if not self.use_external:
@@ -120,6 +112,26 @@ class PipelineRuntimeConfig:
             cmd.extend(["--figure-dir", self.figure_dir])
         cmd.extend(self.extra_args)
         return [str(part) for part in cmd]
+
+    def build_subprocess_env(self, base_env: dict[str, str] | None = None) -> dict[str, str]:
+        """Return environment variables for subprocess so secrets stay out of argv.
+
+        Secrets passed via CLI arguments are visible in `ps` output and shell
+        history. Passing them through the subprocess environment avoids that
+        exposure while still letting the child pipeline pick them up via
+        `os.getenv`.
+        """
+        env = dict(base_env) if base_env is not None else dict(os.environ)
+        secret_map = {
+            "DART_API_KEY": self.dart_api_key,
+            "OPENAI_API_KEY": self.openai_api_key,
+            "NAVER_CLIENT_ID": self.naver_client_id,
+            "NAVER_CLIENT_SECRET": self.naver_client_secret,
+        }
+        for key, value in secret_map.items():
+            if value:
+                env[key] = value
+        return env
 
 
 @dataclass(slots=True)
@@ -929,6 +941,7 @@ class KakaoColabPredictionBot:
         log_path = self.log_dir / f"{display_code}_{submitted_at.replace(':', '').replace('+00:00', 'Z')}.log"
         log_handle = log_path.open("w", encoding="utf-8")
         self._console_log(f"{display_code} 예측 작업 시작: {' '.join(command)}")
+        subprocess_env = self.runtime_config.build_subprocess_env()
         try:
             process = self.process_runner(
                 command,
@@ -937,6 +950,7 @@ class KakaoColabPredictionBot:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                env=subprocess_env,
             )
         except Exception as exc:
             self._console_log(f"{display_code} 예측 작업 시작 실패({type(exc).__name__}): {exc}")
@@ -1786,12 +1800,12 @@ def main():
         input_csv=args.input,
         report_json=args.report_json,
         figure_dir=args.figure_dir,
-        dart_api_key=args.dart_api_key,
-        dart_corp_map_csv=args.dart_corp_map_csv,
-        openai_api_key=args.openai_api_key,
-        openai_model=args.openai_model,
-        naver_client_id=args.naver_client_id,
-        naver_client_secret=args.naver_client_secret,
+        dart_api_key=args.dart_api_key or os.getenv("DART_API_KEY"),
+        dart_corp_map_csv=args.dart_corp_map_csv or os.getenv("DART_CORP_MAP_CSV") or "data/dart_corp_map.csv",
+        openai_api_key=args.openai_api_key or os.getenv("OPENAI_API_KEY"),
+        openai_model=args.openai_model or os.getenv("OPENAI_MODEL"),
+        naver_client_id=args.naver_client_id or os.getenv("NAVER_CLIENT_ID"),
+        naver_client_secret=args.naver_client_secret or os.getenv("NAVER_CLIENT_SECRET"),
     )
     if args.use_pyngrok:
         launched = launch_colab_kakao_bot(

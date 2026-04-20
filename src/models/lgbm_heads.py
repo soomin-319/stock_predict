@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List
 
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
+
+MODEL_ARTIFACT_VERSION = 1
 
 try:
     import lightgbm as lgb
@@ -133,6 +140,13 @@ class MultiHeadStockModel:
         if not self._feature_columns:
             raise RuntimeError("Model is not fitted.")
 
+        missing = [c for c in self._feature_columns if c not in df.columns]
+        if missing:
+            raise ValueError(
+                f"Input is missing {len(missing)} feature columns used during training: "
+                f"{missing[:5]}{'...' if len(missing) > 5 else ''}"
+            )
+
         x = df[self._feature_columns].copy().fillna(0)
 
         predicted_return = self.reg_model.predict(x)
@@ -147,12 +161,94 @@ class MultiHeadStockModel:
             horizon: model.predict_proba(x)[:, 1] for horizon, model in self.horizon_cls_models.items()
         }
 
+        if len(quantiles) < 3:
+            raise RuntimeError(
+                f"MultiHeadPrediction requires at least 3 quantile heads, got {len(quantiles)}: {quantiles}"
+            )
         return MultiHeadPrediction(
             predicted_return=predicted_return,
             up_probability=up_probability,
             quantile_low=q_preds[quantiles[0]],
-            quantile_mid=q_preds[quantiles[1]],
-            quantile_high=q_preds[quantiles[2]],
+            quantile_mid=q_preds[quantiles[len(quantiles) // 2]],
+            quantile_high=q_preds[quantiles[-1]],
             horizon_predicted_return=horizon_predicted_return,
             horizon_up_probability=horizon_up_probability,
         )
+
+    def _feature_columns_hash(self) -> str:
+        """Stable hash of training feature columns for artifact compatibility checks."""
+        blob = "|".join(self._feature_columns).encode("utf-8")
+        return hashlib.sha256(blob).hexdigest()
+
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "artifact_version": MODEL_ARTIFACT_VERSION,
+            "backend": self.backend,
+            "random_state": self.random_state,
+            "n_jobs": self.n_jobs,
+            "use_gpu": self.use_gpu,
+            "feature_count": len(self._feature_columns),
+            "feature_hash": self._feature_columns_hash() if self._feature_columns else None,
+            "quantiles": sorted(self.quantile_models.keys()),
+            "horizons": sorted(self.horizon_reg_models.keys()),
+        }
+
+    def save(self, path: str | Path) -> Path:
+        """Persist a fitted model to disk with metadata for reproducibility.
+
+        Stores a joblib bundle at ``path`` plus a sidecar ``<path>.meta.json`` so
+        the training context (seed, backend, feature hash) is discoverable
+        without loading the pickle.
+        """
+        if not self._feature_columns:
+            raise RuntimeError("Cannot save an unfitted model.")
+
+        out_path = Path(path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "artifact_version": MODEL_ARTIFACT_VERSION,
+            "backend": self.backend,
+            "random_state": self.random_state,
+            "n_jobs": self.n_jobs,
+            "use_gpu": self.use_gpu,
+            "feature_columns": list(self._feature_columns),
+            "feature_hash": self._feature_columns_hash(),
+            "reg_model": self.reg_model,
+            "cls_model": self.cls_model,
+            "quantile_models": self.quantile_models,
+            "horizon_reg_models": self.horizon_reg_models,
+            "horizon_cls_models": self.horizon_cls_models,
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+        }
+        joblib.dump(payload, out_path)
+
+        meta_path = out_path.with_suffix(out_path.suffix + ".meta.json")
+        meta = {**self.metadata(), "saved_at": payload["saved_at"], "path": str(out_path)}
+        meta_path.write_text(json.dumps(meta, indent=2, sort_keys=True), encoding="utf-8")
+        return out_path
+
+    @classmethod
+    def load(cls, path: str | Path) -> "MultiHeadStockModel":
+        payload = joblib.load(Path(path))
+        version = payload.get("artifact_version")
+        if version != MODEL_ARTIFACT_VERSION:
+            raise ValueError(
+                f"Unsupported model artifact version {version!r}; expected {MODEL_ARTIFACT_VERSION}."
+            )
+        model = cls(
+            random_state=payload.get("random_state", 42),
+            n_jobs=payload.get("n_jobs"),
+            use_gpu=payload.get("use_gpu", False),
+        )
+        model.backend = payload.get("backend", model.backend)
+        model._feature_columns = list(payload["feature_columns"])
+        model.reg_model = payload["reg_model"]
+        model.cls_model = payload["cls_model"]
+        model.quantile_models = payload.get("quantile_models", {})
+        model.horizon_reg_models = payload.get("horizon_reg_models", {})
+        model.horizon_cls_models = payload.get("horizon_cls_models", {})
+
+        stored_hash = payload.get("feature_hash")
+        if stored_hash and stored_hash != model._feature_columns_hash():
+            raise ValueError("Feature-hash mismatch: saved feature list inconsistent with artifact.")
+        return model
