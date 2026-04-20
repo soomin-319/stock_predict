@@ -3,14 +3,19 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Iterable
-import contextlib
-import io
 import logging
 import warnings
 from functools import partial
 
 import pandas as pd
 import yfinance as yf
+
+# Silence yfinance chatter once at import time. Mutating logger/warnings/stdout
+# state per-call from ThreadPoolExecutor workers races on shared globals and
+# can leave sys.stdout pointing at a detached StringIO, which looks like a
+# deterministic hang because every subsequent print() output is swallowed.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+warnings.filterwarnings("ignore", module=r"yfinance(\..*)?")
 
 def _to_yfinance_symbol(user_input: str) -> str:
     s = str(user_input).strip().upper()
@@ -43,28 +48,17 @@ def _normalize_yf_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _safe_download_ohlcv(symbol: str, start: str, end: str | None = None) -> pd.DataFrame:
-    yf_logger = logging.getLogger("yfinance")
-    prev_level = yf_logger.level
-    prev_disabled = yf_logger.disabled
     try:
-        yf_logger.disabled = True
-        yf_logger.setLevel(logging.CRITICAL)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                return yf.download(
-                    symbol,
-                    start=start,
-                    end=end,
-                    auto_adjust=False,
-                    progress=False,
-                    threads=False,
-                )
+        return yf.download(
+            symbol,
+            start=start,
+            end=end,
+            auto_adjust=False,
+            progress=False,
+            threads=False,
+        )
     except Exception:
         return pd.DataFrame()
-    finally:
-        yf_logger.disabled = prev_disabled
-        yf_logger.setLevel(prev_level)
 
 
 
