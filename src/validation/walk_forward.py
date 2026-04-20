@@ -25,11 +25,21 @@ FoldInput = Tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp, pd.DataFrame, pd.Dat
 
 def _iter_folds(df: pd.DataFrame, cfg: TrainingConfig):
     dates = sorted(df["Date"].dropna().unique())
+    # Purge gap prevents rows whose forward target overlaps the validation
+    # window from entering training (look-ahead bias on multi-horizon targets).
+    purge_gap = max(0, int(getattr(cfg, "purge_gap_days", 0) or 0))
+    embargo = max(0, int(getattr(cfg, "embargo_days", 0) or 0))
     for start in range(cfg.min_train_size, len(dates) - cfg.test_size + 1, cfg.step_size):
-        train_end_date = dates[start - 1]
-        valid_end_idx = min(start + cfg.test_size - 1, len(dates) - 1)
+        train_cutoff_idx = start - 1 - purge_gap
+        if train_cutoff_idx < 0:
+            continue
+        train_end_date = dates[train_cutoff_idx]
+        valid_start_idx = start + embargo
+        if valid_start_idx >= len(dates):
+            continue
+        valid_end_idx = min(valid_start_idx + cfg.test_size - 1, len(dates) - 1)
         valid_end_date = dates[valid_end_idx]
-        valid_start_date = dates[start]
+        valid_start_date = dates[valid_start_idx]
 
         train_df = df[df["Date"] <= train_end_date]
         valid_df = df[(df["Date"] >= valid_start_date) & (df["Date"] <= valid_end_date)]

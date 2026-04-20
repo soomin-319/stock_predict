@@ -429,13 +429,21 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert "--issue-summary-symbols" in command
     assert "000660.KS" in command
     assert "--fetch-investor-context" in command
-    assert "--dart-api-key" in command
-    assert "demo-key" in command
     assert "--dart-corp-map-csv" in command
     assert "data/dart_corp_map.csv" in command
-    assert "--naver-client-id" in command
-    assert "--naver-client-secret" in command
     assert "--disable-external" in command
+
+    # Secrets must NOT be passed via CLI (visible in `ps`); they go via env.
+    assert "--dart-api-key" not in command
+    assert "--naver-client-id" not in command
+    assert "--naver-client-secret" not in command
+    assert "--openai-api-key" not in command
+    assert "demo-key" not in command
+
+    env = runner.calls[0].get("env") or {}
+    assert env.get("DART_API_KEY") == "demo-key"
+    assert env.get("NAVER_CLIENT_ID") == "naver-id"
+    assert env.get("NAVER_CLIENT_SECRET") == "naver-secret"
 
     session_path = tmp_path / "result" / "chatbot_sessions.json"
     assert session_path.exists()

@@ -2,3 +2,31 @@ __pycache__/
 *.pyc
 .pytest_cache/
 *.egg-info/
+
+# Secrets & credentials
+.env
+.env.*
+!.env.example
+*.secrets
+*.secret
+credentials.json
+secrets.json
+*.pem
+*.key
+
+# DART corp map (can include sensitive corp codes / API artifacts)
+data/dart_corp_map.csv
+
+# Local outputs
+result/
+figures/
+figures_*/
+*.log
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Claude session-local artefacts (unpushed commit backups, etc.)
+.claude_*.patch
