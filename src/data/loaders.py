@@ -22,4 +22,8 @@ def load_ohlcv_csv(path: str | Path, symbol: Optional[str] = None) -> pd.DataFra
     if "Symbol" not in df.columns:
         df["Symbol"] = "UNKNOWN"
 
+    # Defend against pre-existing CSVs written before the fetcher deduped
+    # (Date, Symbol) rows — duplicates here propagate into feature merges and
+    # cause `InvalidIndexError` in downstream reindex/align calls.
+    df = df.drop_duplicates(subset=["Date", "Symbol"], keep="last")
     return df.sort_values(["Symbol", "Date"]).reset_index(drop=True)

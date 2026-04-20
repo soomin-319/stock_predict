@@ -108,6 +108,10 @@ def fetch_real_ohlcv(symbols: Iterable[str], start: str = "2020-01-01", end: str
 
     all_df = pd.concat(frames, axis=0, ignore_index=True)
     all_df = all_df[["Date", "Symbol", "Open", "High", "Low", "Close", "Volume"]]
+    # yfinance can emit duplicate (Date, Symbol) rows; dedupe to match the
+    # append path (`append_real_ohlcv_csv`) and prevent downstream pandas
+    # operations (`reindex`/`align`) from raising `InvalidIndexError`.
+    all_df = all_df.drop_duplicates(subset=["Date", "Symbol"], keep="last")
     all_df = all_df.sort_values(["Symbol", "Date"]).reset_index(drop=True)
     return all_df
 
