@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import traceback
 import urllib.request
 import zipfile
 from difflib import SequenceMatcher
@@ -1058,6 +1059,7 @@ class KakaoColabPredictionBot:
 
     def _run_bootstrap_prewarm_worker(self, log_path: Path) -> None:
         exit_code = 0
+        error_summary: str | None = None
         try:
             outputs = prewarm_prediction_cache(self.runtime_config, force=False)
             with log_path.open("a", encoding="utf-8") as handle:
@@ -1065,8 +1067,10 @@ class KakaoColabPredictionBot:
                 handle.write("\n")
         except Exception as exc:
             exit_code = 1
+            tb = traceback.format_exc()
+            error_summary = f"{type(exc).__name__}: {exc}"
             with log_path.open("a", encoding="utf-8") as handle:
-                handle.write(f"bootstrap_error={type(exc).__name__}: {exc}\n")
+                handle.write(f"bootstrap_error={error_summary}\n{tb}\n")
 
         with self._state_lock:
             state = self._job_registry.get(self.BOOTSTRAP_JOB_KEY, {})
@@ -1083,7 +1087,10 @@ class KakaoColabPredictionBot:
             self._console_log("초기 전체 종목 예측 작업 completed (exit_code=0).")
             self._start_queued_summaries_after_bootstrap()
         else:
-            self._console_log("초기 전체 종목 예측 작업 failed (exit_code=1). 로그를 확인해주세요.")
+            detail = f" error={error_summary}" if error_summary else ""
+            self._console_log(
+                f"초기 전체 종목 예측 작업 failed (exit_code=1).{detail} 상세 로그: {log_path}"
+            )
 
     def _is_bootstrap_running(self) -> bool:
         with self._state_lock:

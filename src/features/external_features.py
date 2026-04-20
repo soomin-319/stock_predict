@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import contextlib
-import io
 import logging
 import warnings
 from concurrent.futures import ThreadPoolExecutor
@@ -10,29 +8,27 @@ from functools import partial
 import pandas as pd
 import yfinance as yf
 
+# Silence yfinance chatter once at import time. Per-call mutation of
+# logger/warnings/stdout/stderr from ThreadPoolExecutor workers is racy on
+# shared globals (same class of bug that caused the bootstrap hang) so we
+# configure it up front and leave it.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+warnings.filterwarnings("ignore", module=r"yfinance(\..*)?")
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _safe_download(symbol: str, start: str, end: str | None) -> pd.Series:
     """Download close series without leaking provider noise to console."""
     try:
-        yf_logger = logging.getLogger("yfinance")
-        prev_level = yf_logger.level
-        prev_disabled = yf_logger.disabled
-        yf_logger.disabled = True
-        yf_logger.setLevel(logging.CRITICAL)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                df = yf.download(
-                    symbol,
-                    start=start,
-                    end=end,
-                    auto_adjust=False,
-                    progress=False,
-                    threads=False,
-                )
-        yf_logger.disabled = prev_disabled
-        yf_logger.setLevel(prev_level)
+        df = yf.download(
+            symbol,
+            start=start,
+            end=end,
+            auto_adjust=False,
+            progress=False,
+            threads=False,
+        )
         if df is None or df.empty:
             return pd.Series(dtype=float)
         if isinstance(df.columns, pd.MultiIndex):
@@ -42,14 +38,9 @@ def _safe_download(symbol: str, start: str, end: str | None) -> pd.Series:
         s = df["Close"].copy()
         s.index = pd.to_datetime(s.index)
         return s
-    except Exception:
+    except Exception as exc:
+        _LOGGER.warning("yfinance external download failed for %s: %s: %s", symbol, type(exc).__name__, exc)
         return pd.Series(dtype=float)
-    finally:
-        try:
-            yf_logger.disabled = prev_disabled
-            yf_logger.setLevel(prev_level)
-        except Exception:
-            pass
 
 
 
@@ -94,7 +85,11 @@ def _series_to_external_frame(series_or_df: pd.Series | pd.DataFrame, col_base: 
     out = frame[[date_col, value_col]].copy()
     out.columns = ["Date", f"{col_base}_close"]
     out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
-    out = out.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
+    out = out.dropna(subset=["Date"]).sort_values("Date")
+    # yfinance occasionally emits duplicate Date rows; keep the latest so the
+    # downstream `ext.merge(frame, on="Date")` does not fan out and trigger
+    # `InvalidIndexError: Reindexing only valid with uniquely valued Index`.
+    out = out.drop_duplicates(subset=["Date"], keep="last").reset_index(drop=True)
     return out
 
 
