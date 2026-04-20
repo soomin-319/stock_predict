@@ -4,7 +4,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -72,6 +72,37 @@ def _fallback_symbols_from_input_or_default(input_csv: str, limit: int = 5) -> l
 
 def _today_ymd() -> str:
     return datetime.now().strftime("%Y-%m-%d")
+
+
+def _resolve_fetch_symbols(real_symbols: list[str] | None, universe_csv: str | None, input_csv: str) -> list[str]:
+    symbols = real_symbols
+    if not symbols and universe_csv:
+        try:
+            symbols = load_universe_symbols(universe_csv)
+            print(f"Loaded symbols from universe CSV: {len(symbols)}")
+        except Exception as exc:
+            print(f"[경고] universe CSV 로드 실패: {exc}")
+
+    if not symbols:
+        symbols = _fallback_symbols_from_input_or_default(input_csv)
+    return symbols
+
+
+def _resolve_incremental_fetch_start(input_csv: str, requested_start: str) -> str:
+    path = Path(input_csv)
+    if not path.exists():
+        return requested_start
+    try:
+        base = pd.read_csv(path, usecols=["Date"])
+        if base.empty:
+            return requested_start
+        parsed = pd.to_datetime(base["Date"], errors="coerce").dropna()
+        if parsed.empty:
+            return requested_start
+        next_day = parsed.max() + timedelta(days=1)
+        return max(requested_start, next_day.strftime("%Y-%m-%d"))
+    except Exception:
+        return requested_start
 
 
 def _project_result_dir() -> Path:
@@ -1017,7 +1048,12 @@ def build_cli_parser() -> argparse.ArgumentParser:
         default=None,
         help="Symbols used when --fetch-real is enabled (no auto KRX universe)",
     )
-    parser.add_argument("--real-start", default=_today_ymd(), help="Start date for real data fetch")
+    parser.add_argument("--real-start", default="2020-01-01", help="Start date for real data fetch")
+    parser.add_argument(
+        "--auto-refresh-real",
+        action="store_true",
+        help="Refresh data in --input incrementally before running (explicit opt-in)",
+    )
     parser.add_argument(
         "--add-symbols",
         nargs="*",
@@ -1037,19 +1073,17 @@ def main():
         if symbols_to_add:
             append_real_ohlcv_csv(input_csv, symbols=symbols_to_add, start=args.real_start)
             print(f"Added symbols to {input_csv}: {len(symbols_to_add)}")
-    if args.fetch_real:
-        symbols = args.real_symbols
-        if not symbols and args.universe_csv:
-            try:
-                symbols = load_universe_symbols(args.universe_csv)
-                print(f"Loaded symbols from universe CSV: {len(symbols)}")
-            except Exception as exc:
-                print(f"[경고] universe CSV 로드 실패: {exc}")
+    should_full_refresh = args.fetch_real
+    should_incremental_refresh = args.auto_refresh_real and not should_full_refresh and not args.add_symbols
 
-        if not symbols:
-            symbols = _fallback_symbols_from_input_or_default(input_csv)
-
+    if should_full_refresh:
+        symbols = _resolve_fetch_symbols(args.real_symbols, args.universe_csv, input_csv)
         save_real_ohlcv_csv(input_csv, symbols=symbols, start=args.real_start)
+    elif should_incremental_refresh:
+        symbols = _resolve_fetch_symbols(args.real_symbols, args.universe_csv, input_csv)
+        incremental_start = _resolve_incremental_fetch_start(input_csv, args.real_start)
+        append_real_ohlcv_csv(input_csv, symbols=symbols, start=incremental_start)
+        print(f"Auto-refreshed latest real OHLCV data incrementally: {input_csv} (start={incremental_start})")
 
     run_pipeline(
         args.input,
