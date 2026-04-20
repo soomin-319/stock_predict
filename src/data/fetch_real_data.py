@@ -17,6 +17,8 @@ import yfinance as yf
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 warnings.filterwarnings("ignore", module=r"yfinance(\..*)?")
 
+_LOGGER = logging.getLogger(__name__)
+
 def _to_yfinance_symbol(user_input: str) -> str:
     s = str(user_input).strip().upper()
     if not s:
@@ -57,7 +59,8 @@ def _safe_download_ohlcv(symbol: str, start: str, end: str | None = None) -> pd.
             progress=False,
             threads=False,
         )
-    except Exception:
+    except Exception as exc:
+        _LOGGER.warning("yfinance download failed for %s: %s: %s", symbol, type(exc).__name__, exc)
         return pd.DataFrame()
 
 
@@ -91,9 +94,17 @@ def fetch_real_ohlcv(symbols: Iterable[str], start: str = "2020-01-01", end: str
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             frames = list(executor.map(fetch_one, normalized_symbols))
 
+    empty_symbols = [sym for sym, frame in zip(normalized_symbols, frames) if frame is None or frame.empty]
     frames = [frame for frame in frames if frame is not None and not frame.empty]
     if not frames:
-        raise RuntimeError("No data fetched from provider (yfinance)")
+        raise RuntimeError(
+            f"No data fetched from provider (yfinance). All {len(normalized_symbols)} symbols "
+            f"returned empty. symbols={normalized_symbols!r}. Enable DEBUG logging on "
+            f"'src.data.fetch_real_data' to see per-symbol errors."
+        )
+    if empty_symbols:
+        _LOGGER.warning("yfinance returned empty frames for %d/%d symbols: %s",
+                        len(empty_symbols), len(normalized_symbols), empty_symbols)
 
     all_df = pd.concat(frames, axis=0, ignore_index=True)
     all_df = all_df[["Date", "Symbol", "Open", "High", "Low", "Close", "Volume"]]
