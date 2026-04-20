@@ -45,3 +45,31 @@ def test_run_colab_pipeline_bootstraps_default_krx_symbols(monkeypatch, tmp_path
     assert captured["save"]["symbols"] == ["000270.KS", "005930.KS", "000660.KS"]
     assert captured["run_pipeline"]["input_csv"] == "data/real_ohlcv.csv"
     assert out["result_simple_csv"].endswith("result/result_simple.csv")
+
+
+def test_run_colab_pipeline_incremental_refresh_uses_append(monkeypatch, tmp_path: Path):
+    captured = {}
+
+    monkeypatch.setattr(colab_runner, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(colab_runner, "_should_bootstrap_default_symbols", lambda input_csv: False)
+    monkeypatch.setattr(colab_runner, "_fallback_symbols_from_input_or_default", lambda _input: ["005930.KS"])
+    monkeypatch.setattr(colab_runner, "_resolve_incremental_fetch_start", lambda *_args: "2024-01-10")
+    monkeypatch.setattr(colab_runner, "save_real_ohlcv_csv", lambda *args, **kwargs: captured.setdefault("save", True))
+
+    def _fake_append(path, symbols, start):
+        captured["append"] = {"path": str(path), "symbols": list(symbols), "start": start}
+
+    monkeypatch.setattr(colab_runner, "append_real_ohlcv_csv", _fake_append)
+    monkeypatch.setattr(colab_runner, "run_pipeline", lambda **kwargs: captured.setdefault("run", kwargs))
+
+    colab_runner.run_colab_pipeline(
+        input_csv="data/real_ohlcv.csv",
+        auto_refresh_real=True,
+        real_start="2020-01-01",
+    )
+
+    assert "save" not in captured
+    assert captured["append"]["path"].endswith("data/real_ohlcv.csv")
+    assert captured["append"]["symbols"] == ["005930.KS"]
+    assert captured["append"]["start"] == "2024-01-10"
+    assert captured["run"]["input_csv"] == "data/real_ohlcv.csv"

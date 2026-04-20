@@ -32,8 +32,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.data.fetch_real_data import save_real_ohlcv_csv
-from src.pipeline import _fallback_symbols_from_input_or_default, _today_ymd, run_pipeline
+from src.data.fetch_real_data import append_real_ohlcv_csv, save_real_ohlcv_csv
+from src.pipeline import _fallback_symbols_from_input_or_default, _resolve_incremental_fetch_start, run_pipeline
 
 
 def _resolve_project_path(path: str | Path) -> Path:
@@ -102,10 +102,14 @@ def run_colab_pipeline(
     dart_api_key: str | None = None,
     dart_corp_map_csv: str | None = None,
     bootstrap_default_symbols: bool = True,
-    real_start: str = _today_ymd(),
+    fetch_real: bool = False,
+    auto_refresh_real: bool = False,
+    real_symbols: list[str] | None = None,
+    real_start: str = "2020-01-01",
     config_json: str | None = None,
 ) -> dict[str, str]:
     pipeline_input = input_csv
+    did_bootstrap = False
     if bootstrap_default_symbols and _should_bootstrap_default_symbols(input_csv):
         default_symbols = _fallback_symbols_from_input_or_default(input_csv)
         bootstrap_target = PROJECT_ROOT / "data" / "real_ohlcv.csv"
@@ -114,6 +118,17 @@ def run_colab_pipeline(
         )
         save_real_ohlcv_csv(bootstrap_target, symbols=default_symbols, start=real_start)
         pipeline_input = str(Path("data") / "real_ohlcv.csv")
+        did_bootstrap = True
+
+    if (fetch_real or auto_refresh_real) and not did_bootstrap:
+        target = _resolve_project_path(pipeline_input)
+        symbols = list(real_symbols) if real_symbols else _fallback_symbols_from_input_or_default(pipeline_input)
+        if fetch_real:
+            save_real_ohlcv_csv(target, symbols=symbols, start=real_start)
+        elif auto_refresh_real:
+            incremental_start = _resolve_incremental_fetch_start(str(target), real_start)
+            append_real_ohlcv_csv(target, symbols=symbols, start=incremental_start)
+            print(f"[Colab] real OHLCV incrementally refreshed from {incremental_start}: {target}")
 
     run_pipeline(
         input_csv=pipeline_input,

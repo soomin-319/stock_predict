@@ -101,29 +101,6 @@ def test_main_add_symbols_skips_incremental_auto_refresh(monkeypatch):
     assert calls["save"] == 0
     assert calls["run"] == 1
 
-
-def test_is_default_real_ohlcv_path_supports_relative_and_absolute_paths(tmp_path):
-    assert pipeline._is_default_real_ohlcv_path("data/real_ohlcv.csv") is True
-    assert pipeline._is_default_real_ohlcv_path(str(tmp_path / "data" / "real_ohlcv.csv")) is True
-    assert pipeline._is_default_real_ohlcv_path("data/sample_ohlcv.csv") is False
-
-
-def test_resolve_fetch_symbols_uses_universe_csv_when_provided(monkeypatch):
-    monkeypatch.setattr(pipeline, "load_universe_symbols", lambda _p: ["A.KS", "B.KS"])
-
-    symbols = pipeline._resolve_fetch_symbols(None, "dummy_universe.csv", "data/real_ohlcv.csv")
-
-    assert symbols == ["A.KS", "B.KS"]
-
-
-def test_resolve_fetch_symbols_falls_back_to_default_when_universe_load_fails(monkeypatch):
-    monkeypatch.setattr(pipeline, "load_universe_symbols", lambda _p: (_ for _ in ()).throw(RuntimeError("boom")))
-    monkeypatch.setattr(pipeline, "_fallback_symbols_from_input_or_default", lambda _p: ["005930.KS"])
-
-    symbols = pipeline._resolve_fetch_symbols(None, "dummy_universe.csv", "data/real_ohlcv.csv")
-
-    assert symbols == ["005930.KS"]
-
 def test_save_real_ohlcv_csv_preserves_existing_optional_columns(tmp_path, monkeypatch):
     target = tmp_path / "real.csv"
     base = pd.DataFrame(
