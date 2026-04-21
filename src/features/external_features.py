@@ -32,7 +32,17 @@ def _safe_download(symbol: str, start: str, end: str | None) -> pd.Series:
         if df is None or df.empty:
             return pd.Series(dtype=float)
         if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+            # Find the MultiIndex level that contains price-type names rather
+            # than blindly taking level 0, which may be the ticker level in
+            # newer yfinance versions and would produce duplicate labels.
+            _price_cols = frozenset({"Open", "High", "Low", "Close", "Adj Close", "Volume"})
+            extracted = None
+            for _lvl in range(df.columns.nlevels):
+                _vals = df.columns.get_level_values(_lvl)
+                if _price_cols.intersection(_vals):
+                    extracted = _vals
+                    break
+            df.columns = extracted if extracted is not None else df.columns.get_level_values(0)
         if "Close" not in df.columns:
             return pd.Series(dtype=float)
         s = df["Close"].copy()
