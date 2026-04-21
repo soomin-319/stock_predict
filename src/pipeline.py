@@ -47,7 +47,7 @@ from src.reports.pm_report import build_pm_report, save_pm_report
 from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.result_formatter import (
     build_result_simple as formatter_build_result_simple,
-    format_percentage_text as formatterformatter_format_percentage_text,
+    format_percentage_text as formatter_format_percentage_text,
     print_prediction_console_summary as formatter_print_prediction_console_summary,
 )
 from src.reports.visualize import (
