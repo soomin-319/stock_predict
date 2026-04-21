@@ -41,17 +41,33 @@ def normalize_user_symbols(symbol_inputs: Iterable[str]) -> list[str]:
 
 
 
+_PRICE_COLS = frozenset({"Open", "High", "Low", "Close", "Adj Close", "Volume"})
+
+
 def _normalize_yf_columns(df: pd.DataFrame) -> pd.DataFrame:
     if isinstance(df.columns, pd.MultiIndex):
         df = df.copy()
-        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
-    # yfinance 0.2.x occasionally emits duplicate column labels for single-ticker
-    # downloads. Duplicates break `pd.concat(..., axis=0)` at `get_indexer` with
-    # `InvalidIndexError: Reindexing only valid with uniquely valued Index`.
+        # yfinance 0.2.x returns a MultiIndex whose price-type level can be 0 or 1
+        # depending on version and whether auto_adjust is used. Find the level that
+        # actually contains price names instead of blindly taking level 0, which
+        # would produce duplicate ticker-name labels or miss the right level.
+        extracted = None
+        for level in range(df.columns.nlevels):
+            vals = df.columns.get_level_values(level)
+            if _PRICE_COLS.intersection(vals):
+                extracted = vals
+                break
+        df.columns = extracted if extracted is not None else df.columns.get_level_values(0)
+
+    # yfinance occasionally emits duplicate column labels (e.g. when a Korean
+    # ticker resolves to multiple internal listings). Duplicates break
+    # `pd.concat(..., axis=0)` with `InvalidIndexError`.
     duplicated = df.columns.duplicated(keep="first")
     if duplicated.any():
         dup_labels = df.columns[duplicated].tolist()
-        _LOGGER.warning("yfinance returned duplicate columns %s; keeping first occurrence", dup_labels)
+        _LOGGER.warning(
+            "yfinance returned duplicate columns %s; keeping first occurrence", dup_labels
+        )
         df = df.loc[:, ~duplicated]
     return df
 
