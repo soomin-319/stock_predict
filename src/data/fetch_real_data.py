@@ -45,6 +45,14 @@ def _normalize_yf_columns(df: pd.DataFrame) -> pd.DataFrame:
     if isinstance(df.columns, pd.MultiIndex):
         df = df.copy()
         df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+    # yfinance 0.2.x occasionally emits duplicate column labels for single-ticker
+    # downloads. Duplicates break `pd.concat(..., axis=0)` at `get_indexer` with
+    # `InvalidIndexError: Reindexing only valid with uniquely valued Index`.
+    duplicated = df.columns.duplicated(keep="first")
+    if duplicated.any():
+        dup_labels = df.columns[duplicated].tolist()
+        _LOGGER.warning("yfinance returned duplicate columns %s; keeping first occurrence", dup_labels)
+        df = df.loc[:, ~duplicated]
     return df
 
 
