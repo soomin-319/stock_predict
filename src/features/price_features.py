@@ -190,65 +190,81 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     for canonical, aliases in numeric_alias_map.items():
         out[canonical] = _coerce_numeric_series(out, aliases)
 
-    out["log_return"] = grouped["Close"].transform(lambda x: np.log(x / x.shift(1)))
-    out["daily_return"] = grouped["Close"].transform(lambda x: x.pct_change())
-    out["gap_return"] = (out["Open"] / grouped["Close"].shift(1)) - 1
-    out["intraday_return"] = (out["Close"] / out["Open"]) - 1
-    out["range_pct"] = (out["High"] - out["Low"]) / out["Close"].replace(0, np.nan)
-    out["value_traded"] = out["Close"] * out["Volume"]
-    out["turnover_rank_daily"] = out.groupby("Date")["value_traded"].rank(method="first", ascending=False)
-    out["is_top_turnover_3"] = (out["turnover_rank_daily"] <= 3).astype(float)
-    out["is_top_turnover_10"] = (out["turnover_rank_daily"] <= 10).astype(float)
+    # Accumulate all technical indicator columns in a dict and merge once to
+    # avoid incremental column-assignment fragmentation warnings.
+    tech_cols: dict[str, pd.Series | np.ndarray] = {}
+
+    log_return_s = grouped["Close"].transform(lambda x: np.log(x / x.shift(1)))
+    tech_cols["log_return"] = log_return_s
+    tech_cols["daily_return"] = grouped["Close"].transform(lambda x: x.pct_change())
+    tech_cols["gap_return"] = (out["Open"] / grouped["Close"].shift(1)) - 1
+    tech_cols["intraday_return"] = (out["Close"] / out["Open"]) - 1
+    tech_cols["range_pct"] = (out["High"] - out["Low"]) / out["Close"].replace(0, np.nan)
+
+    value_traded_s = out["Close"] * out["Volume"]
+    turnover_rank_s = value_traded_s.groupby(out["Date"]).rank(method="first", ascending=False)
+    tech_cols["value_traded"] = value_traded_s
+    tech_cols["turnover_rank_daily"] = turnover_rank_s
+    tech_cols["is_top_turnover_3"] = (turnover_rank_s <= 3).astype(float)
+    tech_cols["is_top_turnover_10"] = (turnover_rank_s <= 10).astype(float)
 
     for window in cfg.lookback_windows:
-        out[f"ret_{window}d"] = grouped["Close"].transform(lambda x: x.pct_change(window))
+        tech_cols[f"ret_{window}d"] = grouped["Close"].transform(lambda x: x.pct_change(window))
 
     for window in cfg.moving_average_windows:
         ma = grouped["Close"].transform(lambda x: x.rolling(window).mean())
-        out[f"ma_{window}"] = ma
-        out[f"close_to_ma_{window}"] = out["Close"] / ma - 1
+        tech_cols[f"ma_{window}"] = ma
+        tech_cols[f"close_to_ma_{window}"] = out["Close"] / ma - 1
 
     for window in cfg.volatility_windows:
-        out[f"vol_{window}"] = grouped["log_return"].transform(lambda x: x.rolling(window).std())
+        tech_cols[f"vol_{window}"] = log_return_s.groupby(out["Symbol"]).transform(lambda x: x.rolling(window).std())
 
-    out["vol_ratio_20"] = out["Volume"] / grouped["Volume"].transform(lambda x: x.rolling(20).mean())
-    out["rsi_14"] = grouped["Close"].transform(lambda x: _compute_rsi(x, cfg.rsi_period))
-    out["rsi_pullback_buy_flag"] = out["rsi_14"].between(30.0, 35.0, inclusive="both").astype(float)
-    out["rsi_overbought_sell_flag"] = (out["rsi_14"] >= 70.0).astype(float)
+    tech_cols["vol_ratio_20"] = out["Volume"] / grouped["Volume"].transform(lambda x: x.rolling(20).mean())
 
-    macd = grouped["Close"].transform(lambda x: _compute_macd(x)[0])
-    macd_sig = grouped["Close"].transform(lambda x: _compute_macd(x)[1])
-    macd_hist = grouped["Close"].transform(lambda x: _compute_macd(x)[2])
-    out["macd"] = macd
-    out["macd_signal"] = macd_sig
-    out["macd_hist"] = macd_hist
+    rsi_14_s = grouped["Close"].transform(lambda x: _compute_rsi(x, cfg.rsi_period))
+    tech_cols["rsi_14"] = rsi_14_s
+    tech_cols["rsi_pullback_buy_flag"] = rsi_14_s.between(30.0, 35.0, inclusive="both").astype(float)
+    tech_cols["rsi_overbought_sell_flag"] = (rsi_14_s >= 70.0).astype(float)
 
+    def _macd_group(g: pd.DataFrame) -> pd.DataFrame:
+        m, s, h = _compute_macd(g["Close"])
+        return pd.DataFrame({"macd": m.values, "macd_signal": s.values, "macd_hist": h.values}, index=g.index)
+
+    macd_df = out.groupby("Symbol", group_keys=False)[["Close"]].apply(_macd_group)
+    tech_cols["macd"] = macd_df["macd"]
+    tech_cols["macd_signal"] = macd_df["macd_signal"]
+    tech_cols["macd_hist"] = macd_df["macd_hist"]
+
+    close_group = grouped["Close"]
     high_group = grouped["High"]
     low_group = grouped["Low"]
-    close_group = grouped["Close"]
 
     tr1 = out["High"] - out["Low"]
     tr2 = (out["High"] - close_group.shift(1)).abs()
     tr3 = (out["Low"] - close_group.shift(1)).abs()
-    out["atr_14"] = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1).groupby(out["Symbol"]).transform(
+    tech_cols["atr_14"] = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1).groupby(out["Symbol"]).transform(
         lambda x: x.rolling(14).mean()
     )
 
     low_min = low_group.transform(lambda x: x.rolling(cfg.stochastic_period).min())
     high_max = high_group.transform(lambda x: x.rolling(cfg.stochastic_period).max())
-    out["stoch_k"] = 100 * (out["Close"] - low_min) / (high_max - low_min + 1e-9)
-    out["stoch_d"] = out.groupby("Symbol", group_keys=False)["stoch_k"].transform(lambda x: x.rolling(3).mean())
+    stoch_k_s = 100 * (out["Close"] - low_min) / (high_max - low_min + 1e-9)
+    tech_cols["stoch_k"] = stoch_k_s
+    tech_cols["stoch_d"] = stoch_k_s.groupby(out["Symbol"]).transform(lambda x: x.rolling(3).mean())
 
     typical_price = (out["High"] + out["Low"] + out["Close"]) / 3
     tp_ma = typical_price.groupby(out["Symbol"]).transform(lambda x: x.rolling(cfg.cci_period).mean())
     tp_mad = typical_price.groupby(out["Symbol"]).transform(
         lambda x: x.rolling(cfg.cci_period).apply(lambda y: np.mean(np.abs(y - np.mean(y))), raw=True)
     )
-    out["cci_20"] = (typical_price - tp_ma) / (0.015 * tp_mad.replace(0, np.nan))
+    tech_cols["cci_20"] = (typical_price - tp_ma) / (0.015 * tp_mad.replace(0, np.nan))
 
     price_direction = np.sign(close_group.diff().fillna(0))
-    out["obv"] = (price_direction * out["Volume"].fillna(0)).groupby(out["Symbol"]).cumsum()
-    out["obv_change_5d"] = grouped["obv"].transform(lambda x: x.pct_change(5))
+    obv_s = (price_direction * out["Volume"].fillna(0)).groupby(out["Symbol"]).cumsum()
+    tech_cols["obv"] = obv_s
+    tech_cols["obv_change_5d"] = obv_s.groupby(out["Symbol"]).transform(lambda x: x.pct_change(5))
+
+    out = pd.concat([out, pd.DataFrame(tech_cols, index=out.index)], axis=1)
 
     # Investor-context engineered features
     feature_cols: dict[str, pd.Series | np.ndarray] = {}
