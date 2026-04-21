@@ -481,7 +481,7 @@ def _prediction_from_oof_df(oof: pd.DataFrame) -> MultiHeadPrediction:
     )
 
 def _print_progress(step: int, total: int, message: str):
-    _LOGGER.debug("[%d/%d] %s", step, total, message)
+    print(f"[{step}/{total}] {message}", flush=True)
 
 
 def _round_floats(obj, digits: int = 3):

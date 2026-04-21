@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Iterable
 import logging
+import sys
 import warnings
 from functools import partial
 
@@ -110,12 +111,16 @@ def fetch_real_ohlcv(symbols: Iterable[str], start: str = "2020-01-01", end: str
         raise RuntimeError("No symbols provided")
 
     max_workers = min(8, len(normalized_symbols))
-    if max_workers <= 1:
-        frames = [_fetch_single_symbol(symbol, start=start, end=end) for symbol in normalized_symbols]
-    else:
-        fetch_one = partial(_fetch_single_symbol, start=start, end=end)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            frames = list(executor.map(fetch_one, normalized_symbols))
+    _saved_stdout = sys.stdout
+    try:
+        if max_workers <= 1:
+            frames = [_fetch_single_symbol(symbol, start=start, end=end) for symbol in normalized_symbols]
+        else:
+            fetch_one = partial(_fetch_single_symbol, start=start, end=end)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                frames = list(executor.map(fetch_one, normalized_symbols))
+    finally:
+        sys.stdout = _saved_stdout
 
     empty_symbols = [sym for sym, frame in zip(normalized_symbols, frames) if frame is None or frame.empty]
     frames = [frame for frame in frames if frame is not None and not frame.empty]
