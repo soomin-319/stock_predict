@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import random
 import sys
@@ -16,6 +17,8 @@ if __package__ is None or __package__ == "":
     project_root = Path(__file__).resolve().parents[1]
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
+
+_LOGGER = logging.getLogger(__name__)
 
 from src.config.settings import app_config_to_dict, load_app_config
 from src.data.cleaners import clean_ohlcv
@@ -478,7 +481,7 @@ def _prediction_from_oof_df(oof: pd.DataFrame) -> MultiHeadPrediction:
     )
 
 def _print_progress(step: int, total: int, message: str):
-    print(f"[{step}/{total}] {message}")
+    _LOGGER.debug("[%d/%d] %s", step, total, message)
 
 
 def _round_floats(obj, digits: int = 3):

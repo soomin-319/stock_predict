@@ -65,7 +65,7 @@ def _normalize_yf_columns(df: pd.DataFrame) -> pd.DataFrame:
     duplicated = df.columns.duplicated(keep="first")
     if duplicated.any():
         dup_labels = df.columns[duplicated].tolist()
-        _LOGGER.warning(
+        _LOGGER.debug(
             "yfinance returned duplicate columns %s; keeping first occurrence", dup_labels
         )
         df = df.loc[:, ~duplicated]
