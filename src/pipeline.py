@@ -44,7 +44,7 @@ from src.reports.pm_report import build_pm_report, save_pm_report
 from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.result_formatter import (
     build_result_simple as formatter_build_result_simple,
-    format_percentage_text as formatter_format_percentage_text,
+    format_percentage_text as formatterformatter_format_percentage_text,
     print_prediction_console_summary as formatter_print_prediction_console_summary,
 )
 from src.reports.visualize import (
@@ -263,10 +263,6 @@ def _adaptive_training_cfg(cfg, feat: pd.DataFrame):
     tuned.test_size = min(tuned.test_size, max(20, int(uniq * 0.2)))
     tuned.step_size = min(tuned.step_size, max(20, tuned.test_size // 2))
     return tuned
-
-
-def _format_percentage_text(value, digits: int = 1, unit_interval: bool = False) -> str:
-    return formatter_format_percentage_text(value, digits=digits, unit_interval=unit_interval)
 
 
 def _build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
@@ -842,7 +838,7 @@ def run_pipeline(
         openai_model=effective_openai_model,
         summarize_symbols=issue_summary_symbols,
     )
-    pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: _format_percentage_text(v, digits=1, unit_interval=True))
+    pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True))
     pred_df["예측 이유"] = pred_df["prediction_reason"]
     pred_df["권고"] = pred_df["recommendation"]
 
@@ -861,29 +857,29 @@ def run_pipeline(
     detail_df.loc[:, detail_numeric_cols] = detail_df.loc[:, detail_numeric_cols].round(3)
     detail_df["내일 예상 종가"] = detail_df["predicted_close"].map(lambda v: "-" if pd.isna(v) else f"{float(v):,.0f}원")
     detail_df["상승확률(%)"] = detail_df["up_probability"].map(
-        lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
+        lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True)
     )
-    detail_df["predicted_return_display"] = detail_df["predicted_return"].map(lambda v: _format_percentage_text(v, digits=3))
+    detail_df["predicted_return_display"] = detail_df["predicted_return"].map(lambda v: formatter_format_percentage_text(v, digits=3))
     detail_df["up_probability_display"] = detail_df["up_probability"].map(
-        lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
+        lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True)
     )
     if "predicted_return_5d" in detail_df.columns:
-        detail_df["5일 예상 수익률(%)"] = detail_df["predicted_return_5d"].map(lambda v: _format_percentage_text(v, digits=3))
+        detail_df["5일 예상 수익률(%)"] = detail_df["predicted_return_5d"].map(lambda v: formatter_format_percentage_text(v, digits=3))
     if "predicted_return_20d" in detail_df.columns:
-        detail_df["20일 예상 수익률(%)"] = detail_df["predicted_return_20d"].map(lambda v: _format_percentage_text(v, digits=3))
+        detail_df["20일 예상 수익률(%)"] = detail_df["predicted_return_20d"].map(lambda v: formatter_format_percentage_text(v, digits=3))
     if "up_probability_5d" in detail_df.columns:
         detail_df["5일 상승확률(%)"] = detail_df["up_probability_5d"].map(
-            lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
+            lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True)
         )
     if "up_probability_20d" in detail_df.columns:
         detail_df["20일 상승확률(%)"] = detail_df["up_probability_20d"].map(
-            lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
+            lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True)
         )
     detail_df["confidence_score_display"] = detail_df["confidence_score"].map(
-        lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
+        lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True)
     )
     detail_df["history_direction_accuracy_display"] = detail_df["history_direction_accuracy"].map(
-        lambda v: _format_percentage_text(v, digits=1, unit_interval=True)
+        lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True)
     )
     detail_df = _drop_empty_detail_columns(detail_df)
     simple_df = _build_result_simple(detail_df)
