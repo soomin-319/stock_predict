@@ -22,11 +22,13 @@ Outputs are always saved under ./result as:
 - result_simple.csv
 """
 
+import logging
 import sys
 from pathlib import Path
 
 import pandas as pd
 
+_LOGGER = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -113,8 +115,9 @@ def run_colab_pipeline(
     if bootstrap_default_symbols and _should_bootstrap_default_symbols(input_csv):
         default_symbols = _fallback_symbols_from_input_or_default(input_csv)
         bootstrap_target = PROJECT_ROOT / "data" / "real_ohlcv.csv"
-        print(
-            f"[Colab] demo/placeholder 입력을 감지해 기본 KRX 유니버스를 먼저 수집합니다: {len(default_symbols)} symbols"
+        _LOGGER.debug(
+            "[Colab] demo/placeholder 입력을 감지해 기본 KRX 유니버스를 먼저 수집합니다: %d symbols",
+            len(default_symbols),
         )
         save_real_ohlcv_csv(bootstrap_target, symbols=default_symbols, start=real_start)
         pipeline_input = str(Path("data") / "real_ohlcv.csv")

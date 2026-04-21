@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import logging
 import re
 import hashlib
 import os
@@ -21,6 +22,8 @@ from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+
+_LOGGER = logging.getLogger(__name__)
 
 from src.data.investor_context import collect_context_raw_events
 from src.data.krx_universe import find_symbol_candidates_by_name, get_symbol_name_map
@@ -1728,12 +1731,12 @@ def prewarm_prediction_cache(runtime_config: PipelineRuntimeConfig | None = None
             cached = pd.read_csv(result_simple_path, dtype={"종목코드": str}, encoding="utf-8-sig")
             cached_meta = _load_prewarm_meta(meta_path)
             if not cached.empty and cached_meta.get("signature_hash") == signature_hash:
-                print(f"[KAKAO BOT] 기존 예측 캐시를 재사용합니다: {result_simple_path}")
+                _LOGGER.debug("[KAKAO BOT] 기존 예측 캐시를 재사용합니다: %s", result_simple_path)
                 return {"result_simple_csv": str(result_simple_path)}
         except Exception as exc:
-            print(f"[KAKAO BOT] 기존 예측 캐시 확인 실패. 캐시를 다시 생성합니다: {exc}")
+            _LOGGER.debug("[KAKAO BOT] 기존 예측 캐시 확인 실패. 캐시를 다시 생성합니다: %s", exc)
 
-    print("[KAKAO BOT] 기본 심볼 예측 캐시를 미리 생성합니다...")
+    _LOGGER.debug("[KAKAO BOT] 기본 심볼 예측 캐시를 미리 생성합니다...")
     from colab.stock_predict_colab import run_colab_pipeline
 
     outputs = run_colab_pipeline(
@@ -1749,7 +1752,7 @@ def prewarm_prediction_cache(runtime_config: PipelineRuntimeConfig | None = None
         real_start=cfg.real_start,
     )
     _write_prewarm_meta(meta_path, {"signature": signature, "signature_hash": signature_hash})
-    print(f"[KAKAO BOT] 기본 심볼 예측 캐시 준비 완료: {outputs.get('result_simple_csv', '')}")
+    _LOGGER.debug("[KAKAO BOT] 기본 심볼 예측 캐시 준비 완료: %s", outputs.get('result_simple_csv', ''))
     return outputs
 
 

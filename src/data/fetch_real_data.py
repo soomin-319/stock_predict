@@ -75,14 +75,13 @@ def _normalize_yf_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def _safe_download_ohlcv(symbol: str, start: str, end: str | None = None) -> pd.DataFrame:
     try:
-        return yf.download(
-            symbol,
-            start=start,
-            end=end,
-            auto_adjust=False,
-            progress=False,
-            threads=False,
-        )
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(start=start, end=end, auto_adjust=False)
+        if df.empty:
+            return pd.DataFrame()
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+        return df
     except Exception as exc:
         _LOGGER.warning("yfinance download failed for %s: %s: %s", symbol, type(exc).__name__, exc)
         return pd.DataFrame()
