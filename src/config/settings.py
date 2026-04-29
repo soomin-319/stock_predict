@@ -47,6 +47,8 @@ class TrainingConfig:
     purge_gap_days: int = 20
     # Additional buffer after purge to dampen serial-correlation carryover.
     embargo_days: int = 0
+    # 최종 모델 학습에 사용할 최근 거래일 수 (0 = 전체 히스토리 사용)
+    final_model_lookback_days: int = 252 * 3
 
 
 @dataclass
