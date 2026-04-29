@@ -103,19 +103,8 @@ def _position_size_hint(confidence_score: float | int | None, risk_flag_value: s
 
 
 def _policy_recommendation(row: pd.Series, cfg: InvestmentCriteriaConfig | None = None) -> str:
-    criteria = _criteria(cfg)
-    signal = row.get("signal_score")
     predicted_return = row.get("predicted_return")
-    up_probability = row.get("up_probability")
-    uncertainty_score = row.get("uncertainty_score")
-    nq_ret = pd.to_numeric(pd.Series([row.get("nq_f_ret_1d")]), errors="coerce").iloc[0]
-    rsi = pd.to_numeric(pd.Series([row.get("rsi_14")]), errors="coerce").iloc[0]
-
-    if not pd.isna(nq_ret) and nq_ret <= float(criteria.nasdaq_headwind_threshold):
-        return "매도"
-    if not pd.isna(rsi) and rsi >= float(criteria.rsi_overbought):
-        return "매도"
-    return recommendation_from_signal(signal, predicted_return, up_probability, uncertainty_score)
+    return recommendation_from_signal(None, predicted_return)
 
 
 def _format_percentage_text(value, digits: int = 1, unit_interval: bool = False) -> str:
