@@ -7,13 +7,6 @@ from src.config.settings import SignalConfig
 from src.models.lgbm_heads import MultiHeadPrediction
 
 
-def normalize_series(values: pd.Series) -> pd.Series:
-    std = values.std()
-    if std == 0 or np.isnan(std):
-        return pd.Series(0.0, index=values.index)
-    return (values - values.mean()) / std
-
-
 def percentile_score(values: pd.Series) -> pd.Series:
     valid = values.dropna()
     if valid.empty:
@@ -45,10 +38,10 @@ def build_prediction_frame(
     out["uncertainty_band"] = pd.Series(pred.quantile_low, index=out.index).map(lambda v: f"{float(v):.3f}") + " ~ " + pd.Series(pred.quantile_high, index=out.index).map(lambda v: f"{float(v):.3f}")
 
     out["rel_strength"] = percentile_score(out["predicted_log_return"]) - 0.5
-    # 과거 z-score + clip 방식은 음수 구간이 전부 0이 되어 정보가 손실될 수 있어,
-    # 0~1 분위 백분위 점수로 치환한다.
+    # z-score 방식은 범위가 무한하여 signal_score 임계값(0.25/0.55)과 스케일이 맞지 않아
+    # uncertainty_score와 동일하게 0~1 분위 백분위 점수로 치환한다.
     out["uncertainty_score"] = percentile_score(out["uncertainty_width"])
-    out["norm_return"] = normalize_series(out["predicted_log_return"])
+    out["norm_return"] = percentile_score(out["predicted_log_return"])
     out["event_boost_score"] = 0.0
 
     out["signal_score"] = (

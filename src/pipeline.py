@@ -509,7 +509,7 @@ def _compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
     actual_up = (df["target_log_return"] > 0).astype(int)
 
     rel_dir_acc = float(((df["rel_strength"] > 0).astype(int) == actual_up).mean())
-    norm_dir_acc = float(((df["norm_return"] > 0).astype(int) == actual_up).mean())
+    norm_dir_acc = float(((df["norm_return"] > 0.5).astype(int) == actual_up).mean())
     pred_dir_acc = float(((df["predicted_log_return"] > 0).astype(int) == actual_up).mean())
 
     abs_error = (df["predicted_log_return"] - df["target_log_return"]).abs()
