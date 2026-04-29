@@ -14,6 +14,13 @@ from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegress
 
 MODEL_ARTIFACT_VERSION = 1
 
+
+def _fit_one(task):
+    """joblib Parallel 호환을 위한 모듈 수준 헬퍼."""
+    model, x, y = task
+    model.fit(x, y)
+    return model
+
 try:
     import lightgbm as lgb
 
@@ -104,37 +111,45 @@ class MultiHeadStockModel:
         x = train[feature_columns]
         y_reg = train["target_log_return"]
         y_cls = train["target_up"]
-
         self._feature_columns = feature_columns
-        self.reg_model = self._build_regressor()
-        self.reg_model.fit(x, y_reg)
 
-        self.cls_model = self._build_classifier()
-        self.cls_model.fit(x, y_cls)
+        # 모든 독립 모델 학습 태스크를 수집한다.
+        tasks: list[tuple] = [
+            (self._build_regressor(), x, y_reg),
+            (self._build_classifier(), x, y_cls),
+            *[(self._build_regressor(loss="quantile", alpha=q), x, y_reg) for q in quantiles],
+        ]
 
-        self.quantile_models = {}
-        for q in quantiles:
-            qm = self._build_regressor(loss="quantile", alpha=q)
-            qm.fit(x, y_reg)
-            self.quantile_models[q] = qm
-
-        self.horizon_reg_models = {}
-        self.horizon_cls_models = {}
+        # ⑤: train은 이미 feature_columns에 NaN이 없으므로 호라이즌 타깃만 추가로 검사한다.
+        horizon_order: list[int] = []
         for horizon in (5, 20):
             reg_target = f"target_log_return_{horizon}d"
             cls_target = f"target_up_{horizon}d"
             if reg_target not in train.columns or cls_target not in train.columns:
                 continue
-            horizon_train = train.dropna(subset=feature_columns + [reg_target, cls_target])
+            horizon_train = train.dropna(subset=[reg_target, cls_target])
             if horizon_train.empty:
                 continue
-            horizon_x = horizon_train[feature_columns]
-            reg_model = self._build_regressor()
-            reg_model.fit(horizon_x, horizon_train[reg_target])
-            cls_model = self._build_classifier()
-            cls_model.fit(horizon_x, horizon_train[cls_target])
-            self.horizon_reg_models[horizon] = reg_model
-            self.horizon_cls_models[horizon] = cls_model
+            hx = horizon_train[feature_columns]
+            tasks.append((self._build_regressor(), hx, horizon_train[reg_target]))
+            tasks.append((self._build_classifier(), hx, horizon_train[cls_target]))
+            horizon_order.append(horizon)
+
+        # ③: LightGBM은 C++ 구간에서 GIL을 해제하므로 스레드 병렬로 실질적인 속도 향상이 가능하다.
+        fitted = joblib.Parallel(n_jobs=-1, prefer="threads")(
+            joblib.delayed(_fit_one)(task) for task in tasks
+        )
+
+        self.reg_model = fitted[0]
+        self.cls_model = fitted[1]
+        self.quantile_models = {q: fitted[2 + i] for i, q in enumerate(quantiles)}
+
+        base = 2 + len(quantiles)
+        self.horizon_reg_models = {}
+        self.horizon_cls_models = {}
+        for i, horizon in enumerate(horizon_order):
+            self.horizon_reg_models[horizon] = fitted[base + i * 2]
+            self.horizon_cls_models[horizon] = fitted[base + i * 2 + 1]
 
     def predict(self, df: pd.DataFrame) -> MultiHeadPrediction:
         if not self._feature_columns:

@@ -32,6 +32,7 @@ from src.domain.signal_policy import (
     recommendation_from_signal as domain_recommendation_from_signal,
     vectorized_event_signal_boost,
 )
+from src.inference.predict import signal_label_series
 from src.features.external_features import add_external_market_features_with_coverage
 from src.features.investment_signals import add_investment_signal_features
 from src.features.price_features import build_features
@@ -787,13 +788,15 @@ def run_pipeline(
     cfg.signal.rel_strength_weight = tuned["rel_strength_weight"]
     cfg.signal.uncertainty_penalty = tuned["uncertainty_penalty"]
 
-    scored_oof = build_scored_prediction_frame(
-        oof,
-        oof_pred,
-        cfg.signal,
-        prediction_context,
-        investment_criteria=cfg.investment_criteria,
+    # ④: signal_score만 새 가중치로 갱신 (나머지 피처/이벤트 부스트는 불변)
+    scored_oof["signal_score"] = (
+        cfg.signal.return_weight * scored_oof["norm_return"]
+        + cfg.signal.up_prob_weight * scored_oof["up_probability"]
+        + cfg.signal.rel_strength_weight * scored_oof["rel_strength"]
+        - cfg.signal.uncertainty_penalty * scored_oof["uncertainty_score"]
+        + scored_oof["event_boost_score"].fillna(0.0)
     )
+    scored_oof["signal_label"] = signal_label_series(scored_oof["signal_score"])
     scored_oof["coverage_gate_status"] = coverage_gate_status
     tune_df, eval_df = _split_oof_for_tuning_and_eval(scored_oof, tune_ratio=0.7)
 
