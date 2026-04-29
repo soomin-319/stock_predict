@@ -814,6 +814,10 @@ def run_pipeline(
 
     _print_progress(12, total_steps, "Training final model and creating latest predictions")
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
+    lookback = int(getattr(cfg.training, "final_model_lookback_days", 0) or 0)
+    if lookback > 0:
+        cutoff_dates = sorted(train_df["Date"].unique())[-lookback:]
+        train_df = train_df[train_df["Date"].isin(cutoff_dates)]
     model = MultiHeadStockModel(
         random_state=cfg.training.random_state,
         n_jobs=cfg.training.model_n_jobs,
