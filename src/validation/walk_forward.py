@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+import os
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass, replace
 from functools import partial
-from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 import pandas as pd
@@ -103,13 +104,18 @@ def _execute_folds(folds: List[FoldInput], feature_columns: List[str], cfg: Trai
     if not folds:
         return []
 
-    max_workers = max(1, int(getattr(cfg, "walk_forward_n_jobs", 1) or 1))
-    if max_workers == 1 or len(folds) == 1:
+    n_jobs = int(getattr(cfg, "walk_forward_n_jobs", 1) or 1)
+    cpu_count = os.cpu_count() or 1
+    worker_count = min(cpu_count if n_jobs == -1 else max(1, n_jobs), len(folds))
+
+    if worker_count == 1:
         return [_run_fold(fold, feature_columns, cfg) for fold in folds]
 
-    worker_count = min(max_workers, len(folds))
-    run_fold = partial(_run_fold, feature_columns=feature_columns, cfg=cfg)
-    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+    # 여러 프로세스가 동시에 실행될 때 모델 내부 스레드 수를 1로 제한해
+    # CPU 과점유(worker_count × model_n_jobs)를 방지한다.
+    parallel_cfg = replace(cfg, model_n_jobs=1)
+    run_fold = partial(_run_fold, feature_columns=feature_columns, cfg=parallel_cfg)
+    with ProcessPoolExecutor(max_workers=worker_count) as executor:
         return list(executor.map(run_fold, folds))
 
 
