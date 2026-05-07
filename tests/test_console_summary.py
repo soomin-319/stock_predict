@@ -58,7 +58,7 @@ def test_policy_recommendation_forces_sell_on_strong_nasdaq_headwind_and_overbou
     assert _policy_recommendation(pd.Series({"signal_score": 0.9, "predicted_return": 3.0, "up_probability": 0.8, "uncertainty_score": 0.1, "nq_f_ret_1d": 0.012, "rsi_14": 72})) == "매도"
 
 
-def test_build_result_simple_includes_up_probability_and_intuitive_flow_reason():
+def test_build_result_simple_includes_up_probability_and_confidence():
     df = pd.DataFrame(
         [
             {
@@ -85,10 +85,10 @@ def test_build_result_simple_includes_up_probability_and_intuitive_flow_reason()
     assert "상승확률(%)" in simple.columns
     assert simple.loc[0, "상승확률(%)"] == "80.0%"
     assert simple.loc[0, "예측 신뢰도"] == "75.0%"
-    assert "거래대금 상위권" in simple.loc[0, "예측 이유"]
+    assert "예측 이유" not in simple.columns
 
 
-def test_build_result_simple_mentions_top_turnover_only_as_probability_tailwind():
+def test_build_result_simple_excludes_legacy_reason_columns():
     df = pd.DataFrame(
         [
             {
@@ -110,7 +110,7 @@ def test_build_result_simple_mentions_top_turnover_only_as_probability_tailwind(
 
     simple = _build_result_simple(df)
 
-    assert "거래대금 상위 15위" in simple.loc[0, "예측 이유"]
+    assert "예측 이유" not in simple.columns
 
 
 def test_apply_event_signal_boost_preserves_probability_and_adds_event_score():
