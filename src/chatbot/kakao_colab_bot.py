@@ -628,8 +628,6 @@ class KakaoColabPredictionBot:
         up_probability = self._format_percent(row.get("상승확률(%)"))
         predicted_close = self._format_price(row.get("내일 예상 종가"))
         confidence = self._format_confidence(row.get("예측 신뢰도"))
-        reason_lines = self._format_reason_for_display(row.get("예측 이유"))
-        rationale_block = self._build_rationale_block(reason_lines)
         issue_block = self._build_issue_summary_block(row)
         return (
             f"[{code} {name}]\n"
@@ -638,7 +636,6 @@ class KakaoColabPredictionBot:
             f"내일 예측 수익률: {predicted_return}\n"
             f"내일 예측 종가: {predicted_close}\n"
             f"신뢰도: {confidence}\n"
-            f"{rationale_block}"
             f"{issue_block}"
         )
 
