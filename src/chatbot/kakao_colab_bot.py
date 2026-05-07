@@ -29,6 +29,7 @@ from src.data.investor_context import collect_context_raw_events
 from src.data.krx_universe import find_symbol_candidates_by_name, get_symbol_name_map
 from src.data.fetch_real_data import normalize_user_symbols
 from src.reports.issue_summary import append_issue_summary_columns
+from src.reports.result_formatter import validate_result_simple_schema
 
 
 _STOCK_CODE_PATTERN = re.compile(r"\b\d{6}(?:\.(?:KS|KQ))?\b", re.IGNORECASE)
@@ -590,6 +591,10 @@ class KakaoColabPredictionBot:
                 return self._result_simple_cache.copy()
         try:
             loaded = pd.read_csv(self.result_simple_path, dtype={"종목코드": str}, encoding="utf-8-sig")
+            ok, missing = validate_result_simple_schema(loaded)
+            if not ok:
+                self._console_log(f"예측 캐시 CSV 스키마 불일치: 필수 컬럼 누락 {missing}. 파일={self.result_simple_path}")
+                return pd.DataFrame()
             with self._state_lock:
                 self._result_simple_cache = loaded
                 self._result_simple_cache_mtime_ns = stat_mtime_ns
@@ -638,39 +643,6 @@ class KakaoColabPredictionBot:
             f"신뢰도: {confidence}\n"
             f"{issue_block}"
         )
-
-    # Backward-compatible shim for legacy runtime objects that still reference this method.
-    def _format_reason_for_display(self, reason: Any) -> list[str]:
-        if reason is None or pd.isna(reason):
-            return []
-        raw = str(reason).strip()
-        if not raw:
-            return []
-        normalized = raw.replace("\n", " / ")
-        parts = [part.strip() for part in normalized.split("/") if part.strip()]
-        return parts
-
-    def _build_rationale_block(self, reason_lines: list[str]) -> str:
-        normalized_reasons = self._normalize_reason_labels(reason_lines)
-        if not normalized_reasons:
-            return ""
-        return f"사유: {', '.join(normalized_reasons)}\n"
-
-    def _normalize_reason_labels(self, reason_lines: list[str]) -> list[str]:
-        normalized: list[str] = []
-        for reason_line in reason_lines:
-            text = str(reason_line).strip()
-            if not text or text == "예측 이유 정보가 없습니다.":
-                continue
-            if "거래대금" in text and "상위" in text:
-                label = "거래대금 상위"
-            elif "외국인" in text and "기관" in text and "순매수" in text:
-                label = "외국인/기관 순매수"
-            else:
-                label = re.sub(r"^[^:]+:\s*", "", text).strip().rstrip(".")
-            if label and label not in normalized:
-                normalized.append(label)
-        return normalized
 
     def _build_issue_summary_block(self, row: pd.Series) -> str:
         disclosure_text = self._get_clean_issue_text(row.get("공시 요약"))

@@ -4,6 +4,20 @@ import unicodedata
 
 import pandas as pd
 
+RESULT_SIMPLE_REQUIRED_COLUMNS = (
+    "종목코드",
+    "종목명",
+    "권고",
+    "내일 예상 종가",
+    "내일 예상 수익률(%)",
+    "상승확률(%)",
+    "예측 신뢰도",
+)
+RESULT_SIMPLE_OPTIONAL_COLUMNS = (
+    "공시 요약",
+    "뉴스 요약",
+)
+
 
 def display_width(text: str) -> int:
     width = 0
@@ -65,7 +79,15 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
     simple["_sort_confidence"] = pd.to_numeric(out["confidence_score"], errors="coerce").values
     simple["_sort_return"] = pd.to_numeric(out["predicted_return"], errors="coerce").values
     simple = simple.sort_values(["_sort_confidence", "_sort_return"], ascending=[False, False]).reset_index(drop=True)
-    return simple.drop(columns=["_sort_confidence", "_sort_return"])
+    simple = simple.drop(columns=["_sort_confidence", "_sort_return"])
+    # Schema contract: keep only current public columns in stable order.
+    ordered = [*RESULT_SIMPLE_REQUIRED_COLUMNS, *[c for c in RESULT_SIMPLE_OPTIONAL_COLUMNS if c in simple.columns]]
+    return simple.reindex(columns=ordered)
+
+
+def validate_result_simple_schema(df: pd.DataFrame) -> tuple[bool, list[str]]:
+    missing = [c for c in RESULT_SIMPLE_REQUIRED_COLUMNS if c not in df.columns]
+    return (len(missing) == 0, missing)
 
 
 def print_prediction_console_summary(pred_df: pd.DataFrame):
@@ -119,9 +141,12 @@ def _display_width(text: str) -> int:
 
 
 __all__ = [
+    "RESULT_SIMPLE_OPTIONAL_COLUMNS",
+    "RESULT_SIMPLE_REQUIRED_COLUMNS",
     "build_result_simple",
     "display_width",
     "format_percentage_text",
     "pad_display",
     "print_prediction_console_summary",
+    "validate_result_simple_schema",
 ]
