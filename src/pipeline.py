@@ -849,7 +849,6 @@ def run_pipeline(
         summarize_symbols=issue_summary_symbols,
     )
     pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True))
-    pred_df["예측 이유"] = pred_df["prediction_reason"]
     pred_df["권고"] = pred_df["recommendation"]
 
     bt_summary_cols = _backtest_summary_fields(backtest)

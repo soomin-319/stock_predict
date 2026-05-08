@@ -29,6 +29,7 @@ from src.data.investor_context import collect_context_raw_events
 from src.data.krx_universe import find_symbol_candidates_by_name, get_symbol_name_map
 from src.data.fetch_real_data import normalize_user_symbols
 from src.reports.issue_summary import append_issue_summary_columns
+from src.reports.result_formatter import validate_result_simple_schema
 
 
 _STOCK_CODE_PATTERN = re.compile(r"\b\d{6}(?:\.(?:KS|KQ))?\b", re.IGNORECASE)
@@ -294,9 +295,9 @@ class KakaoColabPredictionBot:
         cached_row = None if force_refresh else self._find_cached_prediction(symbol)
         if cached_row is not None:
             self._update_session(user_id, symbol=symbol, intent="tracking")
-            if self._is_prediction_row_stale(cached_row):
-                self._console_log(f"{display_code} 캐시 예측 기준일이 오래되어 최신 예측을 재실행합니다.")
-                return self._start_job_response(symbol, retry=True)
+            # Auto-refresh on stale cache is disabled to avoid unnecessary
+            # re-prediction after bootstrap runs. Users can explicitly request
+            # refresh with "최신화".
             if not self._has_issue_summary(cached_row):
                 if self.runtime_config.async_issue_summary_on_demand:
                     self._start_issue_summary_background(symbol, cached_row)
@@ -590,6 +591,10 @@ class KakaoColabPredictionBot:
                 return self._result_simple_cache.copy()
         try:
             loaded = pd.read_csv(self.result_simple_path, dtype={"종목코드": str}, encoding="utf-8-sig")
+            ok, missing = validate_result_simple_schema(loaded)
+            if not ok:
+                self._console_log(f"예측 캐시 CSV 스키마 불일치: 필수 컬럼 누락 {missing}. 파일={self.result_simple_path}")
+                return pd.DataFrame()
             with self._state_lock:
                 self._result_simple_cache = loaded
                 self._result_simple_cache_mtime_ns = stat_mtime_ns
@@ -628,8 +633,6 @@ class KakaoColabPredictionBot:
         up_probability = self._format_percent(row.get("상승확률(%)"))
         predicted_close = self._format_price(row.get("내일 예상 종가"))
         confidence = self._format_confidence(row.get("예측 신뢰도"))
-        reason_lines = self._format_reason_for_display(row.get("예측 이유"))
-        rationale_block = self._build_rationale_block(reason_lines)
         issue_block = self._build_issue_summary_block(row)
         return (
             f"[{code} {name}]\n"
@@ -638,42 +641,8 @@ class KakaoColabPredictionBot:
             f"내일 예측 수익률: {predicted_return}\n"
             f"내일 예측 종가: {predicted_close}\n"
             f"신뢰도: {confidence}\n"
-            f"{rationale_block}"
             f"{issue_block}"
         )
-
-    # Backward-compatible shim for legacy runtime objects that still reference this method.
-    def _format_reason_for_display(self, reason: Any) -> list[str]:
-        if reason is None or pd.isna(reason):
-            return []
-        raw = str(reason).strip()
-        if not raw:
-            return []
-        normalized = raw.replace("\n", " / ")
-        parts = [part.strip() for part in normalized.split("/") if part.strip()]
-        return parts
-
-    def _build_rationale_block(self, reason_lines: list[str]) -> str:
-        normalized_reasons = self._normalize_reason_labels(reason_lines)
-        if not normalized_reasons:
-            return ""
-        return f"사유: {', '.join(normalized_reasons)}\n"
-
-    def _normalize_reason_labels(self, reason_lines: list[str]) -> list[str]:
-        normalized: list[str] = []
-        for reason_line in reason_lines:
-            text = str(reason_line).strip()
-            if not text or text == "예측 이유 정보가 없습니다.":
-                continue
-            if "거래대금" in text and "상위" in text:
-                label = "거래대금 상위"
-            elif "외국인" in text and "기관" in text and "순매수" in text:
-                label = "외국인/기관 순매수"
-            else:
-                label = re.sub(r"^[^:]+:\s*", "", text).strip().rstrip(".")
-            if label and label not in normalized:
-                normalized.append(label)
-        return normalized
 
     def _build_issue_summary_block(self, row: pd.Series) -> str:
         disclosure_text = self._get_clean_issue_text(row.get("공시 요약"))
@@ -1215,6 +1184,7 @@ class KakaoColabPredictionBot:
         symbol: str,
         use_timeout_for_live_fetch: bool = True,
         use_timeout_for_summary: bool = True,
+        log_completion: bool = True,
     ) -> pd.Series:
         if self._has_issue_summary(row):
             self._cache_issue_summary(symbol, row)
@@ -1312,9 +1282,10 @@ class KakaoColabPredictionBot:
         for col in ["오늘 종목 이슈 한줄 요약", "공시 요약", "뉴스 요약", "종합 판단", "주의사항", "원문 개수", "핵심 원문 목록"]:
             out[col] = summarized.get(col)
         self._cache_issue_summary(symbol, out)
-        self._console_log(
-            f"{self._display_code(symbol)} 요약 생성 완료 (기준일 {used_date.strftime('%Y-%m-%d')}, 공시 {disclosure_count}건, 뉴스 {news_count}건)."
-        )
+        if log_completion:
+            self._console_log(
+                f"{self._display_code(symbol)} 요약 생성 완료 (기준일 {used_date.strftime('%Y-%m-%d')}, 공시 {disclosure_count}건, 뉴스 {news_count}건)."
+            )
         return out
 
     def _collect_live_symbol_events_with_compat(self, symbol: str, reference_date: str, use_timeout: bool) -> pd.DataFrame:
@@ -1410,6 +1381,7 @@ class KakaoColabPredictionBot:
                 symbol,
                 use_timeout_for_live_fetch=False,
                 use_timeout_for_summary=False,
+                log_completion=False,
             )
             if self._has_issue_summary(summarized):
                 self._cache_issue_summary(symbol, summarized)

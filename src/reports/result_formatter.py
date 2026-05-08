@@ -4,6 +4,20 @@ import unicodedata
 
 import pandas as pd
 
+RESULT_SIMPLE_REQUIRED_COLUMNS = (
+    "종목코드",
+    "종목명",
+    "권고",
+    "내일 예상 종가",
+    "내일 예상 수익률(%)",
+    "상승확률(%)",
+    "예측 신뢰도",
+)
+RESULT_SIMPLE_OPTIONAL_COLUMNS = (
+    "공시 요약",
+    "뉴스 요약",
+)
+
 
 def display_width(text: str) -> int:
     width = 0
@@ -38,7 +52,6 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
         + pd.to_numeric(out.get("history_direction_accuracy"), errors="coerce").fillna(0.5) * 0.5
     )
     out["예측 신뢰도"] = display_confidence.map(lambda v: format_percentage_text(v, digits=1, unit_interval=True))
-    out["예측 이유"] = out["prediction_reason"].astype(str)
     up_prob_series = pd.to_numeric(out["up_probability"], errors="coerce") if "up_probability" in out.columns else pd.Series(0.5, index=out.index)
     out["상승확률(%)"] = up_prob_series.map(lambda v: format_percentage_text(v, digits=1, unit_interval=True))
 
@@ -47,46 +60,34 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
             "종목코드",
             "종목명",
             "권고",
-            "risk_flag",
             "predicted_close",
             "predicted_return",
-            *([c for c in ["predicted_return_5d", "predicted_return_20d"] if c in out.columns]),
             "상승확률(%)",
-            *([c for c in ["up_probability_5d", "up_probability_20d"] if c in out.columns]),
             "예측 신뢰도",
-            "예측 이유",
             *([c for c in ["공시 요약", "뉴스 요약"] if c in out.columns]),
         ]
     ].rename(
         columns={
             "predicted_close": "내일 예상 종가",
             "predicted_return": "내일 예상 수익률(%)",
-            "predicted_return_5d": "5일 예상 수익률(%)",
-            "predicted_return_20d": "20일 예상 수익률(%)",
-            "up_probability_5d": "5일 상승확률(%)",
-            "up_probability_20d": "20일 상승확률(%)",
         }
     )
     simple["내일 예상 종가"] = pd.to_numeric(simple["내일 예상 종가"], errors="coerce").map(
         lambda v: "-" if pd.isna(v) else f"{float(v):,.0f}원"
     )
     simple["내일 예상 수익률(%)"] = out["predicted_return"].map(lambda v: format_percentage_text(v, digits=3))
-    if "5일 예상 수익률(%)" in simple.columns:
-        simple["5일 예상 수익률(%)"] = out["predicted_return_5d"].map(lambda v: format_percentage_text(v, digits=3))
-    if "20일 예상 수익률(%)" in simple.columns:
-        simple["20일 예상 수익률(%)"] = out["predicted_return_20d"].map(lambda v: format_percentage_text(v, digits=3))
-    if "5일 상승확률(%)" in simple.columns:
-        simple["5일 상승확률(%)"] = pd.to_numeric(out["up_probability_5d"], errors="coerce").map(
-            lambda v: format_percentage_text(v, digits=1, unit_interval=True)
-        )
-    if "20일 상승확률(%)" in simple.columns:
-        simple["20일 상승확률(%)"] = pd.to_numeric(out["up_probability_20d"], errors="coerce").map(
-            lambda v: format_percentage_text(v, digits=1, unit_interval=True)
-        )
     simple["_sort_confidence"] = pd.to_numeric(out["confidence_score"], errors="coerce").values
     simple["_sort_return"] = pd.to_numeric(out["predicted_return"], errors="coerce").values
     simple = simple.sort_values(["_sort_confidence", "_sort_return"], ascending=[False, False]).reset_index(drop=True)
-    return simple.drop(columns=["_sort_confidence", "_sort_return"])
+    simple = simple.drop(columns=["_sort_confidence", "_sort_return"])
+    # Schema contract: keep only current public columns in stable order.
+    ordered = [*RESULT_SIMPLE_REQUIRED_COLUMNS, *[c for c in RESULT_SIMPLE_OPTIONAL_COLUMNS if c in simple.columns]]
+    return simple.reindex(columns=ordered)
+
+
+def validate_result_simple_schema(df: pd.DataFrame) -> tuple[bool, list[str]]:
+    missing = [c for c in RESULT_SIMPLE_REQUIRED_COLUMNS if c not in df.columns]
+    return (len(missing) == 0, missing)
 
 
 def print_prediction_console_summary(pred_df: pd.DataFrame):
@@ -140,9 +141,12 @@ def _display_width(text: str) -> int:
 
 
 __all__ = [
+    "RESULT_SIMPLE_OPTIONAL_COLUMNS",
+    "RESULT_SIMPLE_REQUIRED_COLUMNS",
     "build_result_simple",
     "display_width",
     "format_percentage_text",
     "pad_display",
     "print_prediction_console_summary",
+    "validate_result_simple_schema",
 ]
