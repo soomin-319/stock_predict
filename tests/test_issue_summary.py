@@ -7,7 +7,12 @@ from src.reports.issue_summary import (
     _llm_symbol_issue_summary,
     append_issue_summary_columns,
 )
-from src.reports.result_formatter import build_result_simple
+from src.reports.result_formatter import (
+    RESULT_SIMPLE_OPTIONAL_COLUMNS,
+    RESULT_SIMPLE_REQUIRED_COLUMNS,
+    build_result_simple,
+    validate_result_simple_schema,
+)
 
 
 def test_append_issue_summary_columns_keeps_prediction_values_unchanged():
@@ -78,6 +83,17 @@ def test_build_result_simple_excludes_removed_columns_and_keeps_issue_summary_co
     assert "주의사항" not in simple.columns
     assert "원문 개수" not in simple.columns
     assert "핵심 원문 목록" not in simple.columns
+    assert list(simple.columns) == [*RESULT_SIMPLE_REQUIRED_COLUMNS, *RESULT_SIMPLE_OPTIONAL_COLUMNS]
+
+
+def test_validate_result_simple_schema_requires_current_contract():
+    ok, missing = validate_result_simple_schema(pd.DataFrame(columns=list(RESULT_SIMPLE_REQUIRED_COLUMNS)))
+    assert ok is True
+    assert missing == []
+
+    ok2, missing2 = validate_result_simple_schema(pd.DataFrame(columns=["종목코드", "종목명"]))
+    assert ok2 is False
+    assert "권고" in missing2
 
 
 def test_append_issue_summary_columns_uses_llm_for_summary_only(monkeypatch):

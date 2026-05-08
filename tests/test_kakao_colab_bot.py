@@ -110,7 +110,7 @@ def test_returns_cached_prediction_message_from_kakao_payload(tmp_path: Path):
     assert "권고: 매수" in text
     assert "[005930 삼성전자]" in text
     assert "상승확률: 78.9%" in text
-    assert "사유: 테스트 사유" in text
+    assert "사유:" not in text
     assert response["template"]["quickReplies"][0]["label"] == "최신화"
 
 
@@ -204,7 +204,7 @@ def test_cached_prediction_generates_issue_summary_for_each_requested_symbol_wit
     assert captured[1]["symbol"] == "000660.KS"
 
 
-def test_cached_prediction_retries_when_detail_date_is_too_old(tmp_path: Path, monkeypatch):
+def test_cached_prediction_reuses_cache_when_detail_date_is_too_old(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
     pd.DataFrame(
@@ -219,7 +219,8 @@ def test_cached_prediction_retries_when_detail_date_is_too_old(tmp_path: Path, m
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-stale"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert "최신 예측을 다시 시작합니다" in text
+    assert "최신 예측을 다시 시작합니다" not in text
+    assert "[000660 SK하이닉스]" in text
 
 
 def test_collect_live_events_uses_short_ttl_cache(tmp_path: Path, monkeypatch):
@@ -616,7 +617,7 @@ def test_additional_symbol_request_generates_summary_when_placeholder_exists(tmp
     assert calls["count"] == 1
 
 
-def test_cached_prediction_with_empty_issue_placeholders_triggers_async_summary_progress(tmp_path: Path, monkeypatch):
+def test_cached_prediction_with_empty_issue_placeholders_does_not_trigger_async_summary(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(
@@ -647,8 +648,10 @@ def test_cached_prediction_with_empty_issue_placeholders_triggers_async_summary_
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-empty-issue"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert "공시/뉴스 요약 작업을 진행 중" in text
-    assert calls["count"] == 1
+    assert "[공시 요약]" in text
+    assert "[뉴스 요약]" in text
+    assert "공시/뉴스 요약 작업을 진행 중" not in text
+    assert calls["count"] == 0
 
 
 def test_repeated_request_while_running_shows_running_message(tmp_path: Path):
@@ -1585,3 +1588,33 @@ def test_load_result_news_merges_result_disclosure(tmp_path: Path):
 
     assert len(merged) == 2
     assert set(merged["source_type"].astype(str)) == {"news", "disclosure"}
+
+def test_log_completion_preview_does_not_rerun_issue_summary(tmp_path: Path, monkeypatch):
+    bot = make_bot(tmp_path)
+    row = pd.Series(
+        {
+            "종목코드": "005930",
+            "종목명": "삼성전자",
+            "권고": "매수",
+            "내일 예상 종가": 71200,
+            "내일 예상 수익률(%)": "1.2%",
+            "상승확률(%)": "70.0%",
+            "예측 신뢰도": "80.0%",
+            "공시 요약": "당일 공시 없음.",
+            "뉴스 요약": "당일 뉴스 없음.",
+        }
+    )
+
+    monkeypatch.setattr(bot, "_find_cached_prediction", lambda symbol: row)
+
+    called = {"count": 0}
+
+    def _fail_attach(*args, **kwargs):
+        called["count"] += 1
+        raise AssertionError("_safe_attach_issue_summary should not be called")
+
+    monkeypatch.setattr(bot, "_safe_attach_issue_summary", _fail_attach)
+    monkeypatch.setattr(bot, "_console_log", lambda _message: None)
+
+    bot._log_completion_preview("005930.KS")
+    assert called["count"] == 0
