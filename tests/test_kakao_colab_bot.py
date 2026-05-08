@@ -204,7 +204,7 @@ def test_cached_prediction_generates_issue_summary_for_each_requested_symbol_wit
     assert captured[1]["symbol"] == "000660.KS"
 
 
-def test_cached_prediction_retries_when_detail_date_is_too_old(tmp_path: Path, monkeypatch):
+def test_cached_prediction_reuses_cache_when_detail_date_is_too_old(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
     pd.DataFrame(
@@ -219,7 +219,8 @@ def test_cached_prediction_retries_when_detail_date_is_too_old(tmp_path: Path, m
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "000660", "user": {"id": "u-stale"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert "최신 예측을 다시 시작합니다" in text
+    assert "최신 예측을 다시 시작합니다" not in text
+    assert "[000660 SK하이닉스]" in text
 
 
 def test_collect_live_events_uses_short_ttl_cache(tmp_path: Path, monkeypatch):

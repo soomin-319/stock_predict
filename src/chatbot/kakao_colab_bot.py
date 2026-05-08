@@ -295,9 +295,9 @@ class KakaoColabPredictionBot:
         cached_row = None if force_refresh else self._find_cached_prediction(symbol)
         if cached_row is not None:
             self._update_session(user_id, symbol=symbol, intent="tracking")
-            if self._is_prediction_row_stale(cached_row):
-                self._console_log(f"{display_code} 캐시 예측 기준일이 오래되어 최신 예측을 재실행합니다.")
-                return self._start_job_response(symbol, retry=True)
+            # Auto-refresh on stale cache is disabled to avoid unnecessary
+            # re-prediction after bootstrap runs. Users can explicitly request
+            # refresh with "최신화".
             if not self._has_issue_summary(cached_row):
                 if self.runtime_config.async_issue_summary_on_demand:
                     self._start_issue_summary_background(symbol, cached_row)
@@ -1184,6 +1184,7 @@ class KakaoColabPredictionBot:
         symbol: str,
         use_timeout_for_live_fetch: bool = True,
         use_timeout_for_summary: bool = True,
+        log_completion: bool = True,
     ) -> pd.Series:
         if self._has_issue_summary(row):
             self._cache_issue_summary(symbol, row)
@@ -1281,9 +1282,10 @@ class KakaoColabPredictionBot:
         for col in ["오늘 종목 이슈 한줄 요약", "공시 요약", "뉴스 요약", "종합 판단", "주의사항", "원문 개수", "핵심 원문 목록"]:
             out[col] = summarized.get(col)
         self._cache_issue_summary(symbol, out)
-        self._console_log(
-            f"{self._display_code(symbol)} 요약 생성 완료 (기준일 {used_date.strftime('%Y-%m-%d')}, 공시 {disclosure_count}건, 뉴스 {news_count}건)."
-        )
+        if log_completion:
+            self._console_log(
+                f"{self._display_code(symbol)} 요약 생성 완료 (기준일 {used_date.strftime('%Y-%m-%d')}, 공시 {disclosure_count}건, 뉴스 {news_count}건)."
+            )
         return out
 
     def _collect_live_symbol_events_with_compat(self, symbol: str, reference_date: str, use_timeout: bool) -> pd.DataFrame:
@@ -1379,6 +1381,7 @@ class KakaoColabPredictionBot:
                 symbol,
                 use_timeout_for_live_fetch=False,
                 use_timeout_for_summary=False,
+                log_completion=False,
             )
             if self._has_issue_summary(summarized):
                 self._cache_issue_summary(symbol, summarized)
