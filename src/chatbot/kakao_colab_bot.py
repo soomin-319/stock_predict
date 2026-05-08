@@ -845,7 +845,9 @@ class KakaoColabPredictionBot:
         cached_row = self._find_cached_prediction(symbol)
         if cached_row is None:
             return
-        cached_row = self._safe_attach_issue_summary(cached_row, symbol)
+        # Do not re-run summary generation here. Prediction pipeline already
+        # runs issue-summary for requested symbols, so completion preview
+        # should only format the cached row.
         try:
             message = self._format_prediction_message(cached_row)
         except Exception:
@@ -1320,21 +1322,15 @@ class KakaoColabPredictionBot:
         normalized = re.sub(r"\s+", " ", str(text or "").strip().lower())
         if not normalized:
             return True
+        # Only treat explicit deferred placeholders as missing summaries.
+        # "없음"-style summaries are valid final outputs and should not trigger
+        # a second summarization pass after pipeline completion.
         exact_placeholders = {
-            "-",
-            "없음",
-            "당일 공시 없음.",
-            "당일 뉴스 없음.",
             "요청 종목에 대해서만 요약을 생성합니다.",
             "[공시 요약] - 요청 종목에 대해서만 요약을 생성합니다.",
             "[뉴스 요약] - 요청 종목에 대해서만 요약을 생성합니다.",
-            "수집된 뉴스가 없어 뉴스 기반 해석 정보가 제한적입니다.",
-            "유의미한 공시 신호가 약해 공시 단독 영향은 제한적으로 보입니다.",
         }
-        if normalized in exact_placeholders:
-            return True
-        sparse_markers = ["요약을 생성합니다", "당일 공시 없음", "당일 뉴스 없음", "수집된 뉴스가 없어", "정보가 제한적"]
-        return any(marker in normalized for marker in sparse_markers)
+        return normalized in exact_placeholders
 
     def _cache_issue_summary(self, symbol: str, row: pd.Series) -> None:
         payload = {
