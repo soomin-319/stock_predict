@@ -52,7 +52,12 @@ def _iter_folds(df: pd.DataFrame, cfg: TrainingConfig):
 
 def _run_fold(fold: FoldInput, feature_columns: List[str], cfg: TrainingConfig) -> tuple[FoldResult, pd.DataFrame]:
     train_end_date, valid_start_date, valid_end_date, train_df, valid_df = fold
-    model = MultiHeadStockModel(random_state=cfg.random_state, n_jobs=cfg.model_n_jobs, use_gpu=cfg.use_gpu)
+    model = MultiHeadStockModel(
+        random_state=cfg.random_state,
+        n_jobs=cfg.model_n_jobs,
+        use_gpu=cfg.use_gpu,
+        head_n_jobs=getattr(cfg, "model_head_n_jobs", 1),
+    )
     model.fit(train_df, feature_columns, cfg.quantiles)
     pred = model.predict(valid_df)
 
@@ -113,7 +118,7 @@ def _execute_folds(folds: List[FoldInput], feature_columns: List[str], cfg: Trai
 
     # 여러 프로세스가 동시에 실행될 때 모델 내부 스레드 수를 1로 제한해
     # CPU 과점유(worker_count × model_n_jobs)를 방지한다.
-    parallel_cfg = replace(cfg, model_n_jobs=1)
+    parallel_cfg = replace(cfg, model_n_jobs=1, model_head_n_jobs=1)
     run_fold = partial(_run_fold, feature_columns=feature_columns, cfg=parallel_cfg)
     with ProcessPoolExecutor(max_workers=worker_count) as executor:
         return list(executor.map(run_fold, folds))

@@ -249,6 +249,48 @@ def test_append_issue_summary_columns_limits_summary_to_requested_symbols(monkey
     assert out.loc[1, "오늘 종목 이슈 한줄 요약"] == "요약 비활성화"
 
 
+def test_append_issue_summary_columns_parallel_preserves_input_order(monkeypatch):
+    base = pd.DataFrame(
+        [
+            {"Symbol": "A", "symbol_name": "Alpha"},
+            {"Symbol": "B", "symbol_name": "Beta"},
+            {"Symbol": "C", "symbol_name": "Gamma"},
+        ]
+    )
+    events = pd.DataFrame(
+        [
+            {"Symbol": "A", "source_type": "news", "title": "A news", "Date": "2026-03-24"},
+            {"Symbol": "B", "source_type": "news", "title": "B news", "Date": "2026-03-24"},
+            {"Symbol": "C", "source_type": "news", "title": "C news", "Date": "2026-03-24"},
+        ]
+    )
+
+    def _fake_llm(**kwargs):
+        symbol = kwargs["symbol"]
+        return SymbolIssueSummary(
+            one_line_summary=f"{symbol}-summary",
+            disclosure_summary="d",
+            news_summary="n",
+            overall_judgment="neutral",
+            caution="c",
+            source_count=1,
+            key_sources=["news"],
+        )
+
+    monkeypatch.setattr("src.reports.issue_summary._llm_symbol_issue_summary", _fake_llm)
+
+    out = append_issue_summary_columns(
+        base,
+        context_raw_df=events,
+        openai_api_key="sk-test",
+        summary_n_jobs=3,
+    )
+    summary_col = [c for c in out.columns if c not in base.columns][0]
+
+    assert out["Symbol"].tolist() == ["A", "B", "C"]
+    assert out[summary_col].tolist() == ["A-summary", "B-summary", "C-summary"]
+
+
 def test_extract_json_dict_parses_wrapped_json():
     raw = "```json\n{\"overall_judgment\":\"호재\",\"one_line_summary\":\"ok\"}\n```"
     out = _extract_json_dict(raw)

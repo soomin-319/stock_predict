@@ -309,10 +309,15 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     # avoid incremental column-assignment fragmentation warnings.
     tech_cols: dict[str, pd.Series | np.ndarray] = {}
 
-    log_return_s = grouped["Close"].transform(lambda x: np.log(x / x.shift(1)))
+    close_group = grouped["Close"]
+    high_group = grouped["High"]
+    low_group = grouped["Low"]
+    volume_group = grouped["Volume"]
+
+    log_return_s = np.log(out["Close"] / close_group.shift(1))
     tech_cols["log_return"] = log_return_s
-    tech_cols["daily_return"] = grouped["Close"].transform(lambda x: x.pct_change())
-    tech_cols["gap_return"] = (out["Open"] / grouped["Close"].shift(1)) - 1
+    tech_cols["daily_return"] = close_group.pct_change()
+    tech_cols["gap_return"] = (out["Open"] / close_group.shift(1)) - 1
     tech_cols["intraday_return"] = (out["Close"] / out["Open"]) - 1
     tech_cols["range_pct"] = (out["High"] - out["Low"]) / out["Close"].replace(0, np.nan)
 
@@ -324,7 +329,7 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     tech_cols["is_top_turnover_10"] = (turnover_rank_s <= 10).astype(float)
 
     for window in cfg.lookback_windows:
-        tech_cols[f"ret_{window}d"] = grouped["Close"].transform(lambda x: x.pct_change(window))
+        tech_cols[f"ret_{window}d"] = close_group.pct_change(window)
 
     for window in cfg.moving_average_windows:
         ma = grouped["Close"].transform(lambda x: x.rolling(window).mean())
@@ -334,7 +339,7 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     for window in cfg.volatility_windows:
         tech_cols[f"vol_{window}"] = log_return_s.groupby(out["Symbol"]).transform(lambda x: x.rolling(window).std())
 
-    tech_cols["vol_ratio_20"] = out["Volume"] / grouped["Volume"].transform(lambda x: x.rolling(20).mean())
+    tech_cols["vol_ratio_20"] = out["Volume"] / volume_group.transform(lambda x: x.rolling(20).mean())
 
     rsi_14_s = grouped["Close"].transform(lambda x: _compute_rsi(x, cfg.rsi_period))
     tech_cols["rsi_14"] = rsi_14_s
@@ -349,10 +354,6 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     tech_cols["macd"] = macd_df["macd"]
     tech_cols["macd_signal"] = macd_df["macd_signal"]
     tech_cols["macd_hist"] = macd_df["macd_hist"]
-
-    close_group = grouped["Close"]
-    high_group = grouped["High"]
-    low_group = grouped["Low"]
 
     tr1 = out["High"] - out["Low"]
     tr2 = (out["High"] - close_group.shift(1)).abs()

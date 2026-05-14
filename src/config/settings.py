@@ -39,6 +39,7 @@ class TrainingConfig:
     quantiles: List[float] = field(default_factory=lambda: [0.1, 0.5, 0.9])
     random_state: int = 42
     model_n_jobs: int = -1
+    model_head_n_jobs: int = 1
     walk_forward_n_jobs: int = -1
     use_gpu: bool = False
     # Gap between train end and validation start to prevent look-ahead leakage

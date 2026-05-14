@@ -282,6 +282,12 @@ def run_pipeline(
     max_daily_participation: float | None = None,
     max_positions_per_market_type: int | None = None,
     issue_summary_symbols: list[str] | None = None,
+    walk_forward_n_jobs: int | None = None,
+    model_n_jobs: int | None = None,
+    model_head_n_jobs: int | None = None,
+    context_raw_event_n_jobs: int | None = None,
+    issue_summary_n_jobs: int = 1,
+    symbol_figure_limit: int | None = 30,
 ):
     effective_openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
     effective_openai_model = openai_model or os.getenv("OPENAI_MODEL") or ("gpt-5-mini" if effective_openai_api_key else None)
@@ -291,7 +297,7 @@ def run_pipeline(
     naver_client_secret = naver_client_secret or os.getenv("NAVER_CLIENT_SECRET")
     total_steps = 13
     _print_progress(1, total_steps, "Loading app configuration")
-    cfg_overrides: dict[str, dict[str, float]] = {"backtest": {}}
+    cfg_overrides: dict[str, dict] = {"backtest": {}, "training": {}}
     if min_value_traded is not None:
         cfg_overrides["backtest"]["min_value_traded"] = float(min_value_traded)
     if turnover_limit is not None:
@@ -310,8 +316,13 @@ def run_pipeline(
         cfg_overrides["backtest"]["max_daily_participation"] = float(max_daily_participation)
     if max_positions_per_market_type is not None:
         cfg_overrides["backtest"]["max_positions_per_market_type"] = int(max_positions_per_market_type)
-    if not cfg_overrides["backtest"]:
-        cfg_overrides = {}
+    if walk_forward_n_jobs is not None:
+        cfg_overrides["training"]["walk_forward_n_jobs"] = int(walk_forward_n_jobs)
+    if model_n_jobs is not None:
+        cfg_overrides["training"]["model_n_jobs"] = int(model_n_jobs)
+    if model_head_n_jobs is not None:
+        cfg_overrides["training"]["model_head_n_jobs"] = int(model_head_n_jobs)
+    cfg_overrides = {section: values for section, values in cfg_overrides.items() if values}
     cfg = load_app_config(config_json, overrides=cfg_overrides or None)
     seed_everything(cfg.training.random_state)
 
@@ -348,6 +359,7 @@ def run_pipeline(
                 enable_disclosure=enable_investor_disclosure,
                 dart_api_key=dart_api_key,
                 dart_corp_map_csv=dart_corp_map_csv,
+                raw_event_n_jobs=int(context_raw_event_n_jobs or 4),
             ),
         )
 
@@ -365,6 +377,7 @@ def run_pipeline(
                 symbol_name_map=context_symbol_name_map,
                 naver_client_id=naver_client_id,
                 naver_client_secret=naver_client_secret,
+                raw_event_n_jobs=int(context_raw_event_n_jobs or 4),
             )
         except Exception:
             context_raw_df = pd.DataFrame(
@@ -458,7 +471,11 @@ def run_pipeline(
     actual_vs_pred = save_actual_vs_predicted_plot(scored_oof, str(figure_dir_path))
     actual_vs_pred_price = save_actual_vs_predicted_price_plot(scored_oof, str(figure_dir_path))
     diagnostic_figs = save_diagnostic_figures(scored_oof, str(figure_dir_path))
-    symbol_level_figs = save_symbol_level_comparison_figures(scored_oof, str(figure_dir_path))
+    symbol_level_figs = save_symbol_level_comparison_figures(
+        scored_oof,
+        str(figure_dir_path),
+        max_symbols=symbol_figure_limit,
+    )
 
     _print_progress(12, total_steps, "Training final model and creating latest predictions")
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
@@ -470,6 +487,7 @@ def run_pipeline(
         random_state=cfg.training.random_state,
         n_jobs=cfg.training.model_n_jobs,
         use_gpu=cfg.training.use_gpu,
+        head_n_jobs=cfg.training.model_head_n_jobs,
     )
     model.fit(train_df, feature_columns, cfg.training.quantiles)
 
@@ -495,6 +513,7 @@ def run_pipeline(
         openai_api_key=effective_openai_api_key,
         openai_model=effective_openai_model,
         summarize_symbols=issue_summary_symbols,
+        summary_n_jobs=issue_summary_n_jobs,
     )
     pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True))
     pred_df["권고"] = pred_df["recommendation"]
@@ -714,6 +733,22 @@ def build_cli_parser() -> argparse.ArgumentParser:
         default=None,
         help="Generate issue summaries only for specific symbols",
     )
+    parser.add_argument("--walk-forward-n-jobs", type=int, default=None, help="Walk-forward fold worker count")
+    parser.add_argument("--model-n-jobs", type=int, default=None, help="Per-model LightGBM worker count")
+    parser.add_argument("--model-head-n-jobs", type=int, default=None, help="Parallel model head worker count")
+    parser.add_argument(
+        "--context-raw-event-n-jobs",
+        type=int,
+        default=None,
+        help="Worker count for raw news/disclosure collection",
+    )
+    parser.add_argument("--issue-summary-n-jobs", type=int, default=1, help="Worker count for issue summary generation")
+    parser.add_argument(
+        "--symbol-figure-limit",
+        type=int,
+        default=30,
+        help="Maximum symbols for per-symbol comparison figures; use -1 for all symbols",
+    )
     parser.add_argument(
         "--real-symbols",
         nargs="*",
@@ -787,6 +822,12 @@ def main():
         max_daily_participation=args.max_daily_participation,
         max_positions_per_market_type=args.max_positions_per_market_type,
         issue_summary_symbols=args.issue_summary_symbols,
+        walk_forward_n_jobs=args.walk_forward_n_jobs,
+        model_n_jobs=args.model_n_jobs,
+        model_head_n_jobs=args.model_head_n_jobs,
+        context_raw_event_n_jobs=args.context_raw_event_n_jobs,
+        issue_summary_n_jobs=args.issue_summary_n_jobs,
+        symbol_figure_limit=None if args.symbol_figure_limit is not None and args.symbol_figure_limit < 0 else args.symbol_figure_limit,
     )
 
 

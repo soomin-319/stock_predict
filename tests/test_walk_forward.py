@@ -4,7 +4,8 @@ import pandas as pd
 import pytest
 
 from src.config.settings import TrainingConfig
-from src.validation.walk_forward import _iter_folds
+import src.validation.walk_forward as wf
+from src.validation.walk_forward import FoldResult, _execute_folds, _iter_folds
 
 
 @pytest.fixture
@@ -83,3 +84,102 @@ def test_iter_folds_no_training_date_leaks_into_validation(trading_dates):
         assert train_dates.isdisjoint(valid_dates)
         assert all(d <= train_end for d in train_dates)
         assert all(valid_start <= d <= valid_end for d in valid_dates)
+
+
+def test_execute_folds_caps_nested_model_parallelism(monkeypatch):
+    seen_cfg = []
+    seen_workers = []
+
+    class _FakeExecutor:
+        def __init__(self, max_workers):
+            seen_workers.append(max_workers)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def map(self, fn, folds):
+            return [fn(fold) for fold in folds]
+
+    def _fake_run_fold(fold, feature_columns, cfg):
+        seen_cfg.append((cfg.model_n_jobs, cfg.model_head_n_jobs))
+        result = FoldResult(
+            train_end=pd.Timestamp("2020-01-01"),
+            valid_start=pd.Timestamp("2020-01-02"),
+            valid_end=pd.Timestamp("2020-01-03"),
+            metrics={"rmse": 0.0},
+        )
+        return result, pd.DataFrame({"predicted_return": [0.1], "up_probability": [0.6]})
+
+    folds = [
+        (pd.Timestamp("2020-01-01"), pd.Timestamp("2020-01-02"), pd.Timestamp("2020-01-03"), pd.DataFrame(), pd.DataFrame()),
+        (pd.Timestamp("2020-01-04"), pd.Timestamp("2020-01-05"), pd.Timestamp("2020-01-06"), pd.DataFrame(), pd.DataFrame()),
+    ]
+    cfg = _small_cfg(walk_forward_n_jobs=2, model_n_jobs=-1, model_head_n_jobs=4)
+
+    monkeypatch.setattr(wf, "ProcessPoolExecutor", _FakeExecutor)
+    monkeypatch.setattr(wf, "_run_fold", _fake_run_fold)
+
+    executed = _execute_folds(folds, ["f1"], cfg)
+
+    assert seen_workers == [2]
+    assert seen_cfg == [(1, 1), (1, 1)]
+    assert len(executed) == 2
+
+
+def test_execute_folds_keeps_oof_shape_consistent_between_sequential_and_parallel(monkeypatch):
+    class _FakeExecutor:
+        def __init__(self, max_workers):
+            self.max_workers = max_workers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def map(self, fn, folds):
+            return [fn(fold) for fold in folds]
+
+    def _fake_run_fold(fold, feature_columns, cfg):
+        _train_end, valid_start, valid_end, _train_df, valid_df = fold
+        result = FoldResult(
+            train_end=pd.Timestamp("2020-01-01"),
+            valid_start=valid_start,
+            valid_end=valid_end,
+            metrics={"rmse": 0.0},
+        )
+        oof = valid_df[["Date", "Symbol"]].copy()
+        oof["predicted_return"] = range(len(oof))
+        oof["up_probability"] = 0.5
+        return result, oof
+
+    folds = [
+        (
+            pd.Timestamp("2020-01-01"),
+            pd.Timestamp("2020-01-02"),
+            pd.Timestamp("2020-01-03"),
+            pd.DataFrame(),
+            pd.DataFrame({"Date": pd.date_range("2020-01-02", periods=2), "Symbol": ["A", "B"]}),
+        ),
+        (
+            pd.Timestamp("2020-01-04"),
+            pd.Timestamp("2020-01-05"),
+            pd.Timestamp("2020-01-06"),
+            pd.DataFrame(),
+            pd.DataFrame({"Date": pd.date_range("2020-01-05", periods=3), "Symbol": ["A", "B", "C"]}),
+        ),
+    ]
+    monkeypatch.setattr(wf, "ProcessPoolExecutor", _FakeExecutor)
+    monkeypatch.setattr(wf, "_run_fold", _fake_run_fold)
+
+    sequential = _execute_folds(folds, ["f1"], _small_cfg(walk_forward_n_jobs=1))
+    parallel = _execute_folds(folds, ["f1"], _small_cfg(walk_forward_n_jobs=2))
+
+    seq_oof = pd.concat([oof for _, oof in sequential], ignore_index=True)
+    par_oof = pd.concat([oof for _, oof in parallel], ignore_index=True)
+    assert len(seq_oof) == len(par_oof)
+    assert list(seq_oof.columns) == list(par_oof.columns)
+    assert {"predicted_return", "up_probability"}.issubset(par_oof.columns)

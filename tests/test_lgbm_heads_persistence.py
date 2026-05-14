@@ -23,7 +23,7 @@ def _make_training_frame(n: int = 120, feature_cols: list[str] | None = None) ->
 def _fit_model() -> tuple[MultiHeadStockModel, pd.DataFrame, list[str]]:
     feature_cols = ["f1", "f2", "f3"]
     df = _make_training_frame(feature_cols=feature_cols)
-    model = MultiHeadStockModel(random_state=7, n_jobs=1)
+    model = MultiHeadStockModel(random_state=7, n_jobs=1, head_n_jobs=2)
     model.fit(df, feature_cols, quantiles=[0.1, 0.5, 0.9])
     return model, df, feature_cols
 
@@ -38,6 +38,7 @@ def test_save_and_load_roundtrip_preserves_predictions(tmp_path: Path):
     assert artifact.exists()
 
     reloaded = MultiHeadStockModel.load(artifact)
+    assert reloaded.head_n_jobs == model.head_n_jobs
     after = reloaded.predict(df)
 
     np.testing.assert_allclose(before.predicted_return, after.predicted_return)
@@ -57,6 +58,7 @@ def test_save_writes_sidecar_metadata(tmp_path: Path):
 
     assert meta["artifact_version"] == MODEL_ARTIFACT_VERSION
     assert meta["random_state"] == 7
+    assert meta["head_n_jobs"] == 2
     assert meta["feature_count"] == 3
     assert meta["feature_hash"]
     assert 0.1 in meta["quantiles"] and 0.9 in meta["quantiles"]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import urlencode
@@ -19,6 +20,7 @@ class InvestorContextConfig:
     enable_disclosure: bool = True
     dart_api_key: str | None = None
     dart_corp_map_csv: str | None = None
+    raw_event_n_jobs: int = 4
 
 
 def _symbol_to_ticker(symbol: str) -> str | None:
@@ -284,29 +286,41 @@ def collect_context_raw_events(
     symbol_name_map: dict[str, str] | None = None,
     naver_client_id: str | None = None,
     naver_client_secret: str | None = None,
+    raw_event_n_jobs: int = 4,
 ) -> pd.DataFrame:
     rows: list[dict] = []
     start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
+    symbols = [str(symbol) for symbol in symbols]
+    max_workers = min(max(1, int(raw_event_n_jobs or 1)), max(1, len(symbols)))
 
-    for symbol in symbols:
+    def _news_rows_for_symbol(symbol: str) -> list[dict]:
         symbol_name = (symbol_name_map or {}).get(symbol, "")
-        rows.extend(
-            _fetch_naver_news_items(
-                symbol=symbol,
-                symbol_name=symbol_name,
-                start_dt=start_dt,
-                end_dt=end_dt,
-                client_id=naver_client_id,
-                client_secret=naver_client_secret,
-            )
+        return _fetch_naver_news_items(
+            symbol=symbol,
+            symbol_name=symbol_name,
+            start_dt=start_dt,
+            end_dt=end_dt,
+            client_id=naver_client_id,
+            client_secret=naver_client_secret,
         )
+
+    if naver_client_id and naver_client_secret and symbols:
+        if max_workers == 1:
+            for symbol in symbols:
+                rows.extend(_news_rows_for_symbol(symbol))
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                for part in executor.map(_news_rows_for_symbol, symbols):
+                    rows.extend(part)
 
     if dart_api_key:
         corp_map = _load_dart_corp_map(dart_corp_map_csv)
-        for symbol in symbols:
+
+        def _dart_rows_for_symbol(symbol: str) -> list[dict]:
+            part: list[dict] = []
             corp = corp_map.get(symbol)
             if not corp:
-                continue
+                return part
             try:
                 payload = _dart_list(dart_api_key, corp, start, end)
                 items = _dart_items(payload)
@@ -324,7 +338,7 @@ def collect_context_raw_events(
                     continue
                 rcept_no = str(item.get("rcept_no") or "").strip()
                 dart_url = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}" if rcept_no else ""
-                rows.append(
+                part.append(
                     {
                         "Date": dt.strftime("%Y-%m-%d"),
                         "Symbol": symbol,
@@ -340,6 +354,15 @@ def collect_context_raw_events(
                         "source": "dart",
                     }
                 )
+            return part
+
+        if max_workers == 1:
+            for symbol in symbols:
+                rows.extend(_dart_rows_for_symbol(symbol))
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                for part in executor.map(_dart_rows_for_symbol, symbols):
+                    rows.extend(part)
 
     if not rows:
         return pd.DataFrame(
