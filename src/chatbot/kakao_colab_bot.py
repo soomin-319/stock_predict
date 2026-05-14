@@ -775,7 +775,7 @@ class KakaoColabPredictionBot:
         return f"{display} ({label})"
 
     def _console_log(self, message: str):
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        timestamp = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S KST")
         print(f"[KAKAO BOT {timestamp}] {message}", flush=True)
 
     def _stream_process_output(self, symbol: str, process: Any, log_handle):
