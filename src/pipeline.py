@@ -6,7 +6,6 @@ import logging
 import os
 import random
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -32,14 +31,13 @@ from src.data.loaders import load_ohlcv_csv
 from src.data.investor_context import InvestorContextConfig, add_investor_context_with_coverage, collect_context_raw_events
 from src.data.universe import filter_by_universe, load_universe_symbols
 from src.domain.signal_policy import (
-    build_prediction_policy_frame,
     recommendation_from_signal as domain_recommendation_from_signal,
     vectorized_event_signal_boost,
 )
 from src.inference.predict import signal_label_series
 from src.features.external_features import add_external_market_features_with_coverage
 from src.features.investment_signals import add_investment_signal_features
-from src.features.price_features import build_features
+from src.features.price_features import build_features, select_feature_columns
 from src.features.regime_features import annotate_market_regime
 from src.models.lgbm_heads import MultiHeadPrediction, MultiHeadStockModel
 from src.pipeline_support import (
@@ -51,14 +49,14 @@ from src.pipeline_support import (
 from src.reports.pm_report import build_pm_report, save_pm_report
 from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.result_formatter import (
-    build_result_simple as formatter_build_result_simple,
     format_percentage_text as formatter_format_percentage_text,
-    print_prediction_console_summary as formatter_print_prediction_console_summary,
 )
 from src.reports.output import (
     build_combined_symbol_results as output_build_combined_symbol_results,
     build_issue_summary_snapshot as output_build_issue_summary_snapshot,
+    build_pipeline_result_simple as output_build_pipeline_result_simple,
     drop_empty_detail_columns as output_drop_empty_detail_columns,
+    print_pipeline_prediction_console_summary as output_print_pipeline_prediction_console_summary,
     project_result_dir as output_project_result_dir,
     resolve_output_dir as output_resolve_output_dir,
     resolve_output_path as output_resolve_output_path,
@@ -73,7 +71,11 @@ from src.reports.visualize import (
     save_signal_histogram,
     save_symbol_summary_artifacts,
 )
-from src.validation.backtest import run_long_only_topk_backtest
+from src.validation.backtest import (
+    backtest_summary_fields as validation_backtest_summary_fields,
+    coverage_gate_status as validation_coverage_gate_status,
+    run_long_only_topk_backtest,
+)
 from src.validation.baselines import evaluate_baselines
 from src.validation.signal_tuning import tune_signal_weights
 from src.validation.walk_forward import walk_forward_validate_with_oof
@@ -89,10 +91,6 @@ from src.validation.support import (
 def _fallback_symbols_from_input_or_default(input_csv: str, limit: int = 5) -> list[str]:
     """Return the repo-managed default fetch universe subset used when no explicit fetch universe is provided."""
     return data_fallback_symbols_from_input_or_default(input_csv, limit=limit)
-
-
-def _today_ymd() -> str:
-    return datetime.now().strftime("%Y-%m-%d")
 
 
 def seed_everything(seed: int) -> None:
@@ -135,100 +133,7 @@ def resolve_output_dir(output_dir: str) -> Path:
 
 
 def _feature_columns(df: pd.DataFrame) -> list[str]:
-    base = {
-        "daily_return",
-        "gap_return",
-        "intraday_return",
-        "range_pct",
-        "vol_ratio_20",
-        "rsi_14",
-        "macd",
-        "macd_signal",
-        "macd_hist",
-        "atr_14",
-        "stoch_k",
-        "stoch_d",
-        "cci_20",
-        "obv",
-        "obv_change_5d",
-        "value_traded",
-        "turnover_rank_daily",
-        "is_top_turnover_3",
-        "is_top_turnover_10",
-        "market_type_kospi",
-        "market_type_kosdaq",
-        "market_type_konex",
-        "venue_krx",
-        "venue_nxt",
-        "session_regular",
-        "session_premarket",
-        "session_aftermarket",
-        "session_offhours",
-        "days_since_listing",
-        "is_newly_listed",
-        "is_newly_listed_60d",
-        "individual_net_buy",
-        "foreign_net_buy",
-        "institution_net_buy",
-        "foreign_ownership_ratio",
-        "program_trading_flow",
-        "disclosure_score",
-        "news_sentiment",
-        "news_relevance_score",
-        "news_impact_score",
-        "news_article_count",
-        "foreign_buy_signal",
-        "institution_buy_signal",
-        "smart_money_buy_signal",
-        "foreign_buy_ratio",
-        "institution_buy_ratio",
-        "smart_money_strength",
-        "foreign_net_buy_z20",
-        "institution_net_buy_z20",
-        "foreign_net_buy_3d",
-        "foreign_net_buy_5d",
-        "institution_net_buy_3d",
-        "institution_net_buy_5d",
-        "news_positive_signal",
-        "news_negative_signal",
-        "close_to_52w_high",
-        "near_52w_high_flag",
-        "breakout_52w_flag",
-        "leader_confirmation_flag",
-        "rsi_pullback_buy_flag",
-        "rsi_overbought_sell_flag",
-        "investor_event_score",
-        "limit_hit_up_flag",
-        "limit_hit_down_flag",
-        "limit_event_flag",
-        "pbr",
-        "per",
-        "roe",
-        "dividend_yield",
-        "buyback_flag",
-        "share_cancellation_flag",
-        "shareholder_return_score",
-        "short_sell_event_score",
-        "is_top_turnover_15",
-        "foreign_high_conviction_buy_flag",
-        "institution_high_conviction_buy_flag",
-        "dual_high_conviction_buy_flag",
-        "distance_to_52w_high",
-        "nasdaq_tailwind_flag",
-        "nasdaq_headwind_flag",
-        "rsi_buy_watch_flag",
-        "news_same_day_signal",
-        "disclosure_same_day_signal",
-        "jongbae_score",
-    }
-    return [
-        c
-        for c in df.columns
-        if c.startswith(("ret_", "ma_", "close_to_ma_", "vol_", "ks", "kq", "gspc", "ixic", "nq_f", "sox", "vix", "krw", "tnx"))
-        or c in base
-    ]
-
-
+    return select_feature_columns(df)
 
 
 def _adaptive_training_cfg(cfg, feat: pd.DataFrame):
@@ -241,17 +146,7 @@ def _adaptive_training_cfg(cfg, feat: pd.DataFrame):
 
 
 def _build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
-    out = pred_df.copy()
-    if "confidence_score" not in out.columns:
-        if "예측 신뢰도" in out.columns:
-            out["confidence_score"] = pd.to_numeric(out["예측 신뢰도"], errors="coerce").fillna(0.5)
-        else:
-            out["confidence_score"] = 0.5
-    if "history_direction_accuracy" not in out.columns:
-        out["history_direction_accuracy"] = 0.5
-    if not {"recommendation", "portfolio_action", "trading_gate", "risk_flag", "prediction_reason", "confidence_label"}.issubset(set(out.columns)):
-        out = build_prediction_policy_frame(out)
-    return formatter_build_result_simple(out)
+    return output_build_pipeline_result_simple(pred_df)
 
 
 def _drop_empty_detail_columns(detail_df: pd.DataFrame) -> pd.DataFrame:
@@ -264,48 +159,11 @@ def _build_issue_summary_snapshot(pred_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _backtest_summary_fields(backtest: dict) -> dict[str, float]:
-    keys = [
-        "days",
-        "cum_return",
-        "avg_daily_return",
-        "sharpe",
-        "max_drawdown",
-        "avg_turnover",
-        "avg_selected_count",
-        "benchmark_cum_return",
-        "excess_cum_return",
-        "halted_days",
-        "liquidity_blocked_days",
-        "avg_market_type_count",
-    ]
-    out = {}
-    for k in keys:
-        v = backtest.get(k, 0.0)
-        out[f"backtest_{k}"] = float(v) if isinstance(v, (int, float)) else 0.0
-    return out
-
-
-def _print_backtest_console_summary(backtest: dict):
-    print("\n=== Backtest Summary ===")
-    print(f"Days: {int(backtest.get('days', 0))}")
-    print(f"CumReturn: {float(backtest.get('cum_return', 0.0)):.3f}")
-    print(f"AvgDailyReturn: {float(backtest.get('avg_daily_return', 0.0)):.4f}")
-    print(f"Sharpe: {float(backtest.get('sharpe', 0.0)):.3f}")
-    print(f"MaxDrawdown: {float(backtest.get('max_drawdown', 0.0)):.3f}")
-    print(f"AvgTurnover: {float(backtest.get('avg_turnover', 0.0)):.3f}")
-    print(f"AvgSelectedCount: {float(backtest.get('avg_selected_count', 0.0)):.2f}")
+    return validation_backtest_summary_fields(backtest)
 
 
 def _print_prediction_console_summary(pred_df: pd.DataFrame):
-    out = pred_df.copy()
-    required = {"recommendation", "portfolio_action", "trading_gate", "risk_flag", "prediction_reason", "confidence_label"}
-    if not required.issubset(set(out.columns)):
-        out = build_prediction_policy_frame(out)
-    if "confidence_score" not in out.columns:
-        out["confidence_score"] = 0.5
-    if "history_direction_accuracy" not in out.columns:
-        out["history_direction_accuracy"] = 0.5
-    formatter_print_prediction_console_summary(out)
+    output_print_pipeline_prediction_console_summary(pred_df)
 
 
 def _recommendation_from_signal(
@@ -337,15 +195,8 @@ def _apply_event_signal_boost(pred_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _coverage_gate_status(cfg, external_coverage_ratio: float, investor_coverage_ratio: float) -> str:
-    if cfg.backtest.min_external_coverage_ratio > 0 and external_coverage_ratio < cfg.backtest.min_external_coverage_ratio:
-        return "halt"
-    if cfg.backtest.min_investor_coverage_ratio > 0 and investor_coverage_ratio < cfg.backtest.min_investor_coverage_ratio:
-        return "halt"
-    if external_coverage_ratio < max(0.7, cfg.backtest.min_external_coverage_ratio) or investor_coverage_ratio < max(
-        0.7, cfg.backtest.min_investor_coverage_ratio
-    ):
-        return "caution"
-    return "normal"
+    return validation_coverage_gate_status(cfg.backtest, external_coverage_ratio, investor_coverage_ratio)
+
 
 def _split_oof_for_tuning_and_eval(scored_oof: pd.DataFrame, tune_ratio: float = 0.7) -> tuple[pd.DataFrame, pd.DataFrame]:
     return validation_split_oof_for_tuning_and_eval(scored_oof, tune_ratio=tune_ratio)
@@ -353,6 +204,7 @@ def _split_oof_for_tuning_and_eval(scored_oof: pd.DataFrame, tune_ratio: float =
 
 def _prediction_from_oof_df(oof: pd.DataFrame) -> MultiHeadPrediction:
     return validation_prediction_from_oof_df(oof)
+
 
 def _print_progress(step: int, total: int, message: str):
     print(f"[{step}/{total}] {message}", flush=True)
@@ -372,8 +224,6 @@ def _compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
     return validation_compute_oof_diagnostics(scored_oof)
 
 
-
-
 def _ensure_universe_size(symbols: list[str], expected_size: int) -> list[str]:
     """Backward-compatible helper retained for older tests/import paths."""
     uniq = list(dict.fromkeys(str(s) for s in symbols))
@@ -381,6 +231,7 @@ def _ensure_universe_size(symbols: list[str], expected_size: int) -> list[str]:
         return uniq[:expected_size]
     pads = [f"NO_DATA_{i:03d}" for i in range(1, expected_size - len(uniq) + 1)]
     return uniq + pads
+
 
 def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: list[str] | None) -> pd.DataFrame:
     if not universe_symbols:
@@ -399,35 +250,10 @@ def _calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Ind
 
 def _safe_to_csv(df: pd.DataFrame, path: Path) -> Path:
     return output_safe_to_csv(df, path)
-    try:
-        df.to_csv(path, index=False, encoding="utf-8-sig")
-        return path
-    except PermissionError:
-        fallback = path.with_name(f"{path.stem}_fallback{path.suffix}")
-        df.to_csv(fallback, index=False, encoding="utf-8-sig")
-        print(f"[경고] 파일이 열려있어 기본 경로에 저장하지 못했습니다. 대체 경로로 저장: {fallback}")
-        return fallback
 
 
 def _build_combined_symbol_results(pred_df: pd.DataFrame, summary_csv: str | None, out_path: Path) -> str | None:
     return output_build_combined_symbol_results(pred_df, summary_csv, out_path)
-    if pred_df.empty or not summary_csv:
-        return None
-    try:
-        summary = pd.read_csv(summary_csv)
-    except Exception:
-        return None
-
-    if summary.empty:
-        return None
-
-    if "Symbol" not in summary.columns:
-        return None
-
-    extra_cols = [c for c in summary.columns if c not in pred_df.columns]
-    combined = pred_df.merge(summary[["Symbol", *extra_cols]], on="Symbol", how="left")
-    saved = _safe_to_csv(combined, out_path)
-    return str(saved)
 
 
 def run_pipeline(
