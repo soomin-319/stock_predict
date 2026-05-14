@@ -6,6 +6,47 @@ import pandas as pd
 from src.config.settings import BacktestConfig
 
 
+BACKTEST_SUMMARY_KEYS = (
+    "days",
+    "cum_return",
+    "avg_daily_return",
+    "sharpe",
+    "max_drawdown",
+    "avg_turnover",
+    "avg_selected_count",
+    "benchmark_cum_return",
+    "excess_cum_return",
+    "halted_days",
+    "liquidity_blocked_days",
+    "avg_market_type_count",
+)
+
+
+def coverage_gate_status(
+    cfg: BacktestConfig,
+    external_coverage_ratio: float,
+    investor_coverage_ratio: float,
+) -> str:
+    cfg = getattr(cfg, "backtest", cfg)
+    if cfg.min_external_coverage_ratio > 0 and external_coverage_ratio < cfg.min_external_coverage_ratio:
+        return "halt"
+    if cfg.min_investor_coverage_ratio > 0 and investor_coverage_ratio < cfg.min_investor_coverage_ratio:
+        return "halt"
+    if external_coverage_ratio < max(0.7, cfg.min_external_coverage_ratio) or investor_coverage_ratio < max(
+        0.7, cfg.min_investor_coverage_ratio
+    ):
+        return "caution"
+    return "normal"
+
+
+def backtest_summary_fields(backtest: dict) -> dict[str, float]:
+    out = {}
+    for key in BACKTEST_SUMMARY_KEYS:
+        value = backtest.get(key, 0.0)
+        out[f"backtest_{key}"] = float(value) if isinstance(value, (int, float)) else 0.0
+    return out
+
+
 def _coverage_halt(grp: pd.DataFrame, cfg: BacktestConfig) -> bool:
     external_source = grp["external_coverage_ratio"] if "external_coverage_ratio" in grp.columns else pd.Series(1.0, index=grp.index)
     investor_source = grp["investor_coverage_ratio"] if "investor_coverage_ratio" in grp.columns else pd.Series(1.0, index=grp.index)

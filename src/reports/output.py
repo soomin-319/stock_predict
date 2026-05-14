@@ -5,6 +5,12 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.domain.signal_policy import build_prediction_policy_frame
+from src.reports.result_formatter import (
+    build_result_simple as format_result_simple,
+    print_prediction_console_summary as format_prediction_console_summary,
+)
+
 
 def project_result_dir() -> Path:
     root = Path(__file__).resolve().parents[2]
@@ -54,6 +60,33 @@ def safe_to_csv(df: pd.DataFrame, path: Path) -> Path:
         df.to_csv(fallback, index=False, encoding="utf-8-sig")
         print(f"[경고] 파일이 열려 있어 기본 경로에 저장하지 못했습니다. 대체 경로로 저장: {fallback}")
         return fallback
+
+
+def build_pipeline_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
+    out = pred_df.copy()
+    if "confidence_score" not in out.columns:
+        if "예측 신뢰도" in out.columns:
+            out["confidence_score"] = pd.to_numeric(out["예측 신뢰도"], errors="coerce").fillna(0.5)
+        else:
+            out["confidence_score"] = 0.5
+    if "history_direction_accuracy" not in out.columns:
+        out["history_direction_accuracy"] = 0.5
+    required = {"recommendation", "portfolio_action", "trading_gate", "risk_flag", "confidence_label"}
+    if not required.issubset(set(out.columns)):
+        out = build_prediction_policy_frame(out)
+    return format_result_simple(out)
+
+
+def print_pipeline_prediction_console_summary(pred_df: pd.DataFrame) -> None:
+    out = pred_df.copy()
+    required = {"recommendation", "portfolio_action", "trading_gate", "risk_flag", "confidence_label"}
+    if not required.issubset(set(out.columns)):
+        out = build_prediction_policy_frame(out)
+    if "confidence_score" not in out.columns:
+        out["confidence_score"] = 0.5
+    if "history_direction_accuracy" not in out.columns:
+        out["history_direction_accuracy"] = 0.5
+    format_prediction_console_summary(out)
 
 
 def drop_empty_detail_columns(detail_df: pd.DataFrame) -> pd.DataFrame:
