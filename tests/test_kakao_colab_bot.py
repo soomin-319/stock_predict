@@ -753,6 +753,17 @@ def test_start_job_prints_console_progress_hint(tmp_path: Path, capsys):
     assert "005930" in captured.out
 
 
+def test_console_log_uses_kst_timestamp(tmp_path: Path, capsys):
+    bot = make_bot(tmp_path)
+
+    bot._console_log("progress message")
+
+    captured = capsys.readouterr()
+    assert captured.out.startswith("[KAKAO BOT ")
+    assert "KST] progress message" in captured.out
+    assert "UTC]" not in captured.out
+
+
 def test_status_request_uses_previous_user_symbol(tmp_path: Path):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
