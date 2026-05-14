@@ -6,12 +6,11 @@ import logging
 import os
 import random
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.isotonic import IsotonicRegression
 
 if __package__ is None or __package__ == "":
     project_root = Path(__file__).resolve().parents[1]
@@ -22,11 +21,16 @@ _LOGGER = logging.getLogger(__name__)
 
 from src.config.settings import app_config_to_dict, load_app_config
 from src.data.cleaners import clean_ohlcv
+from src.data.cli_refresh import (
+    fallback_symbols_from_input_or_default as data_fallback_symbols_from_input_or_default,
+    resolve_fetch_symbols as data_resolve_fetch_symbols,
+    resolve_incremental_fetch_start as data_resolve_incremental_fetch_start,
+)
 from src.data.fetch_real_data import append_real_ohlcv_csv, normalize_user_symbols, save_real_ohlcv_csv
 from src.data.krx_universe import get_symbol_name_map
 from src.data.loaders import load_ohlcv_csv
 from src.data.investor_context import InvestorContextConfig, add_investor_context_with_coverage, collect_context_raw_events
-from src.data.universe import filter_by_universe, load_default_universe_symbols, load_universe_symbols
+from src.data.universe import filter_by_universe, load_universe_symbols
 from src.domain.signal_policy import (
     build_prediction_policy_frame,
     recommendation_from_signal as domain_recommendation_from_signal,
@@ -51,6 +55,15 @@ from src.reports.result_formatter import (
     format_percentage_text as formatter_format_percentage_text,
     print_prediction_console_summary as formatter_print_prediction_console_summary,
 )
+from src.reports.output import (
+    build_combined_symbol_results as output_build_combined_symbol_results,
+    build_issue_summary_snapshot as output_build_issue_summary_snapshot,
+    drop_empty_detail_columns as output_drop_empty_detail_columns,
+    project_result_dir as output_project_result_dir,
+    resolve_output_dir as output_resolve_output_dir,
+    resolve_output_path as output_resolve_output_path,
+    safe_to_csv as output_safe_to_csv,
+)
 from src.reports.visualize import (
     save_actual_vs_predicted_plot,
     save_actual_vs_predicted_price_plot,
@@ -65,15 +78,17 @@ from src.validation.baselines import evaluate_baselines
 from src.validation.signal_tuning import tune_signal_weights
 from src.validation.walk_forward import walk_forward_validate_with_oof
 from src.validation.metrics import probability_calibration_metrics
+from src.validation.support import (
+    calibrate_up_probability as validation_calibrate_up_probability,
+    compute_oof_diagnostics as validation_compute_oof_diagnostics,
+    prediction_from_oof_df as validation_prediction_from_oof_df,
+    split_oof_for_tuning_and_eval as validation_split_oof_for_tuning_and_eval,
+)
 
 
 def _fallback_symbols_from_input_or_default(input_csv: str, limit: int = 5) -> list[str]:
     """Return the repo-managed default fetch universe subset used when no explicit fetch universe is provided."""
-    _ = input_csv
-    symbols = load_default_universe_symbols()
-    if limit <= 0:
-        return symbols
-    return symbols[:limit]
+    return data_fallback_symbols_from_input_or_default(input_csv, limit=limit)
 
 
 def _today_ymd() -> str:
@@ -93,74 +108,30 @@ def seed_everything(seed: int) -> None:
 
 
 def _resolve_fetch_symbols(real_symbols: list[str] | None, universe_csv: str | None, input_csv: str) -> list[str]:
-    symbols = real_symbols
-    if not symbols and universe_csv:
-        try:
-            symbols = load_universe_symbols(universe_csv)
-            print(f"Loaded symbols from universe CSV: {len(symbols)}")
-        except Exception as exc:
-            print(f"[경고] universe CSV 로드 실패: {exc}")
-
-    if not symbols:
-        symbols = _fallback_symbols_from_input_or_default(input_csv)
-    return symbols
+    return data_resolve_fetch_symbols(
+        real_symbols,
+        universe_csv,
+        input_csv,
+        universe_loader=load_universe_symbols,
+        fallback_loader=_fallback_symbols_from_input_or_default,
+    )
 
 
 def _resolve_incremental_fetch_start(input_csv: str, requested_start: str) -> str:
-    path = Path(input_csv)
-    if not path.exists():
-        return requested_start
-    try:
-        base = pd.read_csv(path, usecols=["Date"])
-        if base.empty:
-            return requested_start
-        parsed = pd.to_datetime(base["Date"], errors="coerce").dropna()
-        if parsed.empty:
-            return requested_start
-        next_day = parsed.max() + timedelta(days=1)
-        return max(requested_start, next_day.strftime("%Y-%m-%d"))
-    except Exception:
-        return requested_start
+    return data_resolve_incremental_fetch_start(input_csv, requested_start)
 
 
 def _project_result_dir() -> Path:
-    root = Path(__file__).resolve().parents[1]
-    out = root / "result"
-    out.mkdir(parents=True, exist_ok=True)
-    return out
+    return output_project_result_dir()
 
 
 def resolve_output_path(output_csv: str, is_windows: bool | None = None) -> Path:
     """Force all file outputs under project-local ./result directory."""
-    _ = (os.name == "nt") if is_windows is None else is_windows
-    requested = Path(output_csv)
-    result_dir = _project_result_dir()
-
-    # keep explicit paths already inside result dir; otherwise redirect by filename
-    try:
-        if requested.is_absolute() and requested.resolve().is_relative_to(result_dir.resolve()):
-            output_path = requested
-        else:
-            output_path = result_dir / requested.name
-    except Exception:
-        output_path = result_dir / requested.name
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    return output_path
+    return output_resolve_output_path(output_csv, is_windows=is_windows)
 
 
 def resolve_output_dir(output_dir: str) -> Path:
-    requested = Path(output_dir)
-    result_dir = _project_result_dir()
-    try:
-        if requested.is_absolute() and requested.resolve().is_relative_to(result_dir.resolve()):
-            out_dir = requested
-        else:
-            out_dir = result_dir / requested.name
-    except Exception:
-        out_dir = result_dir / requested.name
-    out_dir.mkdir(parents=True, exist_ok=True)
-    return out_dir
+    return output_resolve_output_dir(output_dir)
 
 
 def _feature_columns(df: pd.DataFrame) -> list[str]:
@@ -285,80 +256,11 @@ def _build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
 
 def _drop_empty_detail_columns(detail_df: pd.DataFrame) -> pd.DataFrame:
     """Drop optional detail columns that are entirely empty in current run outputs."""
-    optional_cols = [
-        "foreign_net_buy",
-        "institution_net_buy",
-        "disclosure_score",
-        "news_sentiment",
-        "news_relevance_score",
-        "news_impact_score",
-        "news_article_count",
-        "rsi_pullback_buy_flag",
-        "rsi_overbought_sell_flag",
-        "foreign_buy_signal",
-        "institution_buy_signal",
-        "smart_money_buy_signal",
-        "foreign_buy_ratio",
-        "institution_buy_ratio",
-        "smart_money_strength",
-        "foreign_net_buy_z20",
-        "institution_net_buy_z20",
-        "foreign_net_buy_3d",
-        "foreign_net_buy_5d",
-        "institution_net_buy_3d",
-        "institution_net_buy_5d",
-        "news_positive_signal",
-        "news_negative_signal",
-        "near_52w_high_flag",
-        "breakout_52w_flag",
-        "leader_confirmation_flag",
-        "investor_event_score",
-        "target_up",
-        "target_log_return_5d",
-        "target_up_5d",
-        "target_close_5d",
-        "target_log_return_20d",
-        "target_up_20d",
-        "target_close_20d",
-    ]
-    drop_cols: list[str] = []
-    for col in optional_cols:
-        if col not in detail_df.columns:
-            continue
-        series = detail_df[col]
-        if pd.api.types.is_numeric_dtype(series):
-            if series.notna().sum() == 0:
-                drop_cols.append(col)
-            continue
-        normalized = series.astype(str).str.strip()
-        non_empty = normalized[~normalized.isin({"", "-", "nan", "None"})]
-        if non_empty.empty:
-            drop_cols.append(col)
-    if not drop_cols:
-        return detail_df
-    return detail_df.drop(columns=drop_cols, errors="ignore")
+    return output_drop_empty_detail_columns(detail_df)
 
 
 def _build_issue_summary_snapshot(pred_df: pd.DataFrame) -> pd.DataFrame:
-    summary_cols = [
-        "Symbol",
-        "symbol_name",
-        "오늘 종목 이슈 한줄 요약",
-        "공시 요약",
-        "뉴스 요약",
-        "종합 판단",
-        "주의사항",
-    ]
-    available = [c for c in summary_cols if c in pred_df.columns]
-    if "Symbol" not in available:
-        return pd.DataFrame(columns=summary_cols)
-    snapshot = pred_df[available].copy()
-    if "symbol_name" not in snapshot.columns:
-        snapshot["symbol_name"] = snapshot["Symbol"].astype(str)
-    for col in summary_cols:
-        if col not in snapshot.columns:
-            snapshot[col] = "-"
-    return snapshot[summary_cols]
+    return output_build_issue_summary_snapshot(pred_df)
 
 
 def _backtest_summary_fields(backtest: dict) -> dict[str, float]:
@@ -446,40 +348,11 @@ def _coverage_gate_status(cfg, external_coverage_ratio: float, investor_coverage
     return "normal"
 
 def _split_oof_for_tuning_and_eval(scored_oof: pd.DataFrame, tune_ratio: float = 0.7) -> tuple[pd.DataFrame, pd.DataFrame]:
-    dates = sorted(pd.to_datetime(scored_oof["Date"]).dropna().unique())
-    if len(dates) < 10:
-        return scored_oof.copy(), scored_oof.copy()
-
-    split_idx = max(1, min(len(dates) - 1, int(len(dates) * tune_ratio)))
-    tune_dates = set(dates[:split_idx])
-    eval_dates = set(dates[split_idx:])
-
-    tune_df = scored_oof[scored_oof["Date"].isin(tune_dates)].copy()
-    eval_df = scored_oof[scored_oof["Date"].isin(eval_dates)].copy()
-    if tune_df.empty or eval_df.empty:
-        return scored_oof.copy(), scored_oof.copy()
-    return tune_df, eval_df
+    return validation_split_oof_for_tuning_and_eval(scored_oof, tune_ratio=tune_ratio)
 
 
 def _prediction_from_oof_df(oof: pd.DataFrame) -> MultiHeadPrediction:
-    horizon_predicted_return = {}
-    horizon_up_probability = {}
-    for horizon in (5, 20):
-        pred_col = f"predicted_return_{horizon}d"
-        prob_col = f"up_probability_{horizon}d"
-        if pred_col in oof.columns:
-            horizon_predicted_return[horizon] = oof[pred_col].values
-        if prob_col in oof.columns:
-            horizon_up_probability[horizon] = oof[prob_col].values
-    return MultiHeadPrediction(
-        predicted_return=oof["predicted_return"].values,
-        up_probability=oof["up_probability"].values,
-        quantile_low=oof["quantile_low"].values,
-        quantile_mid=oof["quantile_mid"].values,
-        quantile_high=oof["quantile_high"].values,
-        horizon_predicted_return=horizon_predicted_return,
-        horizon_up_probability=horizon_up_probability,
-    )
+    return validation_prediction_from_oof_df(oof)
 
 def _print_progress(step: int, total: int, message: str):
     print(f"[{step}/{total}] {message}", flush=True)
@@ -496,38 +369,7 @@ def _round_floats(obj, digits: int = 3):
 
 
 def _compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
-    if scored_oof.empty:
-        return {}
-
-    req = {"target_log_return", "rel_strength", "norm_return", "predicted_log_return", "uncertainty_score", "uncertainty_width"}
-    if not req.issubset(set(scored_oof.columns)):
-        return {}
-
-    df = scored_oof[list(req)].copy().dropna()
-    if df.empty:
-        return {}
-
-    actual_up = (df["target_log_return"] > 0).astype(int)
-
-    rel_dir_acc = float(((df["rel_strength"] > 0).astype(int) == actual_up).mean())
-    norm_dir_acc = float(((df["norm_return"] > 0.5).astype(int) == actual_up).mean())
-    pred_dir_acc = float(((df["predicted_log_return"] > 0).astype(int) == actual_up).mean())
-
-    abs_error = (df["predicted_log_return"] - df["target_log_return"]).abs()
-
-    return {
-        "direction_accuracy": {
-            "predicted_log_return": pred_dir_acc,
-            "rel_strength": rel_dir_acc,
-            "norm_return": norm_dir_acc,
-        },
-        "uncertainty_diagnostics": {
-            "corr_uncertainty_vs_abs_error": float(df["uncertainty_width"].corr(abs_error)),
-            "corr_uncertainty_score_vs_abs_error": float(df["uncertainty_score"].corr(abs_error)),
-            "uncertainty_score_zero_ratio": float((df["uncertainty_score"] == 0).mean()),
-            "uncertainty_score_mean": float(df["uncertainty_score"].mean()),
-        },
-    }
+    return validation_compute_oof_diagnostics(scored_oof)
 
 
 
@@ -552,32 +394,11 @@ def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: lis
 
 
 def _calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Index | list | tuple | pd.Series) -> pd.Series:
-    raw_probs = pd.Series(up_probs, dtype=float).clip(0.0, 1.0)
-    if oof_df.empty or "up_probability" not in oof_df.columns or "target_log_return" not in oof_df.columns:
-        return raw_probs
-
-    cal = oof_df[["up_probability", "target_log_return"]].copy().dropna()
-    if cal.empty or cal["up_probability"].nunique() < 3:
-        return raw_probs
-
-    y = (cal["target_log_return"] > 0).astype(int)
-    try:
-        iso = IsotonicRegression(out_of_bounds="clip")
-        iso.fit(cal["up_probability"].astype(float).values, y.values)
-        calibrated = pd.Series(iso.predict(raw_probs.values), dtype=float).clip(0.0, 1.0)
-        raw_unique = raw_probs.round(6).nunique()
-        calibrated_unique = calibrated.round(6).nunique()
-        # Guard against isotonic plateaus collapsing discrimination on
-        # small-symbol latest snapshots (e.g., every symbol showing the same
-        # up-probability). In this case keep ranking by blending toward raw.
-        if raw_unique >= 4 and calibrated_unique <= 2:
-            return (0.3 * calibrated + 0.7 * raw_probs).clip(0.0, 1.0)
-        return calibrated
-    except Exception:
-        return raw_probs
+    return validation_calibrate_up_probability(oof_df, up_probs)
 
 
 def _safe_to_csv(df: pd.DataFrame, path: Path) -> Path:
+    return output_safe_to_csv(df, path)
     try:
         df.to_csv(path, index=False, encoding="utf-8-sig")
         return path
@@ -589,6 +410,7 @@ def _safe_to_csv(df: pd.DataFrame, path: Path) -> Path:
 
 
 def _build_combined_symbol_results(pred_df: pd.DataFrame, summary_csv: str | None, out_path: Path) -> str | None:
+    return output_build_combined_symbol_results(pred_df, summary_csv, out_path)
     if pred_df.empty or not summary_csv:
         return None
     try:

@@ -29,3 +29,7 @@ stock-predict-kakao = "src.chatbot.kakao_colab_bot:main"
 
 [tool.setuptools]
 packages = ["src", "src.chatbot", "src.config", "src.data", "src.domain", "src.features", "src.models", "src.validation", "src.inference", "src.reports"]
+
+[tool.pytest.ini_options]
+cache_dir = "result/.pytest_cache"
+addopts = "--basetemp=result/.pytest_tmp"
