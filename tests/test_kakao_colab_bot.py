@@ -827,7 +827,7 @@ def test_cached_prediction_message_formats_price_string_from_result_simple_csv(t
     assert "내일 예측 종가: 71,200원" in text
 
 
-def test_cached_prediction_message_formats_rule_based_reason_labels(tmp_path: Path):
+def test_cached_prediction_message_hides_rule_based_reason_labels(tmp_path: Path):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
     pd.DataFrame(
@@ -860,7 +860,7 @@ def test_cached_prediction_message_formats_rule_based_reason_labels(tmp_path: Pa
     )
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert "사유: 거래대금 상위, 외국인/기관 순매수, 나스닥 선물 +1% 이상" in text
+    assert "사유:" not in text
 
 
 def test_cached_prediction_message_hides_reason_when_rule_not_satisfied(tmp_path: Path):
@@ -1368,7 +1368,7 @@ def test_handle_symbol_request_falls_back_when_cached_message_format_fails(tmp_p
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
     assert "[005930 삼성전자]" in text
-    assert "사유: 거래대금 상위" in text
+    assert "사유:" not in text
 
 
 def test_kakao_webhook_returns_safe_response_when_handler_raises(tmp_path: Path, monkeypatch):

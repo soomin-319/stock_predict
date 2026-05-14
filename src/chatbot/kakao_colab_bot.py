@@ -639,7 +639,6 @@ class KakaoColabPredictionBot:
         up_probability = self._format_percent(row.get("상승확률(%)"))
         predicted_close = self._format_price(row.get("내일 예상 종가"))
         confidence = self._format_confidence(row.get("예측 신뢰도"))
-        reason_line = self._build_reason_line(row)
         issue_block = self._build_issue_summary_block(row)
         return (
             f"[{code} {name}]\n"
@@ -648,28 +647,8 @@ class KakaoColabPredictionBot:
             f"내일 예측 수익률: {predicted_return}\n"
             f"내일 예측 종가: {predicted_close}\n"
             f"신뢰도: {confidence}\n"
-            f"{reason_line}"
             f"{issue_block}"
         )
-
-    def _build_reason_line(self, row: pd.Series) -> str:
-        raw_reason = self._get_clean_issue_text(row.get("예측 이유"))
-        if not raw_reason:
-            raw_reason = self._get_clean_issue_text(row.get("?덉륫 ?댁쑀"))
-        if not raw_reason:
-            return ""
-
-        labels: list[str] = []
-        if "거래대금" in raw_reason:
-            labels.append("거래대금 상위")
-        if "외국인" in raw_reason and "기관" in raw_reason and "순매수" in raw_reason:
-            labels.append("외국인/기관 순매수")
-        if "나스닥" in raw_reason and "+1%" in raw_reason:
-            labels.append("나스닥 선물 +1% 이상")
-
-        if not labels:
-            return ""
-        return "사유: " + ", ".join(dict.fromkeys(labels)) + "\n"
 
     def _build_issue_summary_block(self, row: pd.Series) -> str:
         disclosure_text = self._get_clean_issue_text(row.get("공시 요약"))

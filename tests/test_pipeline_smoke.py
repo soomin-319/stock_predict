@@ -205,7 +205,7 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "5일 상승확률(%)" in simple_df.columns
     assert "20일 상승확률(%)" in simple_df.columns
     assert "예측 신뢰도" in simple_df.columns
-    assert "예측 이유" in simple_df.columns
+    assert "예측 이유" not in simple_df.columns
 
 
 def test_build_cli_parser_uses_project_relative_defaults_and_exposes_coverage_override():

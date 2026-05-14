@@ -22,7 +22,6 @@ RESULT_SIMPLE_HORIZON_COLUMNS = (
     "20일 예상 수익률(%)",
     "5일 상승확률(%)",
     "20일 상승확률(%)",
-    "예측 이유",
 )
 
 
@@ -95,8 +94,6 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
         simple["20일 상승확률(%)"] = out["up_probability_20d"].map(
             lambda v: format_percentage_text(v, digits=1, unit_interval=True)
         )
-    if "prediction_reason" in out.columns and any(c in out.columns for c in ("predicted_return_5d", "predicted_return_20d")):
-        simple["예측 이유"] = out["prediction_reason"].fillna("").astype(str)
     simple["_sort_confidence"] = pd.to_numeric(out["confidence_score"], errors="coerce").values
     simple["_sort_return"] = pd.to_numeric(out["predicted_return"], errors="coerce").values
     simple = simple.sort_values(["_sort_confidence", "_sort_return"], ascending=[False, False]).reset_index(drop=True)

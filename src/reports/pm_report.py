@@ -26,7 +26,6 @@ def build_pm_report(pred_df: pd.DataFrame, report: dict) -> dict:
         "up_probability",
         "up_probability_5d",
         "up_probability_20d",
-        "prediction_reason",
     ]
     focus_columns = [column for column in focus_columns if column in top_buys.columns]
     top_buy_payload = top_buys[focus_columns].to_dict(orient="records")

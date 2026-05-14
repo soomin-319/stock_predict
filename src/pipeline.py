@@ -249,7 +249,7 @@ def _build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
             out["confidence_score"] = 0.5
     if "history_direction_accuracy" not in out.columns:
         out["history_direction_accuracy"] = 0.5
-    if not {"recommendation", "portfolio_action", "trading_gate", "risk_flag", "prediction_reason", "confidence_label"}.issubset(set(out.columns)):
+    if not {"recommendation", "portfolio_action", "trading_gate", "risk_flag", "confidence_label"}.issubset(set(out.columns)):
         out = build_prediction_policy_frame(out)
     return formatter_build_result_simple(out)
 
@@ -298,7 +298,7 @@ def _print_backtest_console_summary(backtest: dict):
 
 def _print_prediction_console_summary(pred_df: pd.DataFrame):
     out = pred_df.copy()
-    required = {"recommendation", "portfolio_action", "trading_gate", "risk_flag", "prediction_reason", "confidence_label"}
+    required = {"recommendation", "portfolio_action", "trading_gate", "risk_flag", "confidence_label"}
     if not required.issubset(set(out.columns)):
         out = build_prediction_policy_frame(out)
     if "confidence_score" not in out.columns:
@@ -321,14 +321,9 @@ def _recommendation_from_signal(
 def _policy_recommendation(row: pd.Series) -> str:
     """Backward-compatible policy helper kept for test compatibility."""
     return _recommendation_from_signal(
-        row.get("signal_score"),
+        None,
         row.get("predicted_return"),
-        row.get("up_probability"),
-        row.get("uncertainty_score"),
-    ) if not (
-        pd.to_numeric(pd.Series([row.get("nq_f_ret_1d")]), errors="coerce").iloc[0] <= -0.01
-        or pd.to_numeric(pd.Series([row.get("rsi_14")]), errors="coerce").iloc[0] >= 70.0
-    ) else "매도"
+    )
 
 
 def _apply_event_signal_boost(pred_df: pd.DataFrame) -> pd.DataFrame:

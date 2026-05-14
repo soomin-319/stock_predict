@@ -45,15 +45,6 @@ def recommendation_from_signal(
         return "매수"
     if ret <= -2.0:
         return "매도"
-
-    score = pd.to_numeric(pd.Series([signal_score]), errors="coerce").iloc[0]
-    prob = pd.to_numeric(pd.Series([up_probability]), errors="coerce").iloc[0]
-    uncertainty = pd.to_numeric(pd.Series([uncertainty_score]), errors="coerce").iloc[0]
-    if not pd.isna(score) and not pd.isna(prob) and not pd.isna(uncertainty):
-        if score >= 0.65 and prob >= 0.65 and uncertainty <= 0.35:
-            return "매수"
-        if score <= 0.25 and prob >= 0.55 and uncertainty <= 0.50:
-            return "매도"
     return "관망"
 
 
@@ -297,7 +288,6 @@ def build_prediction_policy_frame(
     out = pd.concat([out, pm], axis=1)
     out["jongbae_score"] = out.apply(lambda row: _jongbae_score(row, cfg=cfg), axis=1)
     out["jongbae_signal"] = out["jongbae_score"].map(lambda v: "관심" if v >= 0.45 else ("경계" if v < 0 else "중립"))
-    out["prediction_reason"] = out.apply(lambda row: prediction_reason(row, cfg=cfg), axis=1)
     out["recommendation"] = out["recommendation"].fillna("관망")
     out["confidence_label"] = out["confidence_label"].fillna("신뢰도 보통")
     out["signal_label"] = out.get("signal_label")
