@@ -169,9 +169,14 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
         "shareholder_return_score": 0.0,
         "short_sell_event_score": 0.0,
     }
-    for column, default in legacy_removed_default_map.items():
-        if column not in out.columns:
-            out[column] = default
+    missing_defaults = {
+        column: pd.Series(default, index=out.index, dtype=float)
+        for column, default in legacy_removed_default_map.items()
+        if column not in out.columns
+    }
+    if missing_defaults:
+        out = pd.concat([out, pd.DataFrame(missing_defaults, index=out.index)], axis=1)
+        grouped = out.groupby("Symbol", group_keys=False)
 
     # Keep only the high-priority investor/event inputs that drive the
     # requested selection buckets: top-turnover disclosures, favorable news,

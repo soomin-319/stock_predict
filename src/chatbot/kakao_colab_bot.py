@@ -326,16 +326,7 @@ class KakaoColabPredictionBot:
                             ("도움말", "도움말"),
                         ],
                     )
-            try:
-                message = self._format_prediction_message(cached_row)
-            except Exception as exc:
-                if self._maybe_patch_legacy_rationale_bug(exc):
-                    message = self._safe_format_prediction_message(cached_row)
-                else:
-                    self._console_log(
-                        f"{display_code} 응답 메시지 포맷 오류({type(exc).__name__}): {exc}. 원문 사유로 대체합니다."
-                    )
-                    message = self._minimal_format_prediction_message(cached_row)
+            message = self._format_cached_prediction_message(cached_row, display_code)
             return self._build_response(
                 message,
                 quick_replies=[
@@ -594,7 +585,11 @@ class KakaoColabPredictionBot:
             ok, missing = validate_result_simple_schema(loaded)
             if not ok:
                 self._console_log(f"예측 캐시 CSV 스키마 불일치: 필수 컬럼 누락 {missing}. 파일={self.result_simple_path}")
-                return pd.DataFrame()
+                with self._state_lock:
+                    self._result_simple_cache = loaded
+                    self._result_simple_cache_mtime_ns = stat_mtime_ns
+                    self._issue_summary_cache = {}
+                return loaded.copy()
             with self._state_lock:
                 self._result_simple_cache = loaded
                 self._result_simple_cache_mtime_ns = stat_mtime_ns
@@ -625,6 +620,17 @@ class KakaoColabPredictionBot:
     def _minimal_format_prediction_message(self, row: pd.Series) -> str:
         return self._build_prediction_message_from_row(row)
 
+    def _format_cached_prediction_message(self, row: pd.Series, display_code: str) -> str:
+        try:
+            return self._format_prediction_message(row)
+        except Exception as exc:
+            if self._maybe_patch_legacy_rationale_bug(exc):
+                return self._build_prediction_message_from_row(row)
+            self._console_log(
+                f"{display_code} 응답 메시지 포맷 오류({type(exc).__name__}): {exc}. 안전 포맷터로 대체합니다."
+            )
+            return self._build_prediction_message_from_row(row)
+
     def _build_prediction_message_from_row(self, row: pd.Series) -> str:
         code = str(row.get("종목코드", "-"))
         name = str(row.get("종목명", "-"))
@@ -633,6 +639,7 @@ class KakaoColabPredictionBot:
         up_probability = self._format_percent(row.get("상승확률(%)"))
         predicted_close = self._format_price(row.get("내일 예상 종가"))
         confidence = self._format_confidence(row.get("예측 신뢰도"))
+        reason_line = self._build_reason_line(row)
         issue_block = self._build_issue_summary_block(row)
         return (
             f"[{code} {name}]\n"
@@ -641,8 +648,28 @@ class KakaoColabPredictionBot:
             f"내일 예측 수익률: {predicted_return}\n"
             f"내일 예측 종가: {predicted_close}\n"
             f"신뢰도: {confidence}\n"
+            f"{reason_line}"
             f"{issue_block}"
         )
+
+    def _build_reason_line(self, row: pd.Series) -> str:
+        raw_reason = self._get_clean_issue_text(row.get("예측 이유"))
+        if not raw_reason:
+            raw_reason = self._get_clean_issue_text(row.get("?덉륫 ?댁쑀"))
+        if not raw_reason:
+            return ""
+
+        labels: list[str] = []
+        if "거래대금" in raw_reason:
+            labels.append("거래대금 상위")
+        if "외국인" in raw_reason and "기관" in raw_reason and "순매수" in raw_reason:
+            labels.append("외국인/기관 순매수")
+        if "나스닥" in raw_reason and "+1%" in raw_reason:
+            labels.append("나스닥 선물 +1% 이상")
+
+        if not labels:
+            return ""
+        return "사유: " + ", ".join(dict.fromkeys(labels)) + "\n"
 
     def _build_issue_summary_block(self, row: pd.Series) -> str:
         disclosure_text = self._get_clean_issue_text(row.get("공시 요약"))
@@ -848,13 +875,7 @@ class KakaoColabPredictionBot:
         # Do not re-run summary generation here. Prediction pipeline already
         # runs issue-summary for requested symbols, so completion preview
         # should only format the cached row.
-        try:
-            message = self._format_prediction_message(cached_row)
-        except Exception:
-            try:
-                message = self._safe_format_prediction_message(cached_row)
-            except Exception:
-                return
+        message = self._format_cached_prediction_message(cached_row, display_code)
         self._console_log(f"{display_code} 예측 완료\n{message}")
 
     def _monitor_process_completion(self, symbol: str, process: Any):
@@ -1700,7 +1721,7 @@ def prewarm_prediction_cache(runtime_config: PipelineRuntimeConfig | None = None
             cached_meta = _load_prewarm_meta(meta_path)
             if not cached.empty and cached_meta.get("signature_hash") == signature_hash:
                 _LOGGER.debug("[KAKAO BOT] 기존 예측 캐시를 재사용합니다: %s", result_simple_path)
-                return {"result_simple_csv": str(result_simple_path)}
+                return {"result_simple_csv": result_simple_path.as_posix()}
         except Exception as exc:
             _LOGGER.debug("[KAKAO BOT] 기존 예측 캐시 확인 실패. 캐시를 다시 생성합니다: %s", exc)
 
@@ -1721,6 +1742,8 @@ def prewarm_prediction_cache(runtime_config: PipelineRuntimeConfig | None = None
     )
     _write_prewarm_meta(meta_path, {"signature": signature, "signature_hash": signature_hash})
     _LOGGER.debug("[KAKAO BOT] 기본 심볼 예측 캐시 준비 완료: %s", outputs.get('result_simple_csv', ''))
+    if "result_simple_csv" in outputs:
+        outputs["result_simple_csv"] = Path(outputs["result_simple_csv"]).as_posix()
     return outputs
 
 

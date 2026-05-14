@@ -119,18 +119,18 @@ def run_colab_pipeline(
             "[Colab] demo/placeholder 입력을 감지해 기본 KRX 유니버스를 먼저 수집합니다: %d symbols",
             len(default_symbols),
         )
-        save_real_ohlcv_csv(bootstrap_target, symbols=default_symbols, start=real_start)
-        pipeline_input = str(Path("data") / "real_ohlcv.csv")
+        save_real_ohlcv_csv(bootstrap_target.as_posix(), symbols=default_symbols, start=real_start)
+        pipeline_input = Path("data", "real_ohlcv.csv").as_posix()
         did_bootstrap = True
 
     if (fetch_real or auto_refresh_real) and not did_bootstrap:
         target = _resolve_project_path(pipeline_input)
         symbols = list(real_symbols) if real_symbols else _fallback_symbols_from_input_or_default(pipeline_input)
         if fetch_real:
-            save_real_ohlcv_csv(target, symbols=symbols, start=real_start)
+            save_real_ohlcv_csv(target.as_posix(), symbols=symbols, start=real_start)
         elif auto_refresh_real:
             incremental_start = _resolve_incremental_fetch_start(str(target), real_start)
-            append_real_ohlcv_csv(target, symbols=symbols, start=incremental_start)
+            append_real_ohlcv_csv(target.as_posix(), symbols=symbols, start=incremental_start)
             print(f"[Colab] real OHLCV incrementally refreshed from {incremental_start}: {target}")
 
     run_pipeline(
@@ -151,10 +151,10 @@ def run_colab_pipeline(
 
     result_dir = PROJECT_ROOT / "result"
     return {
-        "result_detail_csv": str(result_dir / "result_detail.csv"),
-        "result_simple_csv": str(result_dir / "result_simple.csv"),
-        "report_json": str(result_dir / Path(report_json).name) if report_json else "",
-        "figure_dir": str(result_dir / Path(figure_dir).name),
+        "result_detail_csv": (result_dir / "result_detail.csv").as_posix(),
+        "result_simple_csv": (result_dir / "result_simple.csv").as_posix(),
+        "report_json": (result_dir / Path(report_json).name).as_posix() if report_json else "",
+        "figure_dir": (result_dir / Path(figure_dir).name).as_posix(),
     }
 
 
