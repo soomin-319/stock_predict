@@ -127,6 +127,87 @@ def test_collect_context_raw_events_filters_strictly_by_reference_date(monkeypat
     assert "당일 공시" in " ".join(out[out["source_type"] == "disclosure"]["title"].tolist())
 
 
+def test_collect_context_raw_events_parallel_preserves_filters_and_dedup(monkeypatch, tmp_path):
+    class _FakeResp:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def read(self):
+            import json
+
+            return json.dumps(self._payload).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(
+        "src.data.investor_context.urlopen",
+        lambda req, timeout=15: _FakeResp(
+            {
+                "items": [
+                    {
+                        "title": "Alpha contract",
+                        "description": "Alpha update",
+                        "originallink": "https://example.com/news-1",
+                        "link": "https://example.com/news-1",
+                        "pubDate": "Tue, 24 Mar 2026 09:10:00 +0900",
+                    },
+                    {
+                        "title": "Alpha contract",
+                        "description": "Alpha update",
+                        "originallink": "https://example.com/news-1",
+                        "link": "https://example.com/news-1",
+                        "pubDate": "Tue, 24 Mar 2026 09:10:00 +0900",
+                    },
+                    {
+                        "title": "Alpha stale",
+                        "description": "Alpha update",
+                        "originallink": "https://example.com/news-2",
+                        "link": "https://example.com/news-2",
+                        "pubDate": "Mon, 23 Mar 2026 09:10:00 +0900",
+                    },
+                ]
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "src.data.investor_context._dart_list",
+        lambda api_key, corp_code, start, end: {
+            "list": [
+                {"rcept_dt": "20260324", "report_nm": "parallel disclosure", "rcept_no": f"{corp_code}-1"},
+                {"rcept_dt": "20260323", "report_nm": "stale disclosure", "rcept_no": f"{corp_code}-2"},
+            ]
+        },
+    )
+    corp_map_csv = tmp_path / "corp_map.csv"
+    pd.DataFrame(
+        [
+            {"Symbol": "A", "corp_code": "001"},
+            {"Symbol": "B", "corp_code": "002"},
+        ]
+    ).to_csv(corp_map_csv, index=False)
+
+    out = collect_context_raw_events(
+        symbols=["B", "A"],
+        start="2026-03-24",
+        end="2026-03-24",
+        dart_api_key="demo",
+        dart_corp_map_csv=str(corp_map_csv),
+        symbol_name_map={"A": "Alpha", "B": "Alpha"},
+        naver_client_id="nid",
+        naver_client_secret="nsecret",
+        raw_event_n_jobs=2,
+    )
+
+    assert set(out["Date"].unique()) == {"2026-03-24"}
+    assert not out.duplicated(subset=["Date", "Symbol", "source_type", "title", "raw_id"]).any()
+    assert set(out["Symbol"]) == {"A", "B"}
+    assert set(out["source_type"]) == {"news", "disclosure"}
+
+
 def test_dart_items_ignores_non_success_status():
     assert _dart_items({"status": "013", "message": "NO_DATA", "list": [{"x": 1}]}) == []
     assert _dart_items({"status": "000", "list": [{"x": 1}]}) == [{"x": 1}]

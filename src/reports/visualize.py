@@ -226,7 +226,7 @@ def _prepare_recent_month_frame(sdf: pd.DataFrame) -> pd.DataFrame:
     return recent
 
 
-def save_symbol_level_comparison_figures(oof_df: pd.DataFrame, out_dir: str, max_symbols: int | None = None) -> dict:
+def save_symbol_level_comparison_figures(oof_df: pd.DataFrame, out_dir: str, max_symbols: int | None = 30) -> dict:
     required = {"Date", "Symbol", "Close", "predicted_log_return", "target_log_return"}
     if oof_df.empty or not required.issubset(set(oof_df.columns)):
         return {}

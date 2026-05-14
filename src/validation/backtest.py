@@ -77,19 +77,21 @@ def _enforce_market_type_caps(ranked: pd.DataFrame, cfg: BacktestConfig) -> pd.D
     if ranked.empty or "market_type" not in ranked.columns or cfg.max_positions_per_market_type <= 0:
         return ranked
 
-    selected = []
+    selected_indices = []
     counts: dict[str, int] = {}
-    for _, row in ranked.iterrows():
-        market_type = str(row.get("market_type", "unknown") or "unknown")
+    market_type_pos = ranked.columns.get_loc("market_type")
+    for row in ranked.itertuples(index=True, name=None):
+        row_index = row[0]
+        market_type = str(row[market_type_pos + 1] or "unknown")
         if counts.get(market_type, 0) >= cfg.max_positions_per_market_type:
             continue
-        selected.append(row)
+        selected_indices.append(row_index)
         counts[market_type] = counts.get(market_type, 0) + 1
-        if len(selected) >= cfg.top_k:
+        if len(selected_indices) >= cfg.top_k:
             break
-    if not selected:
+    if not selected_indices:
         return ranked.head(cfg.top_k)
-    return pd.DataFrame(selected).reset_index(drop=True)
+    return ranked.loc[selected_indices].reset_index(drop=True)
 
 
 def _select_top_portfolio(grp: pd.DataFrame, prev_symbols: set[str], cfg: BacktestConfig) -> pd.DataFrame:

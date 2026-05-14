@@ -47,10 +47,17 @@ class MultiHeadStockModel:
     LightGBM이 설치된 환경이면 LightGBM을 사용하고, 없으면 sklearn GBDT로 fallback한다.
     """
 
-    def __init__(self, random_state: int = 42, n_jobs: int | None = None, use_gpu: bool = False):
+    def __init__(
+        self,
+        random_state: int = 42,
+        n_jobs: int | None = None,
+        use_gpu: bool = False,
+        head_n_jobs: int | None = 1,
+    ):
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.use_gpu = use_gpu
+        self.head_n_jobs = 1 if head_n_jobs is None else int(head_n_jobs or 1)
         self._feature_columns: List[str] = []
         self.reg_model = None
         self.cls_model = None
@@ -136,9 +143,12 @@ class MultiHeadStockModel:
             horizon_order.append(horizon)
 
         # ③: LightGBM은 C++ 구간에서 GIL을 해제하므로 스레드 병렬로 실질적인 속도 향상이 가능하다.
-        fitted = joblib.Parallel(n_jobs=-1, prefer="threads")(
-            joblib.delayed(_fit_one)(task) for task in tasks
-        )
+        if self.head_n_jobs == 1:
+            fitted = [_fit_one(task) for task in tasks]
+        else:
+            fitted = joblib.Parallel(n_jobs=self.head_n_jobs, prefer="threads")(
+                joblib.delayed(_fit_one)(task) for task in tasks
+            )
 
         self.reg_model = fitted[0]
         self.cls_model = fitted[1]
@@ -201,6 +211,7 @@ class MultiHeadStockModel:
             "backend": self.backend,
             "random_state": self.random_state,
             "n_jobs": self.n_jobs,
+            "head_n_jobs": self.head_n_jobs,
             "use_gpu": self.use_gpu,
             "feature_count": len(self._feature_columns),
             "feature_hash": self._feature_columns_hash() if self._feature_columns else None,
@@ -225,6 +236,7 @@ class MultiHeadStockModel:
             "backend": self.backend,
             "random_state": self.random_state,
             "n_jobs": self.n_jobs,
+            "head_n_jobs": self.head_n_jobs,
             "use_gpu": self.use_gpu,
             "feature_columns": list(self._feature_columns),
             "feature_hash": self._feature_columns_hash(),
@@ -254,6 +266,7 @@ class MultiHeadStockModel:
             random_state=payload.get("random_state", 42),
             n_jobs=payload.get("n_jobs"),
             use_gpu=payload.get("use_gpu", False),
+            head_n_jobs=payload.get("head_n_jobs", 1),
         )
         model.backend = payload.get("backend", model.backend)
         model._feature_columns = list(payload["feature_columns"])

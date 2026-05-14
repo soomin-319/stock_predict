@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import pandas as pd
@@ -464,12 +465,13 @@ def _rule_based_event_issue_summary(symbol: str, events: pd.DataFrame) -> Symbol
     )
 
 
-def append_issue_summary_columns(
+def _append_issue_summary_columns_sequential(
     pred_df: pd.DataFrame,
     context_raw_df: pd.DataFrame | None = None,
     openai_api_key: str | None = None,
     openai_model: str | None = None,
     summarize_symbols: list[str] | set[str] | None = None,
+    summary_n_jobs: int = 1,
 ) -> pd.DataFrame:
     if pred_df.empty:
         out = pred_df.copy()
@@ -539,6 +541,113 @@ def append_issue_summary_columns(
     out["주의사항"] = summaries.map(lambda s: s.caution)
     out["원문 개수"] = summaries.map(lambda s: s.source_count)
     out["핵심 원문 목록"] = summaries.map(lambda s: json.dumps(s.key_sources, ensure_ascii=False))
+    return out
+
+
+def _issue_summary_column_names() -> list[str]:
+    return list(_append_issue_summary_columns_sequential(pd.DataFrame()).columns)
+
+
+def _summary_from_output_row(row: pd.Series) -> SymbolIssueSummary:
+    cols = _issue_summary_column_names()
+    try:
+        key_sources = json.loads(row.get(cols[6], "[]"))
+        if not isinstance(key_sources, list):
+            key_sources = []
+    except Exception:
+        key_sources = []
+    source_count = pd.to_numeric(row.get(cols[5], 0), errors="coerce")
+    if pd.isna(source_count):
+        source_count = 0
+    return SymbolIssueSummary(
+        one_line_summary=str(row.get(cols[0], "")),
+        disclosure_summary=str(row.get(cols[1], "")),
+        news_summary=str(row.get(cols[2], "")),
+        overall_judgment=str(row.get(cols[3], "")),
+        caution=str(row.get(cols[4], "")),
+        source_count=int(source_count),
+        key_sources=[str(source) for source in key_sources],
+    )
+
+
+def _disabled_summary_from_row(row_series: pd.Series) -> SymbolIssueSummary:
+    disabled_symbol = "__summary_disabled__"
+    tmp = _append_issue_summary_columns_sequential(
+        pd.DataFrame([row_series]).reset_index(drop=True),
+        summarize_symbols=[disabled_symbol],
+    )
+    return _summary_from_output_row(tmp.iloc[0])
+
+
+def append_issue_summary_columns(
+    pred_df: pd.DataFrame,
+    context_raw_df: pd.DataFrame | None = None,
+    openai_api_key: str | None = None,
+    openai_model: str | None = None,
+    summarize_symbols: list[str] | set[str] | None = None,
+    summary_n_jobs: int = 1,
+) -> pd.DataFrame:
+    if pred_df.empty:
+        return _append_issue_summary_columns_sequential(
+            pred_df,
+            context_raw_df=context_raw_df,
+            openai_api_key=openai_api_key,
+            openai_model=openai_model,
+            summarize_symbols=summarize_symbols,
+        )
+
+    out = pred_df.copy()
+    context = context_raw_df.copy() if isinstance(context_raw_df, pd.DataFrame) and not context_raw_df.empty else None
+    if context is not None and "Symbol" in context.columns:
+        context["Symbol"] = context["Symbol"].astype(str)
+    context_by_symbol = (
+        {str(symbol): part.copy() for symbol, part in context.groupby("Symbol", sort=False)}
+        if context is not None and "Symbol" in context.columns
+        else {}
+    )
+
+    resolved_model = openai_model or ("gpt-5-mini" if openai_api_key else None)
+    use_llm = bool(openai_api_key and resolved_model and context is not None and "source_type" in context.columns)
+    target_symbols = {str(s) for s in (summarize_symbols or []) if str(s).strip()}
+
+    def _summarize_row(row_series: pd.Series) -> SymbolIssueSummary:
+        symbol = str(row_series.get("Symbol", ""))
+        if target_symbols and symbol not in target_symbols:
+            return _disabled_summary_from_row(row_series)
+
+        events = context_by_symbol.get(symbol, pd.DataFrame())
+        if use_llm and not events.empty:
+            symbol_name = str(row_series.get("symbol_name") or row_series.get("Name") or symbol)
+            llm_summary = _llm_symbol_issue_summary(
+                symbol=symbol,
+                symbol_name=symbol_name,
+                events=events,
+                api_key=str(openai_api_key),
+                model=str(resolved_model),
+            )
+            if llm_summary is not None:
+                return llm_summary
+        if not events.empty:
+            return _rule_based_event_issue_summary(symbol, events)
+        return summarize_symbol_issue(row_series)
+
+    row_series_list = [row_series for _, row_series in out.iterrows()]
+    max_workers = min(max(1, int(summary_n_jobs or 1)), max(1, len(row_series_list)))
+    if max_workers == 1:
+        summaries = [_summarize_row(row_series) for row_series in row_series_list]
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            summaries = list(executor.map(_summarize_row, row_series_list))
+
+    cols = _issue_summary_column_names()
+    summaries = pd.Series(summaries)
+    out[cols[0]] = summaries.map(lambda s: s.one_line_summary).to_list()
+    out[cols[1]] = summaries.map(lambda s: s.disclosure_summary).to_list()
+    out[cols[2]] = summaries.map(lambda s: s.news_summary).to_list()
+    out[cols[3]] = summaries.map(lambda s: s.overall_judgment).to_list()
+    out[cols[4]] = summaries.map(lambda s: s.caution).to_list()
+    out[cols[5]] = summaries.map(lambda s: s.source_count).to_list()
+    out[cols[6]] = summaries.map(lambda s: json.dumps(s.key_sources, ensure_ascii=False)).to_list()
     return out
 
 

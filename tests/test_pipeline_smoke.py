@@ -219,6 +219,12 @@ def test_build_cli_parser_uses_project_relative_defaults_and_exposes_coverage_ov
     assert hasattr(args, "min_investor_coverage_ratio")
     assert hasattr(args, "portfolio_value")
     assert hasattr(args, "max_daily_participation")
+    assert hasattr(args, "walk_forward_n_jobs")
+    assert hasattr(args, "model_n_jobs")
+    assert hasattr(args, "model_head_n_jobs")
+    assert hasattr(args, "context_raw_event_n_jobs")
+    assert hasattr(args, "issue_summary_n_jobs")
+    assert args.symbol_figure_limit == 30
 
 
 def test_build_scored_prediction_frame_keeps_signal_label_separate_from_confidence_context():
