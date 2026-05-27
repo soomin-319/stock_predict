@@ -9,16 +9,29 @@ import warnings
 from functools import partial
 
 import pandas as pd
-import yfinance as yf
 
-# Silence yfinance chatter once at import time. Mutating logger/warnings/stdout
-# state per-call from ThreadPoolExecutor workers races on shared globals and
-# can leave sys.stdout pointing at a detached StringIO, which looks like a
-# deterministic hang because every subsequent print() output is swallowed.
-logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 warnings.filterwarnings("ignore", module=r"yfinance(\..*)?")
 
 _LOGGER = logging.getLogger(__name__)
+_YF = None
+
+
+def _get_yfinance():
+    global _YF
+    if _YF is None:
+        try:
+            import yfinance as yf
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "yfinance is required for live OHLCV downloads. "
+                "Install market extras or run with --disable-external."
+            ) from exc
+        # Silence yfinance chatter once after the optional import. Mutating
+        # logger/warnings/stdout state per-call from ThreadPoolExecutor workers
+        # races on shared globals.
+        logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+        _YF = yf
+    return _YF
 
 def _to_yfinance_symbol(user_input: str) -> str:
     s = str(user_input).strip().upper()
@@ -76,6 +89,7 @@ def _normalize_yf_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def _safe_download_ohlcv(symbol: str, start: str, end: str | None = None) -> pd.DataFrame:
     try:
+        yf = _get_yfinance()
         ticker = yf.Ticker(symbol)
         df = ticker.history(start=start, end=end, auto_adjust=False)
         if df.empty:

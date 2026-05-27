@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 from matplotlib import font_manager
 import numpy as np
 import pandas as pd
-from sklearn.calibration import calibration_curve
 
 warnings.filterwarnings("ignore", message=r"Glyph .* missing from font", category=UserWarning)
 
@@ -351,6 +350,8 @@ def save_diagnostic_figures(oof_df: pd.DataFrame, out_dir: str) -> dict:
             y_prob = cal["up_probability"].astype(float).clip(0, 1).values
             n_bins = min(10, max(3, int(np.sqrt(len(cal)))))
             try:
+                from sklearn.calibration import calibration_curve
+
                 frac_pos, mean_pred = calibration_curve(y_true, y_prob, n_bins=n_bins, strategy="quantile")
             except Exception:
                 frac_pos, mean_pred = np.array([]), np.array([])

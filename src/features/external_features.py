@@ -6,21 +6,33 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
 import pandas as pd
-import yfinance as yf
 
-# Silence yfinance chatter once at import time. Per-call mutation of
-# logger/warnings/stdout/stderr from ThreadPoolExecutor workers is racy on
-# shared globals (same class of bug that caused the bootstrap hang) so we
-# configure it up front and leave it.
-logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 warnings.filterwarnings("ignore", module=r"yfinance(\..*)?")
 
 _LOGGER = logging.getLogger(__name__)
+_YF = None
+
+
+def _get_yfinance():
+    global _YF
+    if _YF is None:
+        try:
+            import yfinance as yf
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "yfinance is required for external market features. "
+                "Install market extras or disable external features."
+            ) from exc
+        # Silence yfinance chatter once after the optional import.
+        logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+        _YF = yf
+    return _YF
 
 
 def _safe_download(symbol: str, start: str, end: str | None) -> pd.Series:
     """Download close series without leaking provider noise to console."""
     try:
+        yf = _get_yfinance()
         df = yf.download(
             symbol,
             start=start,

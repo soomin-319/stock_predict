@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pandas as pd
-from sklearn.isotonic import IsotonicRegression
 
 from src.models.lgbm_heads import MultiHeadPrediction
 
@@ -89,6 +88,8 @@ def calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Inde
 
     y = (cal["target_log_return"] > 0).astype(int)
     try:
+        from sklearn.isotonic import IsotonicRegression
+
         iso = IsotonicRegression(out_of_bounds="clip")
         iso.fit(cal["up_probability"].astype(float).values, y.values)
         calibrated = pd.Series(iso.predict(raw_probs.values), dtype=float).clip(0.0, 1.0)
