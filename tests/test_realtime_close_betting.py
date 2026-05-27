@@ -72,3 +72,73 @@ def test_format_recommendation_message_includes_rank_symbol_score_and_reason():
     assert f"1\uc704 {SAMSUNG}(005930)" in text
     assert "\uc810\uc218:" in text
     assert "\uadfc\uac70:" in text
+
+
+def test_default_realtime_service_uses_kospi200_scan_with_top_trade_value_20(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    tickers = [f"{idx:06d}" for idx in range(1, 251)]
+    fake_stock = SimpleNamespace(
+        get_index_portfolio_deposit_file=lambda *args: tickers,
+        get_market_ticker_name=lambda ticker: f"Name{ticker}",
+    )
+    monkeypatch.setitem(sys.modules, "pykrx", SimpleNamespace(stock=fake_stock))
+
+    service = RealTimeCloseBettingRecommendationService(today_provider=lambda: date(2026, 5, 27))
+
+    symbols = service.symbols_provider()
+
+    assert len(symbols) == 200
+    assert symbols["Symbol"].tolist()[:3] == ["000001.KS", "000002.KS", "000003.KS"]
+    assert symbols["Name"].tolist()[:2] == ["Name000001", "Name000002"]
+    assert symbols["Market"].unique().tolist() == ["KOSPI"]
+    assert service.top_trade_value_count == 20
+
+
+def test_select_candidates_can_return_all_items_at_or_above_min_final_score():
+    from src.recommendation.close_betting import GRADE_STRONG, select_close_betting_candidates
+
+    scored = pd.DataFrame(
+        [
+            {
+                "symbol": "000001.KS",
+                "name": "A",
+                "recommendation_grade": GRADE_STRONG,
+                "final_score": 250,
+                "trade_value_rank": 1,
+                "volume_change_rate": 2.0,
+                "is_52w_high": True,
+                "is_near_52w_high": True,
+                "reasons": ["r1"],
+            },
+            {
+                "symbol": "000002.KS",
+                "name": "B",
+                "recommendation_grade": GRADE_STRONG,
+                "final_score": 200,
+                "trade_value_rank": 2,
+                "volume_change_rate": 1.5,
+                "is_52w_high": True,
+                "is_near_52w_high": True,
+                "reasons": ["r2"],
+            },
+            {
+                "symbol": "000003.KS",
+                "name": "C",
+                "recommendation_grade": GRADE_STRONG,
+                "final_score": 199,
+                "trade_value_rank": 3,
+                "volume_change_rate": 3.0,
+                "is_52w_high": True,
+                "is_near_52w_high": True,
+                "reasons": ["r3"],
+            },
+        ]
+    )
+
+    selected = select_close_betting_candidates(scored, top_n=None, min_final_score=200)
+
+    assert selected["symbol"].tolist() == ["000001.KS", "000002.KS"]
+    assert selected["recommendation_rank"].tolist() == [1, 2]
+

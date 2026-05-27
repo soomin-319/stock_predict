@@ -61,11 +61,16 @@ class FakeRecommendationService:
         self.error = error
         self.calls = 0
 
-    def get_recommendations(self, top_n=3):
+    def get_recommendations(self, top_n=3, min_final_score=None):
         self.calls += 1
+        self.last_top_n = top_n
+        self.last_min_final_score = min_final_score
         if self.error:
             raise self.error
-        return self.result[:top_n]
+        result = self.result
+        if min_final_score is not None:
+            result = [item for item in result if item.final_score >= min_final_score]
+        return result if top_n is None else result[:top_n]
 
 def make_bot(tmp_path: Path, runner=None) -> KakaoColabPredictionBot:
     runtime_config = PipelineRuntimeConfig(
@@ -1655,7 +1660,7 @@ def test_recommendation_keyword_returns_realtime_recommendations(tmp_path: Path)
                 symbol="005930",
                 name="\uc0bc\uc131\uc804\uc790",
                 grade="\uac15\ub825 \ud6c4\ubcf4",
-                final_score=120,
+                final_score=200,
                 first_buy_ratio=0.6,
                 reasons=("52\uc8fc \uc885\uac00 \uae30\uc900 \uc2e0\uace0\uac00", "\uac70\ub798\ub300\uae08 1\uc704"),
             )
@@ -1668,9 +1673,11 @@ def test_recommendation_keyword_returns_realtime_recommendations(tmp_path: Path)
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
     assert fake_service.calls == 1
+    assert fake_service.last_top_n is None
+    assert fake_service.last_min_final_score == 200
     assert "[\uc2e4\uc2dc\uac04 \ucd94\ucc9c]" in text
     assert "1\uc704 \uc0bc\uc131\uc804\uc790(005930)" in text
-    assert "\uc810\uc218: 120" in text
+    assert "\uc810\uc218: 200" in text
 
 
 def test_recommendation_keyword_returns_failure_message_when_service_raises(tmp_path: Path):
