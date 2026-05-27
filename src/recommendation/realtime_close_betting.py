@@ -31,7 +31,7 @@ class RealTimeCloseBettingRecommendationService:
         today_provider: TodayProvider | None = None,
         universe_csv: str | Path | None = None,
         lookback_days: int = 420,
-        universe_limit: int = 50,
+        universe_limit: int = 200,
         first_buy_ratio: float = 0.6,
         top_trade_value_count: int = 20,
     ):
@@ -42,7 +42,11 @@ class RealTimeCloseBettingRecommendationService:
         self.first_buy_ratio = first_buy_ratio
         self.top_trade_value_count = top_trade_value_count
 
-    def get_recommendations(self, top_n: int = 3) -> list[CloseBettingRecommendation]:
+    def get_recommendations(
+        self,
+        top_n: int | None = 3,
+        min_final_score: int | None = None,
+    ) -> list[CloseBettingRecommendation]:
         today = self.today_provider()
         start = (today - timedelta(days=self.lookback_days)).isoformat()
         end = (today + timedelta(days=1)).isoformat()
@@ -60,21 +64,58 @@ class RealTimeCloseBettingRecommendationService:
         top = ranked[ranked["trade_value_rank"].astype("Int64") <= self.top_trade_value_count].copy()
         technical = add_technical_indicators(top)
         scored = score_candidates(latest_rows(technical), top_trade_value_count=self.top_trade_value_count)
-        candidates = select_close_betting_candidates(scored, top_n=top_n, first_buy_ratio=self.first_buy_ratio)
+        candidates = select_close_betting_candidates(
+            scored,
+            top_n=top_n,
+            first_buy_ratio=self.first_buy_ratio,
+            min_final_score=min_final_score,
+        )
         return recommendations_from_candidates(candidates)
 
     def _load_default_symbols(self, universe_csv: str | Path | None, universe_limit: int) -> pd.DataFrame:
-        root = Path(__file__).resolve().parents[2]
-        path = Path(universe_csv) if universe_csv is not None else root / "data" / "default_universe_kospi50_kosdaq50.csv"
-        df = pd.read_csv(path)
+        if universe_csv is None:
+            df = self._load_kospi200_symbols(universe_limit)
+        else:
+            df = pd.read_csv(Path(universe_csv))
         if "Market" in df.columns:
             df = df[df["Market"].astype(str).str.upper() == "KOSPI"].copy()
         if universe_limit > 0:
             df = df.head(universe_limit)
         names = get_symbol_name_map(df["Symbol"].astype(str).tolist()) if "Symbol" in df.columns else {}
         df["Name"] = df.get("Name", df.get("Symbol", "")).astype(str)
-        df["Name"] = df["Symbol"].astype(str).map(names).fillna(df["Name"])
+        mapped_names = df["Symbol"].astype(str).map(names)
+        has_real_mapped_name = mapped_names.notna() & (mapped_names.astype(str) != df["Symbol"].astype(str))
+        df["Name"] = mapped_names.where(has_real_mapped_name, df["Name"])
         return df
+
+    def _load_kospi200_symbols(self, universe_limit: int) -> pd.DataFrame:
+        from pykrx import stock
+
+        index_code = "1028"  # KOSPI 200
+        trade_date = self.today_provider().strftime("%Y%m%d")
+        try:
+            tickers = stock.get_index_portfolio_deposit_file(index_code, trade_date)
+        except TypeError:
+            tickers = stock.get_index_portfolio_deposit_file(index_code)
+
+        rows = []
+        for ticker in list(tickers)[:universe_limit if universe_limit > 0 else None]:
+            normalized = str(ticker).strip().zfill(6)
+            if not normalized:
+                continue
+            try:
+                name = str(stock.get_market_ticker_name(normalized)).strip()
+            except Exception:
+                name = normalized
+            rows.append(
+                {
+                    "Symbol": f"{normalized}.KS",
+                    "Name": name or normalized,
+                    "Market": "KOSPI",
+                    "Bucket": "KOSPI200",
+                }
+            )
+        return pd.DataFrame(rows)
 
     def _normalize_symbols(self, symbols_df: pd.DataFrame) -> pd.DataFrame:
         if symbols_df is None or symbols_df.empty:
