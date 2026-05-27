@@ -8,6 +8,8 @@
 - 분위수 기반 불확실성 구간(`uncertainty_band`)
 - 최종 신호 점수/라벨(`signal_score`, `signal_label`)
 
+클라이언트 운영 목적은 투자 판단에 참고할 하나의 근거자료를 제공하는 것입니다. 매수/매도/관망 신호는 다음날 예상 수익률(`predicted_return`)만 기준으로 삼고, 뉴스/공시는 예상 수익률에 영향을 주지 않는 표시용 정보로 제공합니다.
+
 ---
 
 ## 2. 전체 파이프라인 흐름
@@ -24,7 +26,7 @@
 10. 신호 가중치 튜닝
 11. Top-K 백테스트 및 그래프 생성
 12. 최종 모델 학습 후 최신 시점 추론
-13. CSV/JSON/그래프 산출물 저장 + PM 요약 생성
+13. CSV/JSON/그래프 산출물 저장 + PM 요약 및 표시용 뉴스/공시 요약 생성
 
 실행 시 콘솔에는 `[1/13]` 형태로 진행률이 출력됩니다.
 
@@ -74,6 +76,11 @@
 - `close_to_ma_20`, `vol_20` 기반 단순 국면 라벨링
 - 예: `uptrend_high_vol`, `sideways_low_vol`
 
+### 4.4 뉴스/공시 표시용 컨텍스트
+- DART 공시와 뉴스 원문/요약은 사용자 표시용으로 수집
+- `result_news.csv`, `result_disclosure.csv`, `result_simple.csv`, Kakao 응답에 표시
+- 예상 수익률, 매수/매도/관망 신호, 모델 피처에는 반영하지 않음
+
 ---
 
 ## 5. 모델링/검증
@@ -101,11 +108,13 @@
 - `predicted_return`, `predicted_close`, `up_probability`, `uncertainty_band`
 - 정규화된 return/relative strength/uncertainty 기반 `signal_score`
 - 구간 라벨: strong_negative ~ strong_positive
+- 사용자-facing 매수/매도/관망은 `predicted_return` 임계값만 기준으로 결정
 
 ### 6.2 신호 튜닝 (`src/validation/signal_tuning.py`)
 - Grid-search로 top-decile 평균 수익률 최대화
 - OOF를 시간순으로 분할(기본 70:30)해 앞 구간에서 가중치 튜닝
 - 튜닝된 가중치로 재스코어링 후 뒤 구간(holdout)에서 백테스트
+- 튜닝된 `signal_score`는 랭킹/진단용이며 사용자-facing 매수/매도/관망을 override하지 않음
 
 ### 6.3 백테스트 (`src/validation/backtest.py`)
 - Long-only Top-K
@@ -145,6 +154,7 @@
 - 실행 리포트: `--report-json` (외부지표 coverage, tuning/backtest 샘플, 백테스트 확장 지표 포함)
 - PM 요약: `portfolio_action`, `trading_gate`, `risk_flag`, `confidence_label`
 - PM 리포트 아티팩트: `pm_report.json`
+- 표시용 이슈 컨텍스트: `result_news.csv`, `result_disclosure.csv`
 - OOF 결과: `reports/oof_predictions.csv`
 - 그래프: `--figure-dir/*.png`
 

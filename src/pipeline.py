@@ -48,6 +48,7 @@ from src.pipeline_support import (
 )
 from src.reports.pm_report import build_pm_report, save_pm_report
 from src.reports.issue_summary import append_issue_summary_columns
+from src.reports.news_impact_context import append_news_impact_context
 from src.reports.result_formatter import (
     format_percentage_text as formatter_format_percentage_text,
 )
@@ -282,6 +283,7 @@ def run_pipeline(
     max_daily_participation: float | None = None,
     max_positions_per_market_type: int | None = None,
     issue_summary_symbols: list[str] | None = None,
+    news_impact_report: str | None = None,
     walk_forward_n_jobs: int | None = None,
     model_n_jobs: int | None = None,
     model_head_n_jobs: int | None = None,
@@ -515,6 +517,7 @@ def run_pipeline(
         summarize_symbols=issue_summary_symbols,
         summary_n_jobs=issue_summary_n_jobs,
     )
+    pred_df = append_news_impact_context(pred_df, news_impact_report)
     pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True))
     pred_df["권고"] = pred_df["recommendation"]
 
@@ -686,6 +689,7 @@ def build_cli_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--universe-csv", default=None, help="Optional universe CSV with Symbol column")
     parser.add_argument("--report-json", default="pipeline_report.json", help="Pipeline summary JSON")
+    parser.add_argument("--news-impact-report", default=None, help="Optional stock-news-impact JSON report for display-only context")
     parser.add_argument("--figure-dir", default="figures", help="Directory for generated charts")
     parser.add_argument("--fetch-real", action="store_true", help="Fetch real OHLCV from yfinance before running")
     parser.add_argument("--disable-external", action="store_true", help="Disable external market feature download")
@@ -822,6 +826,7 @@ def main():
         max_daily_participation=args.max_daily_participation,
         max_positions_per_market_type=args.max_positions_per_market_type,
         issue_summary_symbols=args.issue_summary_symbols,
+        news_impact_report=args.news_impact_report,
         walk_forward_n_jobs=args.walk_forward_n_jobs,
         model_n_jobs=args.model_n_jobs,
         model_head_n_jobs=args.model_head_n_jobs,

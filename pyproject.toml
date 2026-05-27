@@ -28,7 +28,7 @@ stock-predict = "src.pipeline:main"
 stock-predict-kakao = "src.chatbot.kakao_colab_bot:main"
 
 [tool.setuptools]
-packages = ["src", "src.chatbot", "src.config", "src.data", "src.domain", "src.features", "src.models", "src.validation", "src.inference", "src.reports"]
+packages = ["src", "src.chatbot", "src.config", "src.data", "src.domain", "src.features", "src.models", "src.validation", "src.inference", "src.reports", "src.recommendation"]
 
 [tool.pytest.ini_options]
 cache_dir = "result/.pytest_cache"
