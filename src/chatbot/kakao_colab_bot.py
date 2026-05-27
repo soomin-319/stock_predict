@@ -249,7 +249,7 @@ class KakaoColabPredictionBot:
 
     def _handle_recommendation_request(self) -> dict[str, Any]:
         try:
-            recommendations = self.recommendation_service.get_recommendations(top_n=3)
+            recommendations = self.recommendation_service.get_recommendations(top_n=None, min_final_score=200)
             return self._build_response(
                 format_recommendation_message(recommendations),
                 quick_replies=[("\ub2e4\uc2dc \ucd94\ucc9c", "\ucd94\ucc9c"), ("\ub3c4\uc6c0\ub9d0", "\ub3c4\uc6c0\ub9d0")],

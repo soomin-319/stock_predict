@@ -177,15 +177,24 @@ def score_candidates(df: pd.DataFrame, theme_score_default: int = 0, top_trade_v
     return pd.concat([result, scores], axis=1)
 
 
-def select_close_betting_candidates(scored: pd.DataFrame, top_n: int = 3, first_buy_ratio: float = 0.6) -> pd.DataFrame:
+def select_close_betting_candidates(
+    scored: pd.DataFrame,
+    top_n: int | None = 3,
+    first_buy_ratio: float = 0.6,
+    min_final_score: int | None = None,
+) -> pd.DataFrame:
     if scored.empty or "recommendation_grade" not in scored.columns:
         return scored.head(0).copy()
     candidates = scored[scored["recommendation_grade"] != GRADE_EXCLUDED].copy()
+    if min_final_score is not None:
+        candidates = candidates[pd.to_numeric(candidates["final_score"], errors="coerce") >= min_final_score].copy()
     if {"is_52w_high", "is_near_52w_high"}.issubset(candidates.columns):
         candidates = candidates[candidates["is_52w_high"].astype(bool) | candidates["is_near_52w_high"].astype(bool)].copy()
     if candidates.empty:
         return candidates
-    candidates = candidates.sort_values(["final_score", "trade_value_rank", "volume_change_rate"], ascending=[False, True, False]).head(top_n)
+    candidates = candidates.sort_values(["final_score", "trade_value_rank", "volume_change_rate"], ascending=[False, True, False])
+    if top_n is not None:
+        candidates = candidates.head(top_n)
     candidates = candidates.reset_index(drop=True)
     candidates["recommendation_rank"] = candidates.index + 1
     candidates["first_buy_ratio"] = first_buy_ratio
