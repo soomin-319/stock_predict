@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable
@@ -17,6 +18,9 @@ from src.recommendation.close_betting import (
     score_candidates,
     select_close_betting_candidates,
 )
+
+_LOGGER = logging.getLogger(__name__)
+DEFAULT_UNIVERSE_CSV = Path(__file__).resolve().parents[2] / "data" / "default_universe_kospi50_kosdaq50.csv"
 
 SymbolsProvider = Callable[[], pd.DataFrame]
 OhlcvFetcher = Callable[[list[str], str, str | None], pd.DataFrame]
@@ -55,7 +59,11 @@ class RealTimeCloseBettingRecommendationService:
         if not symbols:
             return []
 
-        raw = self.ohlcv_fetcher(symbols, start, end)
+        try:
+            raw = self.ohlcv_fetcher(symbols, start, end)
+        except RuntimeError as exc:
+            _LOGGER.warning("live OHLCV fetch failed for recommendation scan: %s", exc)
+            return []
         standard = self._standardize_ohlcv(raw, symbols_df)
         if standard.empty:
             return []
@@ -74,48 +82,25 @@ class RealTimeCloseBettingRecommendationService:
 
     def _load_default_symbols(self, universe_csv: str | Path | None, universe_limit: int) -> pd.DataFrame:
         if universe_csv is None:
-            df = self._load_kospi200_symbols(universe_limit)
+            df = pd.read_csv(DEFAULT_UNIVERSE_CSV) if DEFAULT_UNIVERSE_CSV.exists() else pd.DataFrame()
         else:
             df = pd.read_csv(Path(universe_csv))
+        if df is None or df.empty or "Symbol" not in df.columns:
+            return pd.DataFrame(columns=["Symbol", "Name", "Market", "Bucket"])
         if "Market" in df.columns:
             df = df[df["Market"].astype(str).str.upper() == "KOSPI"].copy()
         if universe_limit > 0:
             df = df.head(universe_limit)
+        if df.empty:
+            return pd.DataFrame(columns=["Symbol", "Name", "Market", "Bucket"])
         names = get_symbol_name_map(df["Symbol"].astype(str).tolist()) if "Symbol" in df.columns else {}
-        df["Name"] = df.get("Name", df.get("Symbol", "")).astype(str)
+        if "Name" not in df.columns:
+            df["Name"] = df["Symbol"]
+        df["Name"] = df["Name"].astype(str)
         mapped_names = df["Symbol"].astype(str).map(names)
         has_real_mapped_name = mapped_names.notna() & (mapped_names.astype(str) != df["Symbol"].astype(str))
         df["Name"] = mapped_names.where(has_real_mapped_name, df["Name"])
         return df
-
-    def _load_kospi200_symbols(self, universe_limit: int) -> pd.DataFrame:
-        from pykrx import stock
-
-        index_code = "1028"  # KOSPI 200
-        trade_date = self.today_provider().strftime("%Y%m%d")
-        try:
-            tickers = stock.get_index_portfolio_deposit_file(index_code, trade_date)
-        except TypeError:
-            tickers = stock.get_index_portfolio_deposit_file(index_code)
-
-        rows = []
-        for ticker in list(tickers)[:universe_limit if universe_limit > 0 else None]:
-            normalized = str(ticker).strip().zfill(6)
-            if not normalized:
-                continue
-            try:
-                name = str(stock.get_market_ticker_name(normalized)).strip()
-            except Exception:
-                name = normalized
-            rows.append(
-                {
-                    "Symbol": f"{normalized}.KS",
-                    "Name": name or normalized,
-                    "Market": "KOSPI",
-                    "Bucket": "KOSPI200",
-                }
-            )
-        return pd.DataFrame(rows)
 
     def _normalize_symbols(self, symbols_df: pd.DataFrame) -> pd.DataFrame:
         if symbols_df is None or symbols_df.empty:
