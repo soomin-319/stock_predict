@@ -680,7 +680,7 @@ class KakaoColabPredictionBot:
     def _build_reason_line(self, row: pd.Series) -> str:
         raw_reason = self._get_clean_issue_text(row.get("예측 이유"))
         if not raw_reason:
-            raw_reason = self._get_clean_issue_text(row.get("?덉륫 ?댁쑀"))
+            raw_reason = self._get_clean_issue_text(row.get("예측 사유"))
         if not raw_reason:
             return ""
 

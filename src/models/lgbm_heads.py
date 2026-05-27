@@ -7,10 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
-import joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
 
 MODEL_ARTIFACT_VERSION = 1
 
@@ -28,6 +26,25 @@ try:
 except Exception:  # pragma: no cover - fallback path
     lgb = None
     LIGHTGBM_AVAILABLE = False
+
+
+def _require_sklearn_ensemble():
+    try:
+        from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "scikit-learn is required when LightGBM is unavailable. "
+            "Install scikit-learn/lightgbm before training."
+        ) from exc
+    return GradientBoostingClassifier, GradientBoostingRegressor
+
+
+def _require_joblib():
+    try:
+        import joblib
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("joblib is required for parallel model heads and model persistence.") from exc
+    return joblib
 
 
 @dataclass
@@ -92,6 +109,7 @@ class MultiHeadStockModel:
                 params["objective"] = "regression"
             return lgb.LGBMRegressor(**params)
 
+        _, GradientBoostingRegressor = _require_sklearn_ensemble()
         kwargs = dict(random_state=self.random_state, n_estimators=250, learning_rate=0.03, max_depth=3)
         if loss == "quantile":
             kwargs["loss"] = "quantile"
@@ -106,6 +124,7 @@ class MultiHeadStockModel:
             params["objective"] = "binary"
             return lgb.LGBMClassifier(**params)
 
+        GradientBoostingClassifier, _ = _require_sklearn_ensemble()
         return GradientBoostingClassifier(
             random_state=self.random_state,
             n_estimators=250,
@@ -146,6 +165,7 @@ class MultiHeadStockModel:
         if self.head_n_jobs == 1:
             fitted = [_fit_one(task) for task in tasks]
         else:
+            joblib = _require_joblib()
             fitted = joblib.Parallel(n_jobs=self.head_n_jobs, prefer="threads")(
                 joblib.delayed(_fit_one)(task) for task in tasks
             )
@@ -247,6 +267,7 @@ class MultiHeadStockModel:
             "horizon_cls_models": self.horizon_cls_models,
             "saved_at": datetime.now(timezone.utc).isoformat(),
         }
+        joblib = _require_joblib()
         joblib.dump(payload, out_path)
 
         meta_path = out_path.with_suffix(out_path.suffix + ".meta.json")
@@ -256,6 +277,7 @@ class MultiHeadStockModel:
 
     @classmethod
     def load(cls, path: str | Path) -> "MultiHeadStockModel":
+        joblib = _require_joblib()
         payload = joblib.load(Path(path))
         version = payload.get("artifact_version")
         if version != MODEL_ARTIFACT_VERSION:

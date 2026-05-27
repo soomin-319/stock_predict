@@ -4,9 +4,11 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import Any
 
 import pandas as pd
-from openai import OpenAI
+
+OpenAI = None
 
 
 @dataclass
@@ -201,7 +203,7 @@ def _extract_json_dict(text: str) -> dict | None:
         return None
 
 
-def _call_llm_json(client: OpenAI, model: str, prompt: str, max_output_tokens: int = 400) -> dict | None:
+def _call_llm_json(client: Any, model: str, prompt: str, max_output_tokens: int = 400) -> dict | None:
     try:
         response = client.responses.create(
             model=model,
@@ -230,7 +232,7 @@ def _call_llm_json(client: OpenAI, model: str, prompt: str, max_output_tokens: i
         return None
 
 
-def _call_llm_text(client: OpenAI, model: str, prompt: str, max_output_tokens: int = 500) -> str | None:
+def _call_llm_text(client: Any, model: str, prompt: str, max_output_tokens: int = 500) -> str | None:
     try:
         response = client.responses.create(model=model, input=prompt, max_output_tokens=max_output_tokens)
         text = str(getattr(response, "output_text", "") or "").strip()
@@ -347,7 +349,15 @@ def _llm_symbol_issue_summary(
     model: str,
 ) -> SymbolIssueSummary | None:
     structured_payload = _build_structured_events(symbol, symbol_name, events)
-    client = OpenAI(api_key=api_key)
+    try:
+        client_cls = OpenAI
+        if client_cls is None:
+            from openai import OpenAI as client_cls
+    except ModuleNotFoundError:
+        print("[ISSUE SUMMARY] openai package is not installed; using rule-based issue summary.")
+        return None
+
+    client = client_cls(api_key=api_key)
 
     disclosures = structured_payload.get("disclosures", [])
     disclosure_payload = json.dumps(

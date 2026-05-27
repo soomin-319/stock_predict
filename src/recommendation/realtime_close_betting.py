@@ -174,7 +174,7 @@ class RealTimeCloseBettingRecommendationService:
         df["trade_value_source"] = "close_volume_estimated"
         df["signal_timestamp"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
         df["data_cutoff_timestamp"] = str(df["date"].max())
-        df["execution_assumption"] = "?? ?? ?? ?? ??"
+        df["execution_assumption"] = "종가 확정 후 다음 거래일 진입"
         df["price_basis"] = "unadjusted"
         df["is_close_confirmed"] = True
         cols = [
