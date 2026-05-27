@@ -30,6 +30,8 @@ python src/pipeline.py --input data/real_ohlcv.csv --add-symbols 005930 000660.K
 
 ## Kakao/Colab Bot
 
+Operational deployment is GitHub -> Google Colab -> KakaoTalk. Keep the code in GitHub, load or clone it inside Colab, start the chatbot entry point from that runtime, and expose the Flask webhook to KakaoTalk, typically through ngrok.
+
 Start the chatbot entry point:
 
 ```powershell
@@ -43,6 +45,11 @@ The bot:
 - uses `result/result_detail.csv` for the latest prediction date when available
 - starts a background prediction job if a symbol is missing
 - formats cached rows through one safe formatter path and falls back to the same row-based formatter on legacy formatter errors
+- treats news and disclosure summaries as display-only context; they are shown in responses but do not change the next-day expected return or buy/sell/hold signal
+
+## Decision Scope
+
+The output is one reference material for a user's own investment review. The operational buy/sell/hold label is based only on the next-day expected return (`predicted_return`). News, disclosures, and issue summaries are presented so the user can read the surrounding context, not so they can influence the model's expected return.
 
 ## Environment Variables
 

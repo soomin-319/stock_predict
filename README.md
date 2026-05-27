@@ -1,8 +1,8 @@
 # Stock Predict
 
-Python stock prediction pipeline for next-day and multi-horizon return signals. It builds price, market, investor, and issue-summary features, validates with walk-forward OOF predictions, runs a long-only top-k backtest, and writes CSV/JSON/figure artifacts under `result/`.
+Python stock prediction pipeline for next-day and multi-horizon return signals. It builds price, market, and investor-flow features, validates with walk-forward OOF predictions, runs a long-only top-k backtest, and writes CSV/JSON/figure artifacts under `result/`.
 
-This project is for research and operations support. It is not investment advice.
+This project is for research and operations support. The client uses its outputs as one reference material for investment decisions; it is not an investment-advice or automated trading system. Buy/sell/hold signals are based only on the next-day expected return (`predicted_return`). News and disclosures are collected and summarized only for user display, and must not change the expected return or the buy/sell decision.
 
 ## Install
 
@@ -73,7 +73,8 @@ Required columns:
 Optional but recommended:
 
 - `Symbol`
-- investor/context columns such as `foreign_net_buy`, `institution_net_buy`, `disclosure_score`, `news_sentiment`
+- investor/context columns such as `foreign_net_buy`, `institution_net_buy`
+- display-only issue context such as disclosure/news summaries; these are shown to users but are not inputs to the expected-return decision policy
 - market structure fields such as `market_type`, `venue`, `session`, `listing_date`
 
 Use sample data for deterministic local testing. Avoid live network calls in tests.
@@ -103,13 +104,19 @@ Pytest cache and temporary files are configured under ignored `result/` paths.
 
 ## Kakao Bot
 
+The production usage pattern is GitHub -> Google Colab -> KakaoTalk:
+
+1. Store the project code in GitHub.
+2. Load the repository in a Colab runtime and run the pipeline/chatbot entry point there.
+3. Expose the Colab Flask app, typically through ngrok, so the user can communicate with the service through a KakaoTalk chatbot.
+
 The Kakao/Colab integration lives in `src/chatbot/kakao_colab_bot.py` and can be started through:
 
 ```powershell
 stock-predict-kakao
 ```
 
-It reads cached predictions from `result/result_simple.csv`, starts background prediction jobs when a symbol is missing, and can prewarm the prediction cache for default symbols.
+It reads cached predictions from `result/result_simple.csv`, starts background prediction jobs when a symbol is missing, and can prewarm the prediction cache for default symbols. Chatbot responses may include news/disclosure summaries, but those summaries are display-only context separate from the expected-return signal.
 
 ## Environment Variables
 

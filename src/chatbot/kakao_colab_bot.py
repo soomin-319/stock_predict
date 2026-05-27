@@ -30,12 +30,15 @@ from src.data.krx_universe import find_symbol_candidates_by_name, get_symbol_nam
 from src.data.fetch_real_data import normalize_user_symbols
 from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.result_formatter import validate_result_simple_schema
+from src.recommendation.close_betting import format_recommendation_message
+from src.recommendation.realtime_close_betting import RealTimeCloseBettingRecommendationService
 
 
 _STOCK_CODE_PATTERN = re.compile(r"\b\d{6}(?:\.(?:KS|KQ))?\b", re.IGNORECASE)
 _HELP_KEYWORDS = {"도움말", "help", "사용법", "시작", "안내"}
 _STATUS_KEYWORDS = {"결과", "상태", "진행상황", "조회", "확인"}
 _REFRESH_KEYWORDS = {"최신화", "새로고침", "재실행", "다시예측", "다시 예측"}
+_RECOMMENDATION_KEYWORDS = {"\ucd94\ucc9c"}
 
 
 @dataclass(slots=True)
@@ -160,6 +163,7 @@ class KakaoColabPredictionBot:
         state_path: str | Path | None = None,
         session_path: str | Path | None = None,
         process_runner: Callable[..., Any] | None = None,
+        recommendation_service: Any | None = None,
     ):
         self.runtime_config = runtime_config or PipelineRuntimeConfig()
         self.project_root = Path(self.runtime_config.project_root)
@@ -175,6 +179,7 @@ class KakaoColabPredictionBot:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self.session_path.parent.mkdir(parents=True, exist_ok=True)
         self.process_runner = process_runner or subprocess.Popen
+        self.recommendation_service = recommendation_service or RealTimeCloseBettingRecommendationService()
         self._active_processes: dict[str, Any] = {}
         self._job_registry = self._load_registry(self.state_path)
         self._session_registry = self._load_registry(self.session_path)
@@ -229,6 +234,9 @@ class KakaoColabPredictionBot:
                 return self._guide_response("최신화할 종목이 없습니다. 먼저 종목코드를 입력해주세요.")
             return self._handle_symbol_request(symbol, user_id=user_id, force_refresh=True, from_session=True)
 
+        if self._is_recommendation_request(text):
+            return self._handle_recommendation_request()
+
         symbol_input = self._extract_stock_code(text)
         if not symbol_input:
             return self._handle_name_lookup_request(text, user_id=user_id)
@@ -238,6 +246,21 @@ class KakaoColabPredictionBot:
             return self._guide_response("입력한 종목코드를 해석하지 못했습니다. 다시 확인해주세요.")
 
         return self._handle_symbol_request(symbol, user_id=user_id, force_refresh=False, from_session=False)
+
+    def _handle_recommendation_request(self) -> dict[str, Any]:
+        try:
+            recommendations = self.recommendation_service.get_recommendations(top_n=3)
+            return self._build_response(
+                format_recommendation_message(recommendations),
+                quick_replies=[("\ub2e4\uc2dc \ucd94\ucc9c", "\ucd94\ucc9c"), ("\ub3c4\uc6c0\ub9d0", "\ub3c4\uc6c0\ub9d0")],
+            )
+        except Exception as exc:
+            self._console_log(f"\uc2e4\uc2dc\uac04 \ucd94\ucc9c \ucc98\ub9ac \uc624\ub958({type(exc).__name__}): {exc}")
+            return self._build_response(
+                "\uc2e4\uc2dc\uac04 \ucd94\ucc9c \uc0dd\uc131\uc5d0 \uc2e4\ud328\ud588\uc2b5\ub2c8\ub2e4.\n"
+                "\ub370\uc774\ud130 \uc218\uc9d1 \ub610\ub294 \ub124\ud2b8\uc6cc\ud06c \uc0c1\ud0dc\ub97c \ud655\uc778\ud55c \ub4a4 \ub2e4\uc2dc '\ucd94\ucc9c'\uc744 \uc785\ub825\ud574\uc8fc\uc138\uc694.",
+                quick_replies=[("\ub2e4\uc2dc \ucd94\ucc9c", "\ucd94\ucc9c"), ("\ub3c4\uc6c0\ub9d0", "\ub3c4\uc6c0\ub9d0")],
+            )
 
     def _handle_symbol_request(
         self,
@@ -436,6 +459,7 @@ class KakaoColabPredictionBot:
                 "2) 종목명 입력: 삼성전자",
                 "3) 예측 진행 중이면 '결과' 입력",
                 "4) 최신값으로 다시 돌리고 싶으면 '최신화' 입력",
+                "5) \uc2e4\uc2dc\uac04 \ucd94\ucc9c: \ucd94\ucc9c",
             ]
         )
         return self._build_response(
@@ -444,6 +468,7 @@ class KakaoColabPredictionBot:
                 ("예시 005930", "005930"),
                 ("결과 확인", "결과"),
                 ("최신화", "최신화"),
+                ("\uc2e4\uc2dc\uac04 \ucd94\ucc9c", "\ucd94\ucc9c"),
             ],
         )
 
@@ -1501,6 +1526,9 @@ class KakaoColabPredictionBot:
 
     def _is_refresh_request(self, text: str) -> bool:
         return text.strip().lower() in _REFRESH_KEYWORDS
+
+    def _is_recommendation_request(self, text: str) -> bool:
+        return text.strip().lower() in _RECOMMENDATION_KEYWORDS
 
     def _load_registry(self, path: Path) -> dict[str, dict[str, Any]]:
         if not path.exists():

@@ -5,11 +5,11 @@
 1. Load and clean OHLCV input from `src/data/loaders.py` and `src/data/cleaners.py`.
 2. Optionally refresh real OHLCV with `src/data/fetch_real_data.py`; CLI refresh helpers live in `src/data/cli_refresh.py`.
 3. Filter the requested universe from `data/` or a user-provided universe CSV.
-4. Add investor context, disclosure/news raw events, external market features, and market-regime annotations.
+4. Add investor context, display-only disclosure/news raw events, external market features, and market-regime annotations.
 5. Build price and event features in `src/features/price_features.py` and `src/features/investment_signals.py`.
 6. Run walk-forward validation and OOF prediction generation in `src/validation/walk_forward.py`.
 7. Calibrate probabilities, split OOF rows for tuning/evaluation, and compute diagnostics with `src/validation/support.py`.
-8. Tune signal weights, run top-k backtests, and train the final multi-head model.
+8. Tune ranking weights, run top-k backtests, and train the final multi-head model.
 9. Build latest predictions with `src/inference/predict.py` and policy fields with `src/domain/signal_policy.py`.
 10. Save CSV, JSON, and figure artifacts through `src/reports/`.
 
@@ -29,6 +29,16 @@ The current signal recommendation policy is:
 - `predicted_return > 2.0`: buy
 - `predicted_return <= -2.0`: sell
 - values between those thresholds: hold
-- when `signal_score`, `up_probability`, and `uncertainty_score` are present, strong score/probability with low uncertainty can upgrade to buy, and weak score with low uncertainty can downgrade to sell
 
-Market headwind and overbought RSI guards are applied by the pipeline policy wrapper for console/report compatibility.
+The buy/sell/hold decision must use only the next-day expected return (`predicted_return`). `signal_score`, `up_probability`, uncertainty, market context, news, and disclosures can be reported as supporting diagnostics, ranking context, or user-facing explanations, but they must not override the buy/sell/hold label.
+
+News and disclosure data are display-only issue context. They can appear in `result_news.csv`, `result_disclosure.csv`, `result_simple.csv`, and KakaoTalk responses, but they must not affect the expected return or the recommendation decision.
+
+## GitHub/Colab/Kakao Runtime
+
+The intended client runtime is:
+
+1. Project code is stored in GitHub.
+2. Google Colab pulls or clones the GitHub repository and runs the pipeline/chatbot entry point.
+3. The Colab runtime exposes the Flask webhook, normally through ngrok.
+4. KakaoTalk sends user messages to that webhook and receives cached or newly generated prediction summaries.

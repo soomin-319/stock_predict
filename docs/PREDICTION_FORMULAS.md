@@ -1,6 +1,6 @@
 # 주가 예측 공식 정리
 
-이 문서는 현재 프로젝트에서 **주가 예측에 실제로 사용되는 공식**을 단계별로 정리한 문서다.  
+이 문서는 현재 운영 정책 기준으로 **주가 예측과 사용자 표시 산출물에 사용하는 공식**을 단계별로 정리한 문서다.  
 중요한 점은 이 프로젝트의 최종 예측이 하나의 단일 수식으로 표현되는 구조가 아니라,
 
 1. 피처 생성 공식
@@ -10,18 +10,20 @@
 
 이 순서로 이어지는 **파이프라인 구조**라는 점이다.
 
+운영 정책상 클라이언트는 이 결과를 투자 판단에 참고할 하나의 근거자료로 사용한다. 최종 매수/매도/관망 신호는 **다음날 예상 수익률(`predicted_return`)만** 기준으로 삼는다. 뉴스와 공시는 사용자에게 보여주는 참고 정보이며, 예상 수익률이나 매수/매도 신호에 영향을 주지 않는다.
+
 ---
 
 ## 1. 예측 파이프라인 개요
 
 현재 파이프라인은 대략 아래 순서로 동작한다.
 
-1. `build_features()`에서 가격/거래량/수급/뉴스/이벤트 기반 피처를 생성한다.
+1. `build_features()`에서 가격/거래량/수급/이벤트 기반 피처를 생성한다.
 2. 필요하면 `add_external_market_features_with_coverage()`로 외부 시장 피처를 붙인다.
 3. `annotate_market_regime()`로 시장 국면 메타정보를 만든다.
 4. `MultiHeadStockModel`이 다음날 로그수익률, 상승확률, 분위수 구간을 학습한다.
 5. `build_prediction_frame()`이 예측값을 종가/수익률/시그널 점수로 변환한다.
-6. `pipeline.py`에서 확률 보정, 확률 override, 권고/신뢰도 계산을 적용한다.
+6. `pipeline.py`에서 확률 보정, 권고/신뢰도 계산, 표시용 뉴스/공시 요약을 적용한다.
 
 ---
 
@@ -101,7 +103,7 @@
 
 ---
 
-## 3. 수급 / 뉴스 / 이벤트 기반 공식
+## 3. 수급 / 이벤트 기반 공식
 
 ### 3.1 수급 신호
 
@@ -109,10 +111,9 @@
 - `institution_buy_signal = institution_net_buy > 0`
 - `smart_money_buy_signal = (foreign_net_buy + institution_net_buy) > 0`
 
-### 3.2 뉴스 신호
+### 3.2 뉴스/공시 표시 정책
 
-- `news_positive_signal = news_relevance_score * max(news_sentiment - 0.5, 0) * 2`
-- `news_negative_signal = news_relevance_score * max(0.5 - news_sentiment, 0) * 2`
+뉴스와 공시는 종목별 이슈를 사용자에게 보여주기 위한 컨텍스트다. 감성점수, 관련도, 공시 점수 같은 보조 메타데이터를 만들 수는 있지만, 운영 정책상 이 값들은 모델의 다음날 예상 수익률과 매수/매도/관망 신호에 반영하지 않는다.
 
 ### 3.3 52주 고점 관련
 
@@ -129,11 +130,11 @@
 ```text
 investor_event_score =
     0.35 * is_top_turnover_10
-  + 0.20 * disclosure_score
-  + 0.20 * news_positive_signal
-  + 0.15 * smart_money_buy_signal
-  + 0.10 * near_52w_high_flag
+  + 0.35 * smart_money_buy_signal
+  + 0.30 * near_52w_high_flag
 ```
+
+공시/뉴스 항목은 이 점수에 넣지 않는다.
 
 ### 3.5 상한가/하한가/VI 관련
 
@@ -163,7 +164,9 @@ shareholder_return_score =
 
 ---
 
-## 4. 공시 / 뉴스 원천 점수 공식
+## 4. 공시 / 뉴스 표시용 메타데이터
+
+이 섹션의 값들은 사용자 표시와 요약 품질 관리를 위한 메타데이터다. 예측 수익률, 매수/매도/관망 신호, 백테스트 종목 선택 기준으로 사용하지 않는다.
 
 ### 4.1 disclosure_score
 
@@ -185,7 +188,7 @@ score =
   - 0.05 * uncertainty_hits
 ```
 
-최종값은 `0~1` 범위로 clip한다.
+최종값은 `0~1` 범위로 clip한다. 이 값은 표시/진단용이다.
 
 ### 4.3 news_relevance_score
 
@@ -197,7 +200,7 @@ score =
   - 0.05 * uncertainty_hits
 ```
 
-최종값은 `0~1` 범위로 clip한다.
+최종값은 `0~1` 범위로 clip한다. 이 값은 표시/진단용이다.
 
 ### 4.4 news_impact_score
 
@@ -368,16 +371,16 @@ OOF 데이터가 충분할 경우 `IsotonicRegression`을 써서 `up_probability
 
 ---
 
-## 13. 확률 override 공식
+## 13. 확률 보조 표시 정책
 
-최종 예측 후 일부 조건에서 `up_probability`를 강제로 올리는 규칙이 있다.
+최종 예측 후 일부 조건에서 `up_probability` 같은 보조 지표를 별도 표시할 수 있다.
 
 - 거래대금 상위 종목이면 최소 `0.65`
 - 외국인/기관 각각 1000억 이상 순매수면 최소 `0.70`
 - 둘 다 만족하면 최소 `0.78`
 - 나스닥 선물 상승이면 최소 `0.55`
 
-이 부분은 모델이 학습한 확률을 **규칙 기반으로 덮어쓰는 후처리**다.
+이 부분은 사용자의 해석을 돕는 보조 표시이며, 최종 매수/매도/관망 신호는 다음날 예상 수익률만 기준으로 결정한다.
 
 ---
 
@@ -385,13 +388,13 @@ OOF 데이터가 충분할 경우 `IsotonicRegression`을 써서 `up_probability
 
 ### 14.1 권고(매수/매도/관망)
 
-권고는 아래 기준으로 결정된다.
+권고는 다음날 예상 수익률만 사용해 아래 기준으로 결정된다.
 
-- `predicted_return > 1.0` → `매수`
-- `predicted_return <= -1.0` → `매도`
+- `predicted_return > 2.0` → `매수`
+- `predicted_return <= -2.0` → `매도`
 - 그 외 → `관망`
 
-즉, 현재 코드에서는 `signal_score`보다 **예상 수익률 임계값**이 권고 결정에 직접 쓰인다.
+즉, `signal_score`, `up_probability`, 뉴스, 공시, 수급 이유 문자열은 표시와 진단에 쓸 수 있지만 권고 결정을 바꾸지 않는다.
 
 ### 14.2 confidence_score
 
@@ -413,11 +416,13 @@ display_confidence =
 - `up_probability < 0.5`
 - `history_direction_accuracy < 0.45`
 
+리스크 플래그는 참고 경고이며 매수/매도/관망 라벨을 직접 바꾸지 않는다.
+
 ---
 
 ## 15. 백테스트에서 사용하는 공식
 
-백테스트는 `signal_score` 상위 종목을 뽑아서 성과를 본다.
+백테스트는 랭킹/진단 목적의 `signal_score` 상위 종목 성과를 볼 수 있다. 다만 사용자에게 표시되는 매수/매도/관망 라벨은 다음날 예상 수익률 기준이다.
 
 ### 종목 선택 조건
 
@@ -442,9 +447,9 @@ display_confidence =
 
 ### 16.1 명시적 가중치가 서로 다르다
 
-이미 코드에 박혀 있는 공식만 봐도:
+문서화된 공식만 봐도:
 
-- `investor_event_score`: `0.35 / 0.20 / 0.20 / 0.15 / 0.10`
+- `investor_event_score`: `0.35 / 0.35 / 0.30`
 - `short_sell_event_score`: `0.5 / 0.3 / 0.2`
 - `shareholder_return_score`: `0.4 / 0.3 / 0.3`
 - 기본 `signal_score`: `0.45 / 0.35 / 0.20 / -0.25`

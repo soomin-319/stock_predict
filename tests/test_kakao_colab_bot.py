@@ -54,6 +54,19 @@ class ImmediateSuccessRunner:
         return WaitableFakeProcess(return_code=0)
 
 
+
+class FakeRecommendationService:
+    def __init__(self, result=None, error=None):
+        self.result = result or []
+        self.error = error
+        self.calls = 0
+
+    def get_recommendations(self, top_n=3):
+        self.calls += 1
+        if self.error:
+            raise self.error
+        return self.result[:top_n]
+
 def make_bot(tmp_path: Path, runner=None) -> KakaoColabPredictionBot:
     runtime_config = PipelineRuntimeConfig(
         project_root=tmp_path,
@@ -1629,3 +1642,51 @@ def test_log_completion_preview_does_not_rerun_issue_summary(tmp_path: Path, mon
 
     bot._log_completion_preview("005930.KS")
     assert called["count"] == 0
+
+
+
+def test_recommendation_keyword_returns_realtime_recommendations(tmp_path: Path):
+    from src.recommendation.close_betting import CloseBettingRecommendation
+
+    fake_service = FakeRecommendationService(
+        [
+            CloseBettingRecommendation(
+                rank=1,
+                symbol="005930",
+                name="\uc0bc\uc131\uc804\uc790",
+                grade="\uac15\ub825 \ud6c4\ubcf4",
+                final_score=120,
+                first_buy_ratio=0.6,
+                reasons=("52\uc8fc \uc885\uac00 \uae30\uc900 \uc2e0\uace0\uac00", "\uac70\ub798\ub300\uae08 1\uc704"),
+            )
+        ]
+    )
+    bot = make_bot(tmp_path)
+    bot.recommendation_service = fake_service
+
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "\ucd94\ucc9c", "user": {"id": "u-rec"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert fake_service.calls == 1
+    assert "[\uc2e4\uc2dc\uac04 \ucd94\ucc9c]" in text
+    assert "1\uc704 \uc0bc\uc131\uc804\uc790(005930)" in text
+    assert "\uc810\uc218: 120" in text
+
+
+def test_recommendation_keyword_returns_failure_message_when_service_raises(tmp_path: Path):
+    bot = make_bot(tmp_path)
+    bot.recommendation_service = FakeRecommendationService(error=RuntimeError("network down"))
+
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "\ucd94\ucc9c", "user": {"id": "u-rec-fail"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "\uc2e4\uc2dc\uac04 \ucd94\ucc9c \uc0dd\uc131\uc5d0 \uc2e4\ud328\ud588\uc2b5\ub2c8\ub2e4" in text
+    assert "\ub2e4\uc2dc '\ucd94\ucc9c'" in text
+
+
+def test_guide_response_includes_recommendation_quick_reply(tmp_path: Path):
+    bot = make_bot(tmp_path)
+
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "\ub3c4\uc6c0\ub9d0", "user": {"id": "u-guide-rec"}}})
+
+    assert any(reply["messageText"] == "\ucd94\ucc9c" for reply in response["template"]["quickReplies"])
