@@ -1,0 +1,10 @@
+ticker,alias,alias_type,confidence
+005930,삼성전자,korean_name,1.0
+005930,삼성,group_name,0.6
+005930,삼성 반도체,business_name,0.8
+000660,SK하이닉스,korean_name,1.0
+000660,하이닉스,short_name,0.9
+000660,에스케이하이닉스,korean_name_variant,0.9
+035420,네이버,korean_name,1.0
+051910,LG화학,korean_name,1.0
+051910,엘지화학,korean_name_variant,0.9

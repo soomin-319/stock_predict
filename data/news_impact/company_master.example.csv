@@ -1,0 +1,5 @@
+as_of_date,ticker,corp_code,company,market,sector,market_cap,avg_trading_value_20d,listed_at,delisted_at,aliases
+2026-05-15,005930,00126380,삼성전자,KOSPI,semiconductor,0,0,1975-06-11,,삼성전자;삼성;삼성 반도체
+2026-05-15,000660,00164779,SK하이닉스,KOSPI,semiconductor,0,0,1996-12-26,,SK하이닉스;하이닉스;에스케이하이닉스
+2026-05-15,035420,00266961,네이버,KOSPI,internet,0,0,2008-11-28,,네이버
+2026-05-15,051910,00356370,LG화학,KOSPI,battery,0,0,2001-04-25,,LG화학;엘지화학

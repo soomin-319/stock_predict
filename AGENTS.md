@@ -31,6 +31,11 @@ Use existing PEP 8 style: 4-space indentation, snake_case for functions and vari
 
 Tests use pytest, with cache and temporary files configured under ignored `result/` paths. Add or update tests in `tests/` for behavior changes, especially data fetching fallbacks, signal policy, calibration, reports, external context, recommendation logic, and chatbot cache behavior. Name files `test_<feature>.py` and test functions `test_<expected_behavior>`. Prefer sample CSVs and deterministic fixtures over live network calls. Run `pytest` before submitting, or at minimum impacted tests plus `tests/test_pipeline_smoke.py`.
 
+
+## News Impact Scoring Module
+
+The vendored `news_impact` package is the migrated `stock-news-impact` news/disclosure scoring module. Keep the original news collection principle: Korean news first, Korean company/industry/search terms by default, and non-Korean or overseas media only when explicitly needed. Within `stock_predict`, news impact data is display/review context only and must not alter `predicted_return`, expected-return ranking, recommendation, or automated signal decisions.
+
 ## Data, Outputs, and External Integrations
 
 All generated CSV, JSON, and figure outputs should stay under `result/`, including `result_detail.csv`, `result_simple.csv`, `result_news.csv`, `result_disclosure.csv`, `pm_report.json`, `pipeline_report.json`, and selected figure directories. CSV outputs should remain `utf-8-sig` for Excel/Windows compatibility. Sample and universe inputs belong in `data/`; avoid adding large or private market data. Live integrations include yfinance/pykrx, DART, Naver News, OpenAI summaries, Flask, and pyngrok. Keep tests deterministic by mocking or disabling these integrations unless the change explicitly targets a live-fetch path.

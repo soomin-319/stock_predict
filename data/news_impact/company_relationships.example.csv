@@ -1,0 +1,5 @@
+ticker,related_ticker,relation_type,relation_strength
+005930,000660,competitor,0.6
+000660,005930,competitor,0.6
+051910,005930,supplier,0.3
+005930,051910,customer,0.3
