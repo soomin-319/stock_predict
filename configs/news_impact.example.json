@@ -1,0 +1,10 @@
+{
+  "llm_provider": "llama_cpp",
+  "llm_base_url": "http://localhost:8001/v1",
+  "llm_model": "gemma-4-26b-a4b",
+  "temperature": 0.1,
+  "max_retries": 2,
+  "json_schema_required": true,
+  "timeout_seconds": 60
+}
+

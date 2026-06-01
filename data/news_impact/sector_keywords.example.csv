@@ -1,0 +1,8 @@
+﻿sector,keyword,weight,locale,notes
+semiconductor,반도체,1.0,ko,핵심 업종 키워드
+semiconductor,HBM,0.9,en,고대역폭 메모리 수요 키워드
+semiconductor,메모리,0.8,ko,메모리 업황 키워드
+internet,AI,0.7,en,플랫폼 AI 노출도
+internet,클라우드,0.6,ko,인터넷 인프라 키워드
+battery,배터리,1.0,ko,핵심 업종 키워드
+battery,전기차,0.8,ko,전기차 수요 키워드

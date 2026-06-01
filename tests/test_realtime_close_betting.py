@@ -74,26 +74,41 @@ def test_format_recommendation_message_includes_rank_symbol_score_and_reason():
     assert "\uadfc\uac70:" in text
 
 
-def test_default_realtime_service_uses_kospi200_scan_with_top_trade_value_20(monkeypatch):
+def test_default_realtime_service_uses_bundled_universe_without_pykrx(monkeypatch):
+    import importlib.abc
     import sys
-    from types import SimpleNamespace
 
-    tickers = [f"{idx:06d}" for idx in range(1, 251)]
-    fake_stock = SimpleNamespace(
-        get_index_portfolio_deposit_file=lambda *args: tickers,
-        get_market_ticker_name=lambda ticker: f"Name{ticker}",
-    )
-    monkeypatch.setitem(sys.modules, "pykrx", SimpleNamespace(stock=fake_stock))
+    for name in list(sys.modules):
+        if name.split(".", 1)[0] == "pykrx":
+            del sys.modules[name]
 
-    service = RealTimeCloseBettingRecommendationService(today_provider=lambda: date(2026, 5, 27))
+    class BlockPykrx(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname.split(".", 1)[0] == "pykrx":
+                raise ModuleNotFoundError(fullname)
+            return None
+
+    blocker = BlockPykrx()
+    monkeypatch.setattr(sys, "meta_path", [blocker, *sys.meta_path])
+
+    service = RealTimeCloseBettingRecommendationService(today_provider=lambda: date(2026, 5, 27), universe_limit=5)
 
     symbols = service.symbols_provider()
 
-    assert len(symbols) == 200
-    assert symbols["Symbol"].tolist()[:3] == ["000001.KS", "000002.KS", "000003.KS"]
-    assert symbols["Name"].tolist()[:2] == ["Name000001", "Name000002"]
+    assert symbols["Symbol"].tolist() == ["005930.KS", "000660.KS", "373220.KS", "207940.KS", "005380.KS"]
+    assert symbols["Name"].tolist()[:2] == [SAMSUNG, HYNIX]
     assert symbols["Market"].unique().tolist() == ["KOSPI"]
     assert service.top_trade_value_count == 20
+
+
+def test_realtime_service_returns_no_recommendations_when_live_ohlcv_fetch_fails():
+    service = RealTimeCloseBettingRecommendationService(
+        symbols_provider=lambda: pd.DataFrame([{"Symbol": "005930.KS", "Name": SAMSUNG, "Market": "KOSPI"}]),
+        ohlcv_fetcher=lambda symbols, start, end: (_ for _ in ()).throw(RuntimeError("No data fetched")),
+        today_provider=lambda: date(2026, 5, 27),
+    )
+
+    assert service.get_recommendations(top_n=1) == []
 
 
 def test_select_candidates_can_return_all_items_at_or_above_min_final_score():

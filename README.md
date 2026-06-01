@@ -118,6 +118,24 @@ stock-predict-kakao
 
 It reads cached predictions from `result/result_simple.csv`, starts background prediction jobs when a symbol is missing, and can prewarm the prediction cache for default symbols. Chatbot responses may include news/disclosure summaries, but those summaries are display-only context separate from the expected-return signal.
 
+
+## News Impact Scoring Module
+
+This repository now vendors the full `news_impact` package from `stock-news-impact` as a top-level package. It can run independently through the `stock-news-impact` console entry point after editable install.
+
+Example files:
+
+- `configs/news_impact.example.json`: local llama.cpp/OpenAI-compatible LLM config template.
+- `data/news_impact/watchlist.example.csv`: watchlist template.
+- `data/news_impact/company_master.example.csv`: company master template.
+
+Use Korean company names, industry keywords, and Korean search queries by default. Keep Korean news first; include English or overseas media only when explicitly needed. News-impact outputs remain display/review context in this project and must not change `predicted_return`, recommendation, or automated signal policy.
+
+```powershell
+Copy-Item configs/news_impact.example.json configs/news_impact.json
+stock-news-impact --help
+```
+
 ## Environment Variables
 
 - `OPENAI_API_KEY`, `OPENAI_MODEL`: issue/news summary generation.

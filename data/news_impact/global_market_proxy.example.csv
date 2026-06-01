@@ -1,0 +1,12 @@
+korean_sector,proxy_symbol,proxy_name,proxy_type,relation_type,weight,lag_policy,direction_transform,proxy_currency,proxy_timezone,max_adjustment_abs,notes
+semiconductor,^SOX,Philadelphia Semiconductor Index,index,sector_proxy,1.0,overnight,normal,USD,America/New_York,15,global semiconductor risk appetite
+semiconductor,NVDA,NVIDIA,stock,customer,0.8,overnight,normal,USD,America/New_York,10,AI semiconductor demand proxy
+semiconductor,TSM,Taiwan Semiconductor Manufacturing,stock,competitor,0.6,overnight,normal,USD,America/New_York,8,foundry peer sentiment
+battery,TSLA,Tesla,stock,customer,0.8,overnight,normal,USD,America/New_York,10,EV demand proxy
+battery,ALB,Albemarle,stock,input_cost,0.5,overnight,inverse,USD,America/New_York,6,lithium cost proxy
+biotech,XBI,SPDR S&P Biotech ETF,etf,sector_proxy,0.7,overnight,normal,USD,America/New_York,8,US biotech risk appetite
+defense,LMT,Lockheed Martin,stock,sector_proxy,0.6,overnight,normal,USD,America/New_York,7,global defense peer sentiment
+auto,TSLA,Tesla,stock,competitor,0.5,overnight,normal,USD,America/New_York,6,global EV sentiment
+airline,CL=F,WTI Crude Oil Futures,commodity,input_cost,0.7,previous_close,inverse,USD,America/New_York,8,fuel cost pressure
+refiner,CL=F,WTI Crude Oil Futures,commodity,input_cost,0.5,previous_close,normal,USD,America/New_York,6,oil price margin and inventory proxy
+macro,USDKRW,USD/KRW,fx,macro,0.7,previous_close,normal,KRW,Asia/Seoul,8,KRW weakness and exporter/importer exposure

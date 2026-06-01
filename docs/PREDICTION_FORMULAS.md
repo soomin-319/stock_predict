@@ -220,6 +220,32 @@ impact = (weighted_sentiment - 0.5) * 2.0
 - `news_impact_score`: 평균
 - `news_article_count`: 합계
 
+
+### 4.6 `news_impact_*` report columns
+
+When the main pipeline is called with `--news-impact-report`,
+`src/reports/news_impact_context.py` joins selected fields from a
+`stock-news-impact` JSON report by normalized `Date` and `Symbol`.
+
+Mapped display columns include:
+
+- `news_impact_run_id`
+- `news_impact_final_score`
+- `news_impact_sector_neutral_score`
+- `news_impact_uncertainty_score`
+- `news_impact_top_event_type`
+- `news_impact_top_reason`
+- `news_impact_why_may_be_wrong`
+- `news_impact_risk_flags`
+- `news_impact_tradeability_status`
+- `news_impact_review_checklist`
+- `news_impact_top_evidence_url`
+
+These values are not formulas in the prediction model. They are display/review
+metadata. They must not enter feature selection, `predicted_return`, signal
+weight tuning, backtest selection, expected-return ranking, recommendation, or
+any automated buy/sell/hold decision.
+
 ---
 
 ## 5. 외부 시장 피처 공식
