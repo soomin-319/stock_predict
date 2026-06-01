@@ -8,6 +8,37 @@ python src/pipeline.py --input data/sample_ohlcv.csv --disable-external --report
 
 Artifacts are written under `result/` even when the CLI receives a path outside that directory.
 
+## News Impact Scoring
+
+`news_impact/` is vendored as a standalone package and installs the
+`stock-news-impact` console entry point.
+
+Prepare local config from examples:
+
+```powershell
+Copy-Item configs/news_impact.example.json configs/news_impact.json
+Copy-Item data/news_impact/watchlist.example.csv data/news_impact/watchlist.csv
+Copy-Item data/news_impact/company_master.example.csv data/news_impact/company_master.csv
+```
+
+Inspect available options:
+
+```powershell
+stock-news-impact --help
+```
+
+After `stock-news-impact` writes a JSON report, attach it to normal prediction output
+as display-only context:
+
+```powershell
+python src/pipeline.py --input data/real_ohlcv.csv --news-impact-report result/news_impact_report.json
+```
+
+Operational rule: use Korean company names, Korean industry/search keywords, and
+Korean news first. Use non-Korean or overseas media only when explicitly needed.
+The appended `news_impact_*` columns are review metadata; they must not change
+`predicted_return`, recommendation labels, ranking, or automated signal policy.
+
 ## Real Data Refresh
 
 Full refresh:
@@ -56,6 +87,7 @@ The output is one reference material for a user's own investment review. The ope
 - `OPENAI_API_KEY`, `OPENAI_MODEL`: issue/news summaries
 - `DART_API_KEY`, `DART_CORP_MAP_CSV`: DART disclosure context
 - `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`: Naver news context
+- `NEWS_IMPACT_CONFIG` or local `configs/news_impact.json`: optional standalone news-impact runtime config, if used by local tooling
 
 Keep secrets in local environment-specific tooling. Do not commit credentials.
 
@@ -65,3 +97,4 @@ Keep secrets in local environment-specific tooling. Do not commit credentials.
 - If OOF predictions are empty, increase the input data length or relax the training window.
 - If external downloads fail, rerun with `--disable-external` to verify the local pipeline.
 - If Kakao returns a stale job state, request a refresh or remove the stale local state file under `result/` after confirming no process is running.
+- If `--news-impact-report` adds no columns, confirm the JSON has `rows` with `date` and `ticker` fields and that tickers match pipeline symbols such as `005930.KS`.

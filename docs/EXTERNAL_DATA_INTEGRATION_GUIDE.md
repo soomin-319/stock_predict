@@ -87,3 +87,40 @@
 - 리포트에 coverage 추가(성공/실패/결측률)
 
 이 순서가 예측 산식과 표시용 이슈 컨텍스트를 분리하면서 운영 설명력을 높이는 데 적합합니다.
+
+---
+
+## 5) News Impact Scoring Package
+
+`news_impact/` is now included as a standalone news/disclosure scoring module.
+It is operationally separate from the prediction model and can be run through
+the `stock-news-impact` console script.
+
+Recommended source policy:
+
+- Korean company names first.
+- Korean industry/search keywords by default.
+- Korean news first.
+- Non-Korean or overseas media only when explicitly needed for a company,
+  industry, supply chain, or global macro event.
+
+Runtime templates:
+
+- `configs/news_impact.example.json`: LLM/runtime config template.
+- `data/news_impact/watchlist.example.csv`: ticker watchlist template.
+- `data/news_impact/company_master.example.csv`: company metadata template.
+
+Integration with `stock_predict`:
+
+```powershell
+stock-news-impact --help
+python src/pipeline.py --input data/real_ohlcv.csv --news-impact-report result/news_impact_report.json
+```
+
+The prediction pipeline reads the report with `src/reports/news_impact_context.py`
+and appends display columns such as `news_impact_final_score`,
+`news_impact_top_reason`, `news_impact_risk_flags`, and
+`news_impact_top_evidence_url`.
+
+Do not feed these values into expected-return modeling, ranking, or
+buy/sell/hold decisions. They are review context only.

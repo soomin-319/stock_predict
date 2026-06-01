@@ -205,3 +205,37 @@ LightGBM이 설치되어 있으면 LightGBM을 쓰고, 없으면 sklearn `Gradie
 - 외부 API 실패는 로컬 파이프라인 실행을 깨지 않도록 coverage/fallback 형태로 처리하는 패턴을 유지해야 한다.
 - 입력 feature와 target은 시간 순서와 multi-horizon leakage에 민감하다. walk-forward의 purge/embargo 의미를 변경할 때는 `tests/test_walk_forward.py`를 먼저 확인해야 한다.
 - 현재 일부 한국어 문자열과 주석에는 mojibake가 남아 있다. 동작 수정과 인코딩 정규화는 섞지 말고 별도 작업으로 분리하는 것이 안전하다.
+
+## News Impact Scoring Package Update
+
+`news_impact/` has been added as a top-level vendored package migrated from
+`stock-news-impact`.
+
+Key surfaces:
+
+- Package modules: `news_impact.pipeline`, `news_impact.collectors`,
+  `news_impact.scorer`, `news_impact.schema`, `news_impact.llm_client`, and
+  `news_impact.stock_factors.*`.
+- Console entry point: `stock-news-impact = news_impact.run:main`.
+- Example runtime files:
+  - `configs/news_impact.example.json`
+  - `data/news_impact/watchlist.example.csv`
+  - `data/news_impact/company_master.example.csv`
+- Main pipeline bridge: `src/reports/news_impact_context.py`.
+- CLI bridge: `python src/pipeline.py ... --news-impact-report <report.json>`.
+
+Boundary rule:
+
+- The standalone news-impact pipeline may collect, deduplicate, classify, score,
+  backtest, and report news/disclosure context.
+- The stock-prediction pipeline only joins selected report fields as
+  `news_impact_*` display columns.
+- Joined news-impact fields must not change model features, `predicted_return`,
+  expected-return ranking, recommendation labels, or automated signal policy.
+
+Testing coverage now includes:
+
+- `tests/test_news_impact_full_package.py`: verifies the vendored package imports,
+  package metadata, console entry point, and example runtime files.
+- `tests/test_news_impact_context.py`: verifies optional report joining is
+  display-only and no-op safe when the report is missing or invalid.

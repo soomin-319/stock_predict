@@ -79,7 +79,22 @@
 ### 4.4 뉴스/공시 표시용 컨텍스트
 - DART 공시와 뉴스 원문/요약은 사용자 표시용으로 수집
 - `result_news.csv`, `result_disclosure.csv`, `result_simple.csv`, Kakao 응답에 표시
+- Optional news-impact context: `news_impact_*` columns in detail/simple output when `--news-impact-report` is provided
 - 예상 수익률, 매수/매도/관망 신호, 모델 피처에는 반영하지 않음
+
+
+### 4.5 News Impact scoring (`news_impact/`)
+- Vendored top-level package migrated from `stock-news-impact`.
+- Standalone console script: `stock-news-impact`.
+- Example inputs:
+  - `configs/news_impact.example.json`
+  - `data/news_impact/watchlist.example.csv`
+  - `data/news_impact/company_master.example.csv`
+- Main pipeline bridge: `--news-impact-report`, joined by
+  `src/reports/news_impact_context.py`.
+- Joined fields use the `news_impact_*` prefix and are display/review context
+  only. They must not affect `predicted_return`, ranking, recommendation, or
+  automated signal decisions.
 
 ---
 
@@ -145,6 +160,7 @@
 - `--config-json`: nested AppConfig 오버라이드
 - `--disable-investor-flow`, `--disable-disclosure-context`, `--disable-news-context`
 - `--news-scoring-mode`, `--openai-api-key`, `--openai-model`
+- `--news-impact-report`: optional `stock-news-impact` JSON report, joined as display-only `news_impact_*` columns
 - `--min-value-traded`, `--turnover-limit`, `--min-up-probability`, `--min-signal-score`
 
 ---
@@ -155,6 +171,7 @@
 - PM 요약: `portfolio_action`, `trading_gate`, `risk_flag`, `confidence_label`
 - PM 리포트 아티팩트: `pm_report.json`
 - 표시용 이슈 컨텍스트: `result_news.csv`, `result_disclosure.csv`
+- Optional news-impact context: `news_impact_*` columns in detail/simple output when `--news-impact-report` is provided
 - OOF 결과: `reports/oof_predictions.csv`
 - 그래프: `--figure-dir/*.png`
 
@@ -166,5 +183,7 @@
 - 출력 경로 생성/Windows `/tmp` 매핑
 - 파이프라인 E2E 스모크 실행
 - 외부 지표 다운로드 실패 시 graceful 동작
+- Optional news-impact report joining stays display-only and no-op safe when report input is missing or invalid (`tests/test_news_impact_context.py`)
+- Vendored `news_impact` package import/package metadata is covered by `tests/test_news_impact_full_package.py`
 
 ---

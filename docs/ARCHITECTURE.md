@@ -17,10 +17,22 @@
 
 - `src.pipeline.run_pipeline(...)`
 - `src.pipeline.build_cli_parser()`
-- console scripts: `stock-predict`, `stock-predict-kakao`
+- console scripts: `stock-predict`, `stock-predict-kakao`, `stock-news-impact`
 - output filenames: `result_detail.csv`, `result_simple.csv`, `result_news.csv`, `result_disclosure.csv`, `pm_report.json`
 
 Compatibility wrappers remain in `src/pipeline.py` for tests and older imports, but new helper logic should live in the relevant `data`, `validation`, or `reports` module.
+
+## News Impact Package Boundary
+
+`news_impact/` is a vendored top-level package migrated from `stock-news-impact`.
+It has its own console entry point, config template, watchlist examples, collectors,
+deduplication, scoring, LLM client, stock-factor classifier, backtesting helpers, and
+JSON report generation.
+
+Within `stock_predict`, this package remains an external context producer. The main
+pipeline can read a generated report with `--news-impact-report` and append
+`news_impact_*` columns through `src/reports/news_impact_context.py`, but those
+columns are display/review metadata only.
 
 ## Recommendation Policy
 
@@ -30,9 +42,9 @@ The current signal recommendation policy is:
 - `predicted_return <= -2.0`: sell
 - values between those thresholds: hold
 
-The buy/sell/hold decision must use only the next-day expected return (`predicted_return`). `signal_score`, `up_probability`, uncertainty, market context, news, and disclosures can be reported as supporting diagnostics, ranking context, or user-facing explanations, but they must not override the buy/sell/hold label.
+The buy/sell/hold decision must use only the next-day expected return (`predicted_return`). `signal_score`, `up_probability`, uncertainty, market context, news, disclosures, and `news_impact_*` report columns can be reported as supporting diagnostics, ranking context, or user-facing explanations, but they must not override the buy/sell/hold label.
 
-News and disclosure data are display-only issue context. They can appear in `result_news.csv`, `result_disclosure.csv`, `result_simple.csv`, and KakaoTalk responses, but they must not affect the expected return or the recommendation decision.
+News, disclosure, and news-impact data are display-only issue context. They can appear in `result_news.csv`, `result_disclosure.csv`, `result_simple.csv`, `result_detail.csv`, and KakaoTalk responses, but they must not affect the expected return or the recommendation decision.
 
 ## GitHub/Colab/Kakao Runtime
 
