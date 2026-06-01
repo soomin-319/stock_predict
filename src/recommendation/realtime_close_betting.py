@@ -102,6 +102,35 @@ class RealTimeCloseBettingRecommendationService:
         df["Name"] = mapped_names.where(has_real_mapped_name, df["Name"])
         return df
 
+    def _load_kospi200_symbols(self, universe_limit: int) -> pd.DataFrame:
+        from pykrx import stock
+
+        index_code = "1028"  # KOSPI 200
+        trade_date = self.today_provider().strftime("%Y%m%d")
+        try:
+            tickers = stock.get_index_portfolio_deposit_file(index_code, trade_date)
+        except TypeError:
+            tickers = stock.get_index_portfolio_deposit_file(index_code)
+
+        rows = []
+        for ticker in list(tickers)[:universe_limit if universe_limit > 0 else None]:
+            normalized = str(ticker).strip().zfill(6)
+            if not normalized:
+                continue
+            try:
+                name = str(stock.get_market_ticker_name(normalized)).strip()
+            except Exception:
+                name = normalized
+            rows.append(
+                {
+                    "Symbol": f"{normalized}.KS",
+                    "Name": name or normalized,
+                    "Market": "KOSPI",
+                    "Bucket": "KOSPI200",
+                }
+            )
+        return pd.DataFrame(rows)
+
     def _normalize_symbols(self, symbols_df: pd.DataFrame) -> pd.DataFrame:
         if symbols_df is None or symbols_df.empty:
             return pd.DataFrame(columns=["Symbol", "Ticker", "Name", "Market"])
