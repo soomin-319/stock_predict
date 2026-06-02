@@ -509,17 +509,7 @@ def _append_issue_summary_columns_sequential(
     for _, row_series in out.iterrows():
         symbol = str(row_series.get("Symbol", ""))
         if target_symbols and symbol not in target_symbols:
-            summaries.append(
-                SymbolIssueSummary(
-                    one_line_summary="요약 비활성화",
-                    disclosure_summary="[공시 요약]\n- 요청 종목에 대해서만 요약을 생성합니다.",
-                    news_summary="[뉴스 요약]\n- 요청 종목에 대해서만 요약을 생성합니다.",
-                    overall_judgment="중립",
-                    caution="요약 기능은 요청 종목에 대해서만 동작합니다.",
-                    source_count=0,
-                    key_sources=[],
-                )
-            )
+            summaries.append(_disabled_issue_summary())
             continue
 
         if use_llm:
@@ -580,13 +570,20 @@ def _summary_from_output_row(row: pd.Series) -> SymbolIssueSummary:
     )
 
 
-def _disabled_summary_from_row(row_series: pd.Series) -> SymbolIssueSummary:
-    disabled_symbol = "__summary_disabled__"
-    tmp = _append_issue_summary_columns_sequential(
-        pd.DataFrame([row_series]).reset_index(drop=True),
-        summarize_symbols=[disabled_symbol],
+def _disabled_issue_summary() -> SymbolIssueSummary:
+    return SymbolIssueSummary(
+        one_line_summary="요약 비활성화",
+        disclosure_summary="[공시 요약]\n- 요청 종목에 대해서만 요약을 생성합니다.",
+        news_summary="[뉴스 요약]\n- 요청 종목에 대해서만 요약을 생성합니다.",
+        overall_judgment="중립",
+        caution="요약 기능은 요청 종목에 대해서만 동작합니다.",
+        source_count=0,
+        key_sources=[],
     )
-    return _summary_from_output_row(tmp.iloc[0])
+
+
+def _disabled_summary_from_row(row_series: pd.Series) -> SymbolIssueSummary:
+    return _disabled_issue_summary()
 
 
 def append_issue_summary_columns(
