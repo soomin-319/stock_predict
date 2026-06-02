@@ -249,6 +249,18 @@ def test_append_issue_summary_columns_limits_summary_to_requested_symbols(monkey
     assert out.loc[1, "오늘 종목 이슈 한줄 요약"] == "요약 비활성화"
 
 
+def test_append_issue_summary_columns_handles_duplicate_input_columns_when_summary_disabled():
+    base = pd.DataFrame(
+        [["000660.KS", "first", "second"]],
+        columns=["Symbol", "prediction_reason", "prediction_reason"],
+    )
+
+    out = append_issue_summary_columns(base, summarize_symbols=["005930.KS"])
+
+    summary_col = [c for c in out.columns if c not in base.columns][0]
+    assert out.loc[0, summary_col] == "요약 비활성화"
+
+
 def test_append_issue_summary_columns_parallel_preserves_input_order(monkeypatch):
     base = pd.DataFrame(
         [
