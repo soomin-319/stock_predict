@@ -32,11 +32,27 @@ def check_llama_cpp_prerequisites(
     port_probe: Any | None = None,
 ) -> dict[str, Any]:
     """Check local runtime prerequisites before running the live LLM smoke test."""
-    lookup = command_lookup or shutil.which
-    probe = port_probe or _can_connect
     parsed = urlparse(config.base_url)
     host = parsed.hostname or "localhost"
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if config.provider.lower() == "openai":
+        missing = [] if config.api_key else ["OPENAI_API_KEY"]
+        return {
+            "status": "ready" if not missing else "blocked",
+            "provider": config.provider,
+            "base_url": config.base_url,
+            "model": config.model,
+            "host": host,
+            "port": port,
+            "runtime_paths": {},
+            "listener_ready": None,
+            "model_path": None,
+            "grammar_path": None,
+            "missing": missing,
+        }
+
+    lookup = command_lookup or shutil.which
+    probe = port_probe or _can_connect
 
     runtime_paths = {
         command: lookup(command)

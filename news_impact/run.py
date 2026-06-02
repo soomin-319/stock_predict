@@ -105,7 +105,7 @@ def _run_llm_smoke(args: argparse.Namespace) -> int:
                     "base_url": config.base_url,
                     "model": config.model,
                     "error": str(error.reason),
-                    "hint": "Start llama.cpp server and confirm /v1/models serves the configured alias.",
+                    "hint": _llm_smoke_hint(config.provider),
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -194,6 +194,12 @@ def _load_report_rows(path: str | Path) -> list[ReportRow]:
     if not isinstance(raw_rows, list):
         raise ValueError("report input must be a JSON array or object with rows")
     return [ReportRow(**_normalize_row(row)) for row in raw_rows]
+
+
+def _llm_smoke_hint(provider: str) -> str:
+    if provider.lower() == "openai":
+        return "Set OPENAI_API_KEY and confirm the configured OpenAI model is available."
+    return "Start llama.cpp server and confirm /v1/models serves the configured alias."
 
 
 def _normalize_row(row: object) -> dict[str, object]:

@@ -106,7 +106,8 @@ Recommended source policy:
 
 Runtime templates:
 
-- `configs/news_impact.example.json`: LLM/runtime config template.
+- `configs/news_impact.example.json`: OpenAI-default LLM/runtime config template.
+- `configs/news_impact.gemma.example.json`: optional local Gemma/llama.cpp config template.
 - `data/news_impact/watchlist.example.csv`: ticker watchlist template.
 - `data/news_impact/company_master.example.csv`: company metadata template.
 
