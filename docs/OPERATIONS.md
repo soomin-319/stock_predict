@@ -21,6 +21,11 @@ Copy-Item data/news_impact/watchlist.example.csv data/news_impact/watchlist.csv
 Copy-Item data/news_impact/company_master.example.csv data/news_impact/company_master.csv
 ```
 
+`configs/news_impact.example.json` uses OpenAI by default and reads the key from
+`OPENAI_API_KEY` (for example, a Colab environment variable). To use the optional
+local Gemma/llama.cpp runtime instead, copy `configs/news_impact.gemma.example.json`
+over `configs/news_impact.json`.
+
 Inspect available options:
 
 ```powershell
@@ -84,7 +89,8 @@ The output is one reference material for a user's own investment review. The ope
 
 ## Environment Variables
 
-- `OPENAI_API_KEY`, `OPENAI_MODEL`: issue/news summaries
+- `OPENAI_API_KEY`, `OPENAI_MODEL`: issue/news summaries; `news_impact` uses
+  `OPENAI_API_KEY` by default
 - `DART_API_KEY`, `DART_CORP_MAP_CSV`: DART disclosure context
 - `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`: Naver news context
 - `NEWS_IMPACT_CONFIG` or local `configs/news_impact.json`: optional standalone news-impact runtime config, if used by local tooling

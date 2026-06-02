@@ -23,6 +23,18 @@ def test_pyproject_packages_include_migrated_news_impact_package():
 
 def test_news_impact_runtime_examples_are_migrated_without_private_config():
     assert Path("configs/news_impact.example.json").exists()
+    assert Path("configs/news_impact.gemma.example.json").exists()
     assert not Path("configs/news_impact.json").exists()
     assert Path("data/news_impact/watchlist.example.csv").exists()
     assert Path("data/news_impact/company_master.example.csv").exists()
+
+
+def test_news_impact_runtime_examples_keep_openai_default_and_gemma_option():
+    openai_example = Path("configs/news_impact.example.json").read_text(encoding="utf-8")
+    gemma_example = Path("configs/news_impact.gemma.example.json").read_text(encoding="utf-8")
+
+    assert '"llm_provider": "openai"' in openai_example
+    assert '"llm_model": "gpt-5-mini"' in openai_example
+    assert "OPENAI_API_KEY" not in openai_example
+    assert '"llm_provider": "llama_cpp"' in gemma_example
+    assert '"llm_model": "gemma-4-26b-a4b"' in gemma_example

@@ -68,6 +68,9 @@ class FileLLMResponseCache:
 
 
 class UrllibJsonTransport:
+    def __init__(self, default_headers: dict[str, str] | None = None) -> None:
+        self.default_headers = dict(default_headers or {})
+
     def get_json(
         self,
         url: str,
@@ -99,7 +102,7 @@ class UrllibJsonTransport:
         http_request = request.Request(
             url=url,
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", **self.default_headers},
             method=method,
         )
         with request.urlopen(http_request, timeout=timeout_seconds) as response:
@@ -118,7 +121,7 @@ class LlamaCppClient:
         cache: LLMResponseCache | None = None,
     ) -> None:
         self._config = config
-        self._transport = transport or UrllibJsonTransport()
+        self._transport = transport or UrllibJsonTransport(default_headers=_auth_headers(config))
         self._cache = cache
         self.last_requested_model: str | None = None
         self.last_response_model: str | None = None
@@ -251,3 +254,9 @@ def _is_transient_error(error: Exception) -> bool:
     if isinstance(error, urlerror.HTTPError):
         return error.code == 429 or 500 <= error.code <= 599
     return isinstance(error, (TimeoutError, urlerror.URLError, OSError))
+
+
+def _auth_headers(config: LLMConfig) -> dict[str, str]:
+    if config.provider.lower() != "openai" or not config.api_key:
+        return {}
+    return {"Authorization": f"Bearer {config.api_key}"}

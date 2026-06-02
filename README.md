@@ -125,7 +125,8 @@ This repository now vendors the full `news_impact` package from `stock-news-impa
 
 Example files:
 
-- `configs/news_impact.example.json`: local llama.cpp/OpenAI-compatible LLM config template.
+- `configs/news_impact.example.json`: OpenAI-default LLM config template; read the API key from `OPENAI_API_KEY`.
+- `configs/news_impact.gemma.example.json`: optional local Gemma/llama.cpp config template.
 - `data/news_impact/watchlist.example.csv`: watchlist template.
 - `data/news_impact/company_master.example.csv`: company master template.
 
@@ -138,7 +139,7 @@ stock-news-impact --help
 
 ## Environment Variables
 
-- `OPENAI_API_KEY`, `OPENAI_MODEL`: issue/news summary generation.
+- `OPENAI_API_KEY`, `OPENAI_MODEL`: issue/news summary generation; `news_impact` also uses `OPENAI_API_KEY` by default.
 - `DART_API_KEY`, `DART_CORP_MAP_CSV`: disclosure context.
 - `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`: Naver news context.
 
