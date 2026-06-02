@@ -10,9 +10,9 @@ import pandas as pd
 KRX_SYMBOL_NAME_CSV = Path(__file__).resolve().parents[2] / "data" / "krx_symbol_name_map.csv"
 
 
-@lru_cache(maxsize=1)
-def _load_krx_symbol_name_df() -> pd.DataFrame:
-    path = KRX_SYMBOL_NAME_CSV
+@lru_cache(maxsize=4)
+def _load_krx_symbol_name_df_cached(path_str: str) -> pd.DataFrame:
+    path = Path(path_str)
     if not path.exists():
         return pd.DataFrame(columns=["Ticker", "Symbol", "Name", "Market"])
 
@@ -29,6 +29,14 @@ def _load_krx_symbol_name_df() -> pd.DataFrame:
     out = out[(out["Ticker"] != "") & (out["Symbol"] != "") & (out["Name"] != "")]
     out = out.drop_duplicates(subset=["Ticker"], keep="first").reset_index(drop=True)
     return out
+
+
+def _load_krx_symbol_name_df() -> pd.DataFrame:
+    return _load_krx_symbol_name_df_cached(str(KRX_SYMBOL_NAME_CSV))
+
+
+_load_krx_symbol_name_df.cache_clear = _load_krx_symbol_name_df_cached.cache_clear  # type: ignore[attr-defined]
+_load_krx_symbol_name_df.cache_info = _load_krx_symbol_name_df_cached.cache_info  # type: ignore[attr-defined]
 
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 
@@ -45,3 +46,11 @@ def test_known_p0_mojibake_strings_are_removed():
     assert 'row.get("예측 이유")' in chatbot
     assert '"?? ?? ?? ?? ??"' not in realtime
     assert '"종가 확정 후 다음 거래일 진입"' in realtime
+
+
+def test_pytest_tmp_and_cache_are_not_under_result_outputs():
+    config = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    pytest_options = config["tool"]["pytest"]["ini_options"]
+
+    assert not str(pytest_options.get("cache_dir", "")).replace("\\", "/").startswith("result/")
+    assert "--basetemp=result/" not in str(pytest_options.get("addopts", "")).replace("\\", "/")
