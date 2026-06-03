@@ -48,14 +48,14 @@ def test_recommendation_uses_hold_between_minus_two_and_plus_two_percent():
 
 
 def test_recommendation_aligns_with_signal_probability_and_uncertainty_when_available():
-    assert _recommendation_from_signal(0.7, 0.8, 0.7, 0.2) == "매수"
-    assert _recommendation_from_signal(0.2, 2.0, 0.6, 0.2) == "매도"
+    assert _recommendation_from_signal(0.7, 0.8, 0.7, 0.2) == "관망"
+    assert _recommendation_from_signal(0.2, 2.0, 0.6, 0.2) == "관망"
     assert _recommendation_from_signal(0.5, 1.2, 0.52, 0.7) == "관망"
 
 
-def test_policy_recommendation_forces_sell_on_strong_nasdaq_headwind_and_overbought_rsi():
-    assert _policy_recommendation(pd.Series({"signal_score": 0.9, "predicted_return": 3.0, "up_probability": 0.8, "uncertainty_score": 0.1, "nq_f_ret_1d": -0.011, "rsi_14": 55})) == "매도"
-    assert _policy_recommendation(pd.Series({"signal_score": 0.9, "predicted_return": 3.0, "up_probability": 0.8, "uncertainty_score": 0.1, "nq_f_ret_1d": 0.012, "rsi_14": 72})) == "매도"
+def test_policy_recommendation_ignores_context_features_for_buy_sell_hold():
+    assert _policy_recommendation(pd.Series({"signal_score": 0.9, "predicted_return": 3.0, "up_probability": 0.8, "uncertainty_score": 0.1, "nq_f_ret_1d": -0.011, "rsi_14": 55})) == "매수"
+    assert _policy_recommendation(pd.Series({"signal_score": 0.9, "predicted_return": 3.0, "up_probability": 0.8, "uncertainty_score": 0.1, "nq_f_ret_1d": 0.012, "rsi_14": 72})) == "매수"
 
 
 def test_build_result_simple_includes_up_probability_and_confidence():

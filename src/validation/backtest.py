@@ -63,7 +63,7 @@ def _coverage_halt(grp: pd.DataFrame, cfg: BacktestConfig) -> bool:
 
 
 def _apply_liquidity_and_capacity_filters(grp: pd.DataFrame, cfg: BacktestConfig) -> pd.DataFrame:
-    eligible = grp[(grp["up_probability"] >= cfg.min_up_probability) & (grp["signal_score"] >= cfg.min_signal_score)].copy()
+    eligible = grp[pd.to_numeric(grp["up_probability"], errors="coerce").fillna(0.0) >= cfg.min_up_probability].copy()
     if "value_traded" in eligible.columns:
         eligible["value_traded"] = pd.to_numeric(eligible["value_traded"], errors="coerce").fillna(0.0)
         eligible = eligible[eligible["value_traded"] >= cfg.min_value_traded]
@@ -96,14 +96,14 @@ def _enforce_market_type_caps(ranked: pd.DataFrame, cfg: BacktestConfig) -> pd.D
 
 def _select_top_portfolio(grp: pd.DataFrame, prev_symbols: set[str], cfg: BacktestConfig) -> pd.DataFrame:
     eligible = _apply_liquidity_and_capacity_filters(grp, cfg)
-    ranked = eligible.sort_values("signal_score", ascending=False).head(max(cfg.top_k * 3, cfg.top_k))
+    ranked = eligible.sort_values(["predicted_return", "signal_score"], ascending=[False, False]).head(max(cfg.top_k * 3, cfg.top_k))
     ranked = _enforce_market_type_caps(ranked, cfg)
     if prev_symbols and cfg.turnover_limit < 1.0 and not ranked.empty:
         old = ranked[ranked["Symbol"].astype(str).isin(prev_symbols)]
         new = ranked[~ranked["Symbol"].astype(str).isin(prev_symbols)]
         max_new = int(round(cfg.top_k * max(0.0, cfg.turnover_limit)))
         top = pd.concat([old.head(cfg.top_k - max_new), new.head(max_new)], ignore_index=True)
-        ranked = top.sort_values("signal_score", ascending=False).head(cfg.top_k)
+        ranked = top.sort_values(["predicted_return", "signal_score"], ascending=[False, False]).head(cfg.top_k)
     return ranked.head(cfg.top_k)
 
 
@@ -128,7 +128,11 @@ def _cost_breakdown(top: pd.DataFrame, cfg: BacktestConfig, turnover: float) -> 
 
 
 def run_long_only_topk_backtest(pred_df: pd.DataFrame, cfg: BacktestConfig) -> dict:
-    df = pred_df.copy().sort_values(["Date", "signal_score"], ascending=[True, False])
+    required = {"Date", "Symbol", "predicted_return", "up_probability", "target_log_return"}
+    missing = required - set(pred_df.columns)
+    if missing:
+        raise ValueError(f"backtest input missing required columns: {sorted(missing)}")
+    df = pred_df.copy().sort_values(["Date", "predicted_return", "signal_score"], ascending=[True, False, False])
 
     daily_returns = []
     benchmark_returns = []

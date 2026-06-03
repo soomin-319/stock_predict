@@ -184,10 +184,7 @@ def _policy_recommendation(row: pd.Series) -> str:
         row.get("predicted_return"),
         row.get("up_probability"),
         row.get("uncertainty_score"),
-    ) if not (
-        pd.to_numeric(pd.Series([row.get("nq_f_ret_1d")]), errors="coerce").iloc[0] <= -0.01
-        or pd.to_numeric(pd.Series([row.get("rsi_14")]), errors="coerce").iloc[0] >= 70.0
-    ) else "매도"
+    )
 
 
 def _apply_event_signal_boost(pred_df: pd.DataFrame) -> pd.DataFrame:

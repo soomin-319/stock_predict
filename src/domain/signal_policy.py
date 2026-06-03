@@ -37,6 +37,11 @@ def recommendation_from_signal(
     up_probability: float | int | None = None,
     uncertainty_score: float | int | None = None,
 ) -> str:
+    """Return buy/sell/hold policy from next-day expected return only.
+
+    Other inputs are accepted for backward compatibility, but they must not
+    change the user-facing recommendation.
+    """
     if pd.isna(predicted_return):
         return "관망"
 
@@ -45,15 +50,6 @@ def recommendation_from_signal(
         return "매수"
     if ret <= -2.0:
         return "매도"
-
-    score = pd.to_numeric(pd.Series([signal_score]), errors="coerce").iloc[0]
-    prob = pd.to_numeric(pd.Series([up_probability]), errors="coerce").iloc[0]
-    uncertainty = pd.to_numeric(pd.Series([uncertainty_score]), errors="coerce").iloc[0]
-    if not pd.isna(score) and not pd.isna(prob) and not pd.isna(uncertainty):
-        if score >= 0.65 and prob >= 0.65 and uncertainty <= 0.35:
-            return "매수"
-        if score <= 0.25 and prob >= 0.55 and uncertainty <= 0.50:
-            return "매도"
     return "관망"
 
 

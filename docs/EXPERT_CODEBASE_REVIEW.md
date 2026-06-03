@@ -108,9 +108,9 @@ market = ["yfinance", "pykrx"]
 확인된 위험 예:
 
 - `src/chatbot/kakao_colab_bot.py`
-  - `row.get("?덉륫 ?댁쑀")`
+  - 예전 깨진 `예측 이유` 컬럼 참조
 - `src/recommendation/realtime_close_betting.py`
-  - `"?? ?? ?? ?? ??"`
+  - 예전 깨진 종가매매 안내 문구
 - `src/pipeline.py`, `src/config/settings.py` 일부 주석/출력 문자열에 깨진 한글이 보임
 
 위험:

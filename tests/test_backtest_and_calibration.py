@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.config.settings import BacktestConfig
 from src.validation.backtest import run_long_only_topk_backtest
@@ -21,6 +22,7 @@ def test_backtest_turnover_limit_caps_new_entries():
             "Date": pd.to_datetime(["2024-01-01"] * 3 + ["2024-01-02"] * 3),
             "Symbol": ["A", "B", "X", "C", "D", "A"],
             "signal_score": [0.9, 0.8, 0.1, 0.95, 0.85, 0.7],
+            "predicted_return": [2.0, 1.5, -1.0, 3.0, 2.5, 1.0],
             "up_probability": [0.8, 0.7, 0.4, 0.9, 0.8, 0.7],
             "target_log_return": [0.01, 0.01, 0.0, 0.01, 0.01, 0.01],
             "uncertainty_score": [0.2, 0.2, 0.5, 0.2, 0.2, 0.2],
@@ -42,6 +44,7 @@ def test_backtest_halts_when_coverage_gate_is_below_threshold():
             "Date": pd.to_datetime(["2024-01-01", "2024-01-01"]),
             "Symbol": ["A", "B"],
             "signal_score": [0.9, 0.8],
+            "predicted_return": [2.0, 1.0],
             "up_probability": [0.8, 0.7],
             "target_log_return": [0.01, 0.01],
             "external_coverage_ratio": [0.4, 0.4],
@@ -64,6 +67,7 @@ def test_backtest_respects_market_type_cap_and_liquidity_capacity():
             "Date": pd.to_datetime(["2024-01-01"] * 4),
             "Symbol": ["A", "B", "C", "D"],
             "signal_score": [0.95, 0.9, 0.85, 0.8],
+            "predicted_return": [4.0, 3.0, 2.0, 1.0],
             "up_probability": [0.9, 0.9, 0.9, 0.9],
             "target_log_return": [0.01, 0.01, 0.01, 0.01],
             "market_type": ["KOSPI", "KOSPI", "KOSDAQ", "KOSDAQ"],
@@ -82,3 +86,24 @@ def test_backtest_respects_market_type_cap_and_liquidity_capacity():
 
     assert out["avg_selected_count"] <= 2.0
     assert float(series.iloc[0]["market_type_count"]) == 2.0
+
+
+def test_backtest_ranks_by_predicted_return_not_signal_score_or_news_columns():
+    pred = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2024-01-01"] * 3),
+            "Symbol": ["LOW_RET_HIGH_SIGNAL", "HIGH_RET_LOW_SIGNAL", "MID"],
+            "signal_score": [0.99, 0.10, 0.50],
+            "predicted_return": [0.1, 5.0, 2.0],
+            "up_probability": [0.9, 0.9, 0.9],
+            "target_log_return": [-0.20, 0.30, 0.10],
+            "news_impact_final_score": [100.0, -100.0, 0.0],
+            "value_traded": [10_000_000_000.0, 10_000_000_000.0, 10_000_000_000.0],
+        }
+    )
+
+    cfg = BacktestConfig(top_k=1)
+    out = run_long_only_topk_backtest(pred, cfg)
+
+    assert out["avg_daily_return"] > 0.0
+    assert out["series"][0]["daily_return"] == pytest.approx(0.30 - 0.0015)
