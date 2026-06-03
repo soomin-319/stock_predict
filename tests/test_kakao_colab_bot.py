@@ -1276,6 +1276,11 @@ def test_prewarm_prediction_cache_runs_colab_pipeline(monkeypatch, tmp_path: Pat
         input_csv="data/sample_ohlcv.csv",
         report_json="prewarm_report.json",
         figure_dir="prewarm_figures",
+        enable_investor_disclosure=False,
+        openai_api_key="sk-prewarm",
+        openai_model="gpt-test",
+        naver_client_id="naver-prewarm-id",
+        naver_client_secret="naver-prewarm-secret",
         fetch_investor_context=True,
         bootstrap_default_symbols=True,
         real_start="2020-01-01",
@@ -1287,6 +1292,11 @@ def test_prewarm_prediction_cache_runs_colab_pipeline(monkeypatch, tmp_path: Pat
     assert captured["report_json"] == "prewarm_report.json"
     assert captured["figure_dir"] == "prewarm_figures"
     assert captured["use_investor_context"] is True
+    assert captured["enable_investor_disclosure"] is False
+    assert captured["openai_api_key"] == "sk-prewarm"
+    assert captured["openai_model"] == "gpt-test"
+    assert captured["naver_client_id"] == "naver-prewarm-id"
+    assert captured["naver_client_secret"] == "naver-prewarm-secret"
     assert captured["bootstrap_default_symbols"] is True
     assert captured["real_start"] == "2020-01-01"
     assert out["result_simple_csv"].endswith("result/result_simple.csv")
@@ -1384,6 +1394,31 @@ def test_prewarm_prediction_cache_reuses_cache_only_when_signature_matches(monke
 
     assert called["count"] == 1
     assert out["result_simple_csv"].endswith("result/result_simple.csv")
+
+
+def test_prewarm_cache_signature_tracks_issue_summary_and_news_scoring_inputs(tmp_path: Path):
+    base_config = PipelineRuntimeConfig(project_root=tmp_path, input_csv="data/real_ohlcv.csv")
+    context_config = PipelineRuntimeConfig(
+        project_root=tmp_path,
+        input_csv="data/real_ohlcv.csv",
+        enable_investor_disclosure=False,
+        openai_api_key="sk-enabled",
+        openai_model="gpt-context",
+        naver_client_id="naver-id",
+        naver_client_secret="naver-secret",
+    )
+
+    base_signature = _runtime_cache_signature(base_config, tmp_path)
+    context_signature = _runtime_cache_signature(context_config, tmp_path)
+
+    assert base_signature["enable_investor_disclosure"] is True
+    assert context_signature["enable_investor_disclosure"] is False
+    assert base_signature["openai_api_key_enabled"] is False
+    assert context_signature["openai_api_key_enabled"] is True
+    assert context_signature["openai_model"] == "gpt-context"
+    assert base_signature["naver_news_enabled"] is False
+    assert context_signature["naver_news_enabled"] is True
+    assert _cache_signature_hash(base_signature) != _cache_signature_hash(context_signature)
 
 
 def test_prewarm_prediction_cache_invalidates_stale_daily_signature(monkeypatch, tmp_path: Path):

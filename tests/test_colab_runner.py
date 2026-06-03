@@ -47,6 +47,31 @@ def test_run_colab_pipeline_bootstraps_default_krx_symbols(monkeypatch, tmp_path
     assert out["result_simple_csv"].endswith("result/result_simple.csv")
 
 
+def test_run_colab_pipeline_forwards_news_summary_and_scoring_credentials(monkeypatch, tmp_path: Path):
+    captured = {}
+
+    monkeypatch.setattr(colab_runner, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(colab_runner, "_should_bootstrap_default_symbols", lambda input_csv: False)
+    monkeypatch.setattr(colab_runner, "run_pipeline", lambda **kwargs: captured.setdefault("run", kwargs))
+
+    colab_runner.run_colab_pipeline(
+        input_csv="data/real_ohlcv.csv",
+        use_investor_context=True,
+        enable_investor_disclosure=False,
+        openai_api_key="sk-colab",
+        openai_model="gpt-colab",
+        naver_client_id="naver-colab-id",
+        naver_client_secret="naver-colab-secret",
+    )
+
+    assert captured["run"]["use_investor_context"] is True
+    assert captured["run"]["enable_investor_disclosure"] is False
+    assert captured["run"]["openai_api_key"] == "sk-colab"
+    assert captured["run"]["openai_model"] == "gpt-colab"
+    assert captured["run"]["naver_client_id"] == "naver-colab-id"
+    assert captured["run"]["naver_client_secret"] == "naver-colab-secret"
+
+
 def test_run_colab_pipeline_incremental_refresh_uses_append(monkeypatch, tmp_path: Path):
     captured = {}
 

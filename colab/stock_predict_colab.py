@@ -101,6 +101,8 @@ def run_colab_pipeline(
     news_scoring_mode: str = "auto",
     openai_api_key: str | None = None,
     openai_model: str | None = None,
+    naver_client_id: str | None = None,
+    naver_client_secret: str | None = None,
     dart_api_key: str | None = None,
     dart_corp_map_csv: str | None = None,
     bootstrap_default_symbols: bool = True,
@@ -147,6 +149,8 @@ def run_colab_pipeline(
         enable_investor_disclosure=enable_investor_disclosure,
         openai_api_key=openai_api_key,
         openai_model=openai_model,
+        naver_client_id=naver_client_id,
+        naver_client_secret=naver_client_secret,
     )
 
     result_dir = PROJECT_ROOT / "result"
