@@ -7,13 +7,16 @@ from pathlib import Path
 import pandas as pd
 
 
-KRX_SYMBOL_NAME_CSV = Path(__file__).resolve().parents[2] / "data" / "krx_symbol_name_map.csv"
+DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+DEFAULT_KRX_SYMBOL_NAME_CSV = DATA_DIR / "krx_symbol_name_map.csv"
+DEFAULT_KOSPI200_SYMBOL_NAME_CSV = DATA_DIR / "kospi200_symbol_name_map.csv"
+KRX_SYMBOL_NAME_CSV = DEFAULT_KRX_SYMBOL_NAME_CSV
+KOSPI200_SYMBOL_NAME_CSV = DEFAULT_KOSPI200_SYMBOL_NAME_CSV
 
 
-@lru_cache(maxsize=4)
-def _load_krx_symbol_name_df_cached(path_str: str) -> pd.DataFrame:
-    path = Path(path_str)
-    if not path.exists():
+def _read_symbol_name_csv(path: Path) -> pd.DataFrame:
+    path = Path(path)
+    if not str(path) or not path.exists() or not path.is_file():
         return pd.DataFrame(columns=["Ticker", "Symbol", "Name", "Market"])
 
     df = pd.read_csv(path)
@@ -31,8 +34,19 @@ def _load_krx_symbol_name_df_cached(path_str: str) -> pd.DataFrame:
     return out
 
 
+@lru_cache(maxsize=8)
+def _load_krx_symbol_name_df_cached(path_str: str, kospi200_path_str: str) -> pd.DataFrame:
+    primary = _read_symbol_name_csv(Path(path_str))
+    fallback = _read_symbol_name_csv(Path(kospi200_path_str))
+    combined = pd.concat([primary, fallback], ignore_index=True)
+    return combined.drop_duplicates(subset=["Ticker"], keep="first").reset_index(drop=True)
+
+
 def _load_krx_symbol_name_df() -> pd.DataFrame:
-    return _load_krx_symbol_name_df_cached(str(KRX_SYMBOL_NAME_CSV))
+    kospi200_path = KOSPI200_SYMBOL_NAME_CSV
+    if Path(KRX_SYMBOL_NAME_CSV) != DEFAULT_KRX_SYMBOL_NAME_CSV and kospi200_path == DEFAULT_KOSPI200_SYMBOL_NAME_CSV:
+        kospi200_path = Path("")
+    return _load_krx_symbol_name_df_cached(str(KRX_SYMBOL_NAME_CSV), str(kospi200_path))
 
 
 _load_krx_symbol_name_df.cache_clear = _load_krx_symbol_name_df_cached.cache_clear  # type: ignore[attr-defined]

@@ -67,3 +67,24 @@ def test_symbol_name_cache_follows_current_csv_path(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(krx_universe, "KRX_SYMBOL_NAME_CSV", default_csv_path)
 
     assert krx_universe.get_symbol_name_map(["000660.KS"]) == {"000660.KS": "SK하이닉스"}
+
+
+def test_get_symbol_name_map_uses_kospi200_fallback_csv(monkeypatch, tmp_path: Path):
+    csv_path = tmp_path / "krx_symbol_name_map.csv"
+    kospi200_csv_path = tmp_path / "kospi200_symbol_name_map.csv"
+    csv_path.write_text(
+        "Ticker,Symbol,Name,Market\n005930,005930.KS,?쇱꽦?꾩옄,KOSPI\n",
+        encoding="utf-8",
+    )
+    kospi200_csv_path.write_text(
+        "Ticker,Symbol,Name,Market,Index\n454910,454910.KS,두산로보틱스,KOSPI,KOSPI200\n",
+        encoding="utf-8-sig",
+    )
+    monkeypatch.setattr(krx_universe, "KRX_SYMBOL_NAME_CSV", csv_path)
+    monkeypatch.setattr(krx_universe, "KOSPI200_SYMBOL_NAME_CSV", kospi200_csv_path, raising=False)
+    krx_universe._load_krx_symbol_name_df.cache_clear()
+
+    assert krx_universe.get_symbol_name_map(["005930.KS", "454910.KS"]) == {
+        "005930.KS": "?쇱꽦?꾩옄",
+        "454910.KS": "두산로보틱스",
+    }
