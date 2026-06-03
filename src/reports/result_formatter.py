@@ -130,7 +130,7 @@ def print_prediction_console_summary(pred_df: pd.DataFrame):
     out = pred_df.copy()
     if "history_direction_accuracy" not in out.columns:
         out["history_direction_accuracy"] = 0.5
-    out = out.sort_values(["history_direction_accuracy", "signal_score"], ascending=[False, False]).head(10).copy()
+    out = out.sort_values(["history_direction_accuracy", "predicted_return"], ascending=[False, False]).head(10).copy()
     out = build_result_simple(out)
     rows = []
     for _, r in out.iterrows():

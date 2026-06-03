@@ -12,7 +12,7 @@ def build_pm_report(pred_df: pd.DataFrame, report: dict) -> dict:
         top_buys = work[work["recommendation"].astype(str) == "매수"].copy()
     else:
         top_buys = work.head(0).copy()
-    top_buys = top_buys.sort_values(["signal_score", "confidence_score"], ascending=[False, False]).head(10)
+    top_buys = top_buys.sort_values(["predicted_return", "confidence_score"], ascending=[False, False]).head(10)
     focus_columns = [
         "Symbol",
         "symbol_name",
