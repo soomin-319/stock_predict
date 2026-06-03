@@ -17,6 +17,11 @@ RESULT_SIMPLE_OPTIONAL_COLUMNS = (
     "공시 요약",
     "뉴스 요약",
 )
+RESULT_SIMPLE_NEWS_IMPACT_COLUMNS = (
+    "뉴스/공시 영향 점수",
+    "뉴스/공시 영향 요약",
+    "뉴스/공시 영향 참고",
+)
 RESULT_SIMPLE_HORIZON_COLUMNS = (
     "5일 예상 수익률(%)",
     "20일 예상 수익률(%)",
@@ -71,7 +76,7 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
             "predicted_return",
             "상승확률(%)",
             "예측 신뢰도",
-            *([c for c in ["공시 요약", "뉴스 요약"] if c in out.columns]),
+            *([c for c in (*RESULT_SIMPLE_OPTIONAL_COLUMNS, *RESULT_SIMPLE_NEWS_IMPACT_COLUMNS) if c in out.columns]),
         ]
     ].rename(
         columns={
@@ -106,6 +111,7 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
         *RESULT_SIMPLE_REQUIRED_COLUMNS,
         *[c for c in RESULT_SIMPLE_HORIZON_COLUMNS if c in simple.columns],
         *[c for c in RESULT_SIMPLE_OPTIONAL_COLUMNS if c in simple.columns],
+        *[c for c in RESULT_SIMPLE_NEWS_IMPACT_COLUMNS if c in simple.columns],
     ]
     return simple.reindex(columns=ordered)
 
@@ -167,6 +173,7 @@ def _display_width(text: str) -> int:
 
 __all__ = [
     "RESULT_SIMPLE_OPTIONAL_COLUMNS",
+    "RESULT_SIMPLE_NEWS_IMPACT_COLUMNS",
     "RESULT_SIMPLE_REQUIRED_COLUMNS",
     "build_result_simple",
     "display_width",

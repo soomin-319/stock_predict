@@ -48,7 +48,7 @@ from src.pipeline_support import (
 )
 from src.reports.pm_report import build_pm_report, save_pm_report
 from src.reports.issue_summary import append_issue_summary_columns
-from src.reports.news_impact_context import append_news_impact_context
+from src.reports.news_impact_context import append_generated_news_impact_context, append_news_impact_context
 from src.reports.result_formatter import (
     format_percentage_text as formatter_format_percentage_text,
 )
@@ -517,7 +517,10 @@ def run_pipeline(
         summarize_symbols=issue_summary_symbols,
         summary_n_jobs=issue_summary_n_jobs,
     )
-    pred_df = append_news_impact_context(pred_df, news_impact_report)
+    if news_impact_report:
+        pred_df = append_news_impact_context(pred_df, news_impact_report)
+    else:
+        pred_df = append_generated_news_impact_context(pred_df, context_raw_df)
     pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True))
     pred_df["권고"] = pred_df["recommendation"]
 

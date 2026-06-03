@@ -4,7 +4,8 @@ from pathlib import Path
 import pandas as pd
 
 from src.domain.signal_policy import recommendation_from_signal
-from src.reports.news_impact_context import append_news_impact_context
+from src.reports.news_impact_context import append_generated_news_impact_context, append_news_impact_context
+from src.reports.result_formatter import build_result_simple
 
 
 def test_append_news_impact_context_joins_display_only_columns_without_changing_recommendation(tmp_path):
@@ -114,3 +115,73 @@ def test_pipeline_exposes_optional_news_impact_report_flag_and_parameter():
 
     assert args.news_impact_report == "impact.json"
     assert "news_impact_report" in signature(run_pipeline).parameters
+
+
+def test_append_generated_news_impact_context_scores_raw_news_and_disclosures_without_changing_policy():
+    pred_df = pd.DataFrame(
+        [
+            {
+                "Date": pd.Timestamp("2026-03-26"),
+                "Symbol": "005930.KS",
+                "symbol_name": "삼성전자",
+                "predicted_return": -1.5,
+                "recommendation": recommendation_from_signal(None, -1.5),
+            }
+        ]
+    )
+    context_raw_df = pd.DataFrame(
+        [
+            {
+                "Date": "2026-03-26",
+                "Symbol": "005930.KS",
+                "source_type": "news",
+                "title": "삼성전자 HBM 수요 증가",
+                "body": "반도체 수요 개선",
+                "url": "https://example.com/news",
+            },
+            {
+                "Date": "2026-03-26",
+                "Symbol": "005930.KS",
+                "source_type": "disclosure",
+                "title": "단일판매ㆍ공급계약체결",
+                "body": "",
+                "url": "https://example.com/dart",
+            },
+        ]
+    )
+
+    out = append_generated_news_impact_context(pred_df, context_raw_df)
+
+    assert out.loc[0, "predicted_return"] == pred_df.loc[0, "predicted_return"]
+    assert out.loc[0, "recommendation"] == pred_df.loc[0, "recommendation"]
+    assert out.loc[0, "news_impact_final_score"] > 0
+    assert out.loc[0, "news_impact_event_count"] == 2
+    assert "HBM" in out.loc[0, "news_impact_top_reason"] or "공급계약" in out.loc[0, "news_impact_top_reason"]
+    assert out.loc[0, "뉴스/공시 영향 점수"].endswith("점")
+    assert "예측값 미반영" in out.loc[0, "뉴스/공시 영향 참고"]
+
+
+def test_result_simple_includes_news_impact_display_columns_when_available():
+    pred_df = pd.DataFrame(
+        [
+            {
+                "Symbol": "005930.KS",
+                "symbol_name": "삼성전자",
+                "recommendation": "보유",
+                "predicted_close": 70000,
+                "predicted_return": 1.23,
+                "up_probability": 0.55,
+                "confidence_score": 0.6,
+                "history_direction_accuracy": 0.5,
+                "뉴스/공시 영향 점수": "+42.0점",
+                "뉴스/공시 영향 요약": "HBM 수요 증가",
+                "뉴스/공시 영향 참고": "참고용",
+            }
+        ]
+    )
+
+    simple = build_result_simple(pred_df)
+
+    assert simple.loc[0, "뉴스/공시 영향 점수"] == "+42.0점"
+    assert simple.loc[0, "뉴스/공시 영향 요약"] == "HBM 수요 증가"
+    assert simple.loc[0, "뉴스/공시 영향 참고"] == "참고용"
