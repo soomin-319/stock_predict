@@ -1710,6 +1710,10 @@ def _runtime_cache_signature(cfg: PipelineRuntimeConfig, project_root: Path) -> 
         "real_start": str(cfg.real_start),
         "dart_api_key_enabled": bool(cfg.dart_api_key),
         "dart_corp_map_csv": str(cfg.dart_corp_map_csv or ""),
+        "enable_investor_disclosure": bool(cfg.enable_investor_disclosure),
+        "openai_api_key_enabled": bool(cfg.openai_api_key),
+        "openai_model": str(cfg.openai_model or ""),
+        "naver_news_enabled": bool(cfg.naver_client_id and cfg.naver_client_secret),
     }
 
 
@@ -1848,6 +1852,11 @@ def prewarm_prediction_cache(runtime_config: PipelineRuntimeConfig | None = None
         figure_dir=cfg.figure_dir,
         use_external=cfg.use_external,
         use_investor_context=cfg.fetch_investor_context,
+        enable_investor_disclosure=cfg.enable_investor_disclosure,
+        openai_api_key=cfg.openai_api_key,
+        openai_model=cfg.openai_model,
+        naver_client_id=cfg.naver_client_id,
+        naver_client_secret=cfg.naver_client_secret,
         dart_api_key=cfg.dart_api_key,
         dart_corp_map_csv=cfg.dart_corp_map_csv,
         bootstrap_default_symbols=cfg.bootstrap_default_symbols,
