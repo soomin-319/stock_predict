@@ -29,6 +29,7 @@ from src.data.investor_context import collect_context_raw_events
 from src.data.krx_universe import find_symbol_candidates_by_name, get_symbol_name_map
 from src.data.fetch_real_data import normalize_user_symbols
 from src.reports.issue_summary import append_issue_summary_columns
+from src.reports.news_impact_context import append_generated_news_impact_context
 from src.reports.result_formatter import validate_result_simple_schema
 from src.recommendation.close_betting import format_recommendation_message
 from src.recommendation.realtime_close_betting import RealTimeCloseBettingRecommendationService
@@ -38,7 +39,7 @@ _STOCK_CODE_PATTERN = re.compile(r"\b\d{6}(?:\.(?:KS|KQ))?\b", re.IGNORECASE)
 _HELP_KEYWORDS = {"도움말", "help", "사용법", "시작", "안내"}
 _STATUS_KEYWORDS = {"결과", "상태", "진행상황", "조회", "확인"}
 _REFRESH_KEYWORDS = {"최신화", "새로고침", "재실행", "다시예측", "다시 예측"}
-_RECOMMENDATION_KEYWORDS = {"\ucd94\ucc9c"}
+_RECOMMENDATION_KEYWORDS = {"추천"}
 
 
 @dataclass(slots=True)
@@ -252,14 +253,14 @@ class KakaoColabPredictionBot:
             recommendations = self.recommendation_service.get_recommendations(top_n=None, min_final_score=200)
             return self._build_response(
                 format_recommendation_message(recommendations),
-                quick_replies=[("\ub2e4\uc2dc \ucd94\ucc9c", "\ucd94\ucc9c"), ("\ub3c4\uc6c0\ub9d0", "\ub3c4\uc6c0\ub9d0")],
+                quick_replies=[("다시 추천", "추천"), ("도움말", "도움말")],
             )
         except Exception as exc:
-            self._console_log(f"\uc2e4\uc2dc\uac04 \ucd94\ucc9c \ucc98\ub9ac \uc624\ub958({type(exc).__name__}): {exc}")
+            self._console_log(f"실시간 추천 처리 오류({type(exc).__name__}): {exc}")
             return self._build_response(
-                "\uc2e4\uc2dc\uac04 \ucd94\ucc9c \uc0dd\uc131\uc5d0 \uc2e4\ud328\ud588\uc2b5\ub2c8\ub2e4.\n"
-                "\ub370\uc774\ud130 \uc218\uc9d1 \ub610\ub294 \ub124\ud2b8\uc6cc\ud06c \uc0c1\ud0dc\ub97c \ud655\uc778\ud55c \ub4a4 \ub2e4\uc2dc '\ucd94\ucc9c'\uc744 \uc785\ub825\ud574\uc8fc\uc138\uc694.",
-                quick_replies=[("\ub2e4\uc2dc \ucd94\ucc9c", "\ucd94\ucc9c"), ("\ub3c4\uc6c0\ub9d0", "\ub3c4\uc6c0\ub9d0")],
+                "실시간 추천 생성에 실패했습니다.\n"
+                "데이터 수집 또는 네트워크 상태를 확인한 뒤 다시 '추천'을 입력해주세요.",
+                quick_replies=[("다시 추천", "추천"), ("도움말", "도움말")],
             )
 
     def _handle_symbol_request(
@@ -321,8 +322,10 @@ class KakaoColabPredictionBot:
             # Auto-refresh on stale cache is disabled to avoid unnecessary
             # re-prediction after bootstrap runs. Users can explicitly request
             # refresh with "최신화".
-            if not self._has_issue_summary(cached_row):
-                if self.runtime_config.async_issue_summary_on_demand:
+            needs_issue_summary = not self._has_issue_summary(cached_row)
+            needs_news_impact = not self._has_news_impact(cached_row)
+            if needs_issue_summary or needs_news_impact:
+                if needs_issue_summary and self.runtime_config.async_issue_summary_on_demand:
                     self._start_issue_summary_background(symbol, cached_row)
                     return self._build_response(
                         (
@@ -459,7 +462,7 @@ class KakaoColabPredictionBot:
                 "2) 종목명 입력: 삼성전자",
                 "3) 예측 진행 중이면 '결과' 입력",
                 "4) 최신값으로 다시 돌리고 싶으면 '최신화' 입력",
-                "5) \uc2e4\uc2dc\uac04 \ucd94\ucc9c: \ucd94\ucc9c",
+                "5) 실시간 추천: 추천",
             ]
         )
         return self._build_response(
@@ -468,7 +471,7 @@ class KakaoColabPredictionBot:
                 ("예시 005930", "005930"),
                 ("결과 확인", "결과"),
                 ("최신화", "최신화"),
-                ("\uc2e4\uc2dc\uac04 \ucd94\ucc9c", "\ucd94\ucc9c"),
+                ("실시간 추천", "추천"),
             ],
         )
 
@@ -666,6 +669,7 @@ class KakaoColabPredictionBot:
         confidence = self._format_confidence(row.get("예측 신뢰도"))
         reason_line = self._build_reason_line(row)
         issue_block = self._build_issue_summary_block(row)
+        news_impact_block = self._build_news_impact_block(row)
         return (
             f"[{code} {name}]\n"
             f"권고: {recommendation}\n"
@@ -675,6 +679,7 @@ class KakaoColabPredictionBot:
             f"신뢰도: {confidence}\n"
             f"{reason_line}"
             f"{issue_block}"
+            f"{news_impact_block}"
         )
 
     def _build_reason_line(self, row: pd.Series) -> str:
@@ -709,6 +714,20 @@ class KakaoColabPredictionBot:
             + "\n\n[뉴스 요약]\n"
             + "\n".join(f"- {line}" for line in news_lines)
         )
+
+    def _build_news_impact_block(self, row: pd.Series) -> str:
+        score_text = self._get_clean_issue_text(row.get("뉴스/공시 영향 점수"))
+        summary_text = self._get_clean_issue_text(row.get("뉴스/공시 영향 요약"))
+        note_text = self._get_clean_issue_text(row.get("뉴스/공시 영향 참고"))
+        if not score_text and not summary_text:
+            return ""
+        lines = []
+        if score_text:
+            lines.append(f"- 점수: {score_text}")
+        if summary_text:
+            lines.append(f"- 요약: {summary_text}")
+        lines.append(f"- 참고: {note_text or '참고용·예측값 미반영'}")
+        return "\n\n[뉴스/공시 영향 점수]\n" + "\n".join(lines)
 
     def _get_clean_issue_text(self, raw: Any) -> str:
         if raw is None:
@@ -1131,7 +1150,7 @@ class KakaoColabPredictionBot:
             row = self._find_cached_prediction(symbol)
             if row is None:
                 continue
-            if self._has_issue_summary(row):
+            if self._has_issue_summary(row) and self._has_news_impact(row):
                 continue
             self._start_issue_summary_background(symbol, row)
 
@@ -1234,7 +1253,8 @@ class KakaoColabPredictionBot:
         use_timeout_for_summary: bool = True,
         log_completion: bool = True,
     ) -> pd.Series:
-        if self._has_issue_summary(row):
+        has_existing_summary = self._has_issue_summary(row)
+        if has_existing_summary and self._has_news_impact(row):
             self._cache_issue_summary(symbol, row)
             return row
 
@@ -1284,64 +1304,113 @@ class KakaoColabPredictionBot:
         news_count = int((same_day.get("source_type", pd.Series(dtype=str)).astype(str) == "news").sum())
         if same_day.empty:
             self._console_log(
-                f"{self._display_code(symbol)} 요약 원문 없음 (기준일 {prediction_date}, symbol_events={len(same_symbol)})."
+                f"{self._display_code(symbol)} no news/disclosure raw events for summary (date {prediction_date}, symbol_events={len(same_symbol)})."
             )
-            has_existing_summary = self._has_issue_summary(row)
             if has_existing_summary:
                 return row
 
-        base = pd.DataFrame([{"Symbol": symbol, "종목명": str(row.get("종목명", self._display_code(symbol)))}])
-        if use_timeout_for_summary:
-            summarized_df = self._run_in_background_with_timeout(
-                append_issue_summary_columns,
-                base,
-                timeout=self.ISSUE_SUMMARY_TIMEOUT_SEC,
-                context_raw_df=same_day.copy(),
-                openai_api_key=self.runtime_config.openai_api_key,
-                openai_model=self.runtime_config.openai_model,
-                summarize_symbols=[symbol],
-            )
+        out = row.copy()
+        if not has_existing_summary:
+            base = pd.DataFrame([{"Symbol": symbol, "종목명": str(row.get("종목명", self._display_code(symbol)))}])
+            if use_timeout_for_summary:
+                summarized_df = self._run_in_background_with_timeout(
+                    append_issue_summary_columns,
+                    base,
+                    timeout=self.ISSUE_SUMMARY_TIMEOUT_SEC,
+                    context_raw_df=same_day.copy(),
+                    openai_api_key=self.runtime_config.openai_api_key,
+                    openai_model=self.runtime_config.openai_model,
+                    summarize_symbols=[symbol],
+                )
+                if summarized_df is None:
+                    self._console_log(
+                        f"{self._display_code(symbol)} issue summary timed out ({self.ISSUE_SUMMARY_TIMEOUT_SEC:.1f}s); keeping current response."
+                    )
+                    with self._state_lock:
+                        self._issue_summary_timeout_symbols.add(str(symbol))
+                    self._start_issue_summary_background(symbol, row)
+                    return row
+            else:
+                summarized_df = append_issue_summary_columns(
+                    base,
+                    context_raw_df=same_day.copy(),
+                    openai_api_key=self.runtime_config.openai_api_key,
+                    openai_model=self.runtime_config.openai_model,
+                    summarize_symbols=[symbol],
+                )
             if summarized_df is None:
                 self._console_log(
-                    f"{self._display_code(symbol)} 요약 생성 시간초과({self.ISSUE_SUMMARY_TIMEOUT_SEC:.1f}s)로 기존 응답을 유지합니다."
+                    f"{self._display_code(symbol)} issue summary returned no result; keeping current response."
                 )
                 with self._state_lock:
                     self._issue_summary_timeout_symbols.add(str(symbol))
                 self._start_issue_summary_background(symbol, row)
                 return row
-        else:
-            summarized_df = append_issue_summary_columns(
-                base,
-                context_raw_df=same_day.copy(),
-                openai_api_key=self.runtime_config.openai_api_key,
-                openai_model=self.runtime_config.openai_model,
-                summarize_symbols=[symbol],
-            )
-        if summarized_df is None:
-            self._console_log(
-                f"{self._display_code(symbol)} 요약 생성 결과가 없어 기존 응답을 유지합니다."
-            )
-            with self._state_lock:
-                self._issue_summary_timeout_symbols.add(str(symbol))
-            self._start_issue_summary_background(symbol, row)
-            return row
-        summarized = summarized_df.iloc[0]
-        out = row.copy()
-        for col in ["오늘 종목 이슈 한줄 요약", "공시 요약", "뉴스 요약", "종합 판단", "주의사항", "원문 개수", "핵심 원문 목록"]:
-            out[col] = summarized.get(col)
+            summarized = summarized_df.iloc[0]
+            for col in [
+                "오늘 종목 이슈 한줄 요약",
+                "공시 요약",
+                "뉴스 요약",
+                "종합 판단",
+                "주의사항",
+                "원문 개수",
+                "핵심 원문 목록",
+            ]:
+                out[col] = summarized.get(col)
+
+        if not self._has_news_impact(out):
+            out = self._attach_news_impact_score(out, symbol, prediction_date, same_day.copy())
         self._cache_issue_summary(symbol, out)
         if log_completion:
             self._console_log(
-                f"{self._display_code(symbol)} 요약 생성 완료 (기준일 {used_date.strftime('%Y-%m-%d')}, 공시 {disclosure_count}건, 뉴스 {news_count}건)."
+                f"{self._display_code(symbol)} issue summary complete (date {used_date.strftime('%Y-%m-%d')}, disclosure {disclosure_count}, news {news_count})."
             )
         return out
-
     def _collect_live_symbol_events_with_compat(self, symbol: str, reference_date: str, use_timeout: bool) -> pd.DataFrame:
         try:
             return self._collect_live_symbol_events(symbol, reference_date, use_timeout=use_timeout)
         except TypeError:
             # Backward compatibility for monkeypatched/test doubles still using the legacy signature.
             return self._collect_live_symbol_events(symbol, reference_date)
+
+    def _attach_news_impact_score(
+        self,
+        row: pd.Series,
+        symbol: str,
+        prediction_date: str,
+        events: pd.DataFrame,
+    ) -> pd.Series:
+        if events.empty:
+            return row
+        try:
+            base = pd.DataFrame(
+                [
+                    {
+                        "Date": prediction_date,
+                        "Symbol": symbol,
+                        "symbol_name": str(row.get("종목명", self._display_code(symbol))),
+                    }
+                ]
+            )
+            scored = append_generated_news_impact_context(base, events.copy())
+            if scored.empty:
+                return row
+            scored_row = scored.iloc[0]
+            out = row.copy()
+            for col in [
+                "뉴스/공시 영향 점수",
+                "뉴스/공시 영향 요약",
+                "뉴스/공시 영향 참고",
+                "news_impact_final_score",
+                "news_impact_event_count",
+                "news_impact_top_reason",
+            ]:
+                if col in scored_row.index:
+                    out[col] = scored_row.get(col)
+            return out
+        except Exception as exc:
+            self._console_log(f"{self._display_code(symbol)} news/disclosure impact scoring error({type(exc).__name__}): {exc}")
+            return row
 
     def _safe_attach_issue_summary(self, row: pd.Series, symbol: str) -> pd.Series:
         try:
@@ -1364,6 +1433,11 @@ class KakaoColabPredictionBot:
         has_real_news = bool(normalized_news and not self._is_placeholder_issue_text(normalized_news))
         return has_real_disclosure or has_real_news
 
+    def _has_news_impact(self, row: pd.Series) -> bool:
+        score = self._get_clean_issue_text(row.get("뉴스/공시 영향 점수"))
+        summary = self._get_clean_issue_text(row.get("뉴스/공시 영향 요약"))
+        return bool(score or summary)
+
     def _is_placeholder_issue_text(self, text: str) -> bool:
         normalized = re.sub(r"\s+", " ", str(text or "").strip().lower())
         if not normalized:
@@ -1381,7 +1455,18 @@ class KakaoColabPredictionBot:
     def _cache_issue_summary(self, symbol: str, row: pd.Series) -> None:
         payload = {
             col: row.get(col)
-            for col in ["오늘 종목 이슈 한줄 요약", "공시 요약", "뉴스 요약", "종합 판단", "주의사항", "원문 개수", "핵심 원문 목록"]
+            for col in [
+                "오늘 종목 이슈 한줄 요약",
+                "공시 요약",
+                "뉴스 요약",
+                "종합 판단",
+                "주의사항",
+                "원문 개수",
+                "핵심 원문 목록",
+                "뉴스/공시 영향 점수",
+                "뉴스/공시 영향 요약",
+                "뉴스/공시 영향 참고",
+            ]
         }
         with self._state_lock:
             self._issue_summary_cache[str(symbol)] = payload

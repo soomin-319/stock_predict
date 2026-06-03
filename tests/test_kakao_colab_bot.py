@@ -127,6 +127,103 @@ def test_returns_cached_prediction_message_from_kakao_payload(tmp_path: Path):
     assert "삼성전자" in text
     assert "권고: 매수" in text
     assert "[005930 삼성전자]" in text
+
+
+
+def test_cached_prediction_generates_news_impact_score_with_on_demand_summary(tmp_path: Path, monkeypatch):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "종목코드": "005930",
+                "종목명": "삼성전자",
+                "권고": "보유",
+                "내일 예상 종가": 71200,
+                "내일 예상 수익률(%)": "1.234%",
+                "상승확률(%)": "78.9%",
+                "예측 신뢰도": "88.0%",
+                "예측 이유": "테스트",
+            }
+        ]
+    ).to_csv(result_dir / "result_simple.csv", index=False, encoding="utf-8-sig")
+    today = pd.Timestamp.now(tz="Asia/Seoul").date().isoformat()
+    pd.DataFrame([{"Symbol": "005930.KS", "Date": today}]).to_csv(
+        result_dir / "result_detail.csv", index=False, encoding="utf-8-sig"
+    )
+    pd.DataFrame(
+        [
+            {
+                "Date": today,
+                "Symbol": "005930.KS",
+                "source_type": "news",
+                "title": "삼성전자 HBM 수요 증가",
+                "body": "반도체 수요 개선",
+                "url": "https://example.com/news",
+            },
+            {
+                "Date": today,
+                "Symbol": "005930.KS",
+                "source_type": "disclosure",
+                "title": "단일판매ㆍ공급계약체결",
+                "body": "",
+                "url": "https://example.com/dart",
+            },
+        ]
+    ).to_csv(result_dir / "result_news.csv", index=False, encoding="utf-8-sig")
+
+    def _fake_append(pred_df, context_raw_df=None, **kwargs):
+        out = pred_df.copy()
+        out["오늘 종목 이슈 한줄 요약"] = "HBM 수요와 공급계약 확인"
+        out["공시 요약"] = "단일판매ㆍ공급계약체결"
+        out["뉴스 요약"] = "HBM 수요 증가"
+        out["종합 판단"] = "중립"
+        out["주의사항"] = "참고용"
+        out["원문 개수"] = 2
+        out["핵심 원문 목록"] = "[]"
+        return out
+
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.append_issue_summary_columns", _fake_append)
+
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-impact-live"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "[공시 요약]" in text
+    assert "[뉴스 요약]" in text
+    assert "[뉴스/공시 영향 점수]" in text
+    assert "점수: +" in text
+    assert "예측값 미반영" in text
+
+
+def test_cached_prediction_message_includes_news_impact_score_for_requested_symbol(tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "종목코드": "005930",
+                "종목명": "삼성전자",
+                "권고": "보유",
+                "내일 예상 종가": "71,200원",
+                "내일 예상 수익률(%)": "1.234%",
+                "상승확률(%)": "78.9%",
+                "예측 신뢰도": "88.0%",
+                "뉴스/공시 영향 점수": "+42.0점",
+                "뉴스/공시 영향 요약": "HBM 수요 증가",
+                "뉴스/공시 영향 참고": "참고용·예측값 미반영",
+            }
+        ]
+    ).to_csv(result_dir / "result_simple.csv", index=False)
+
+    bot = make_bot(tmp_path)
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "005930", "user": {"id": "u-impact"}}})
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+
+    assert "[뉴스/공시 영향 점수]" in text
+    assert "+42.0점" in text
+    assert "HBM 수요 증가" in text
+    assert "예측값 미반영" in text
     assert "상승확률: 78.9%" in text
     assert "사유:" not in text
     assert response["template"]["quickReplies"][0]["label"] == "최신화"
@@ -1658,42 +1755,42 @@ def test_recommendation_keyword_returns_realtime_recommendations(tmp_path: Path)
             CloseBettingRecommendation(
                 rank=1,
                 symbol="005930",
-                name="\uc0bc\uc131\uc804\uc790",
-                grade="\uac15\ub825 \ud6c4\ubcf4",
+                name="삼성전자",
+                grade="강력 후보",
                 final_score=200,
                 first_buy_ratio=0.6,
-                reasons=("52\uc8fc \uc885\uac00 \uae30\uc900 \uc2e0\uace0\uac00", "\uac70\ub798\ub300\uae08 1\uc704"),
+                reasons=("52주 종가 기준 신고가", "거래대금 1위"),
             )
         ]
     )
     bot = make_bot(tmp_path)
     bot.recommendation_service = fake_service
 
-    response = bot.handle_kakao_payload({"userRequest": {"utterance": "\ucd94\ucc9c", "user": {"id": "u-rec"}}})
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "추천", "user": {"id": "u-rec"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
     assert fake_service.calls == 1
     assert fake_service.last_top_n is None
     assert fake_service.last_min_final_score == 200
-    assert "[\uc2e4\uc2dc\uac04 \ucd94\ucc9c]" in text
-    assert "1\uc704 \uc0bc\uc131\uc804\uc790(005930)" in text
-    assert "\uc810\uc218: 200" in text
+    assert "[실시간 추천]" in text
+    assert "1위 삼성전자(005930)" in text
+    assert "점수: 200" in text
 
 
 def test_recommendation_keyword_returns_failure_message_when_service_raises(tmp_path: Path):
     bot = make_bot(tmp_path)
     bot.recommendation_service = FakeRecommendationService(error=RuntimeError("network down"))
 
-    response = bot.handle_kakao_payload({"userRequest": {"utterance": "\ucd94\ucc9c", "user": {"id": "u-rec-fail"}}})
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "추천", "user": {"id": "u-rec-fail"}}})
     text = response["template"]["outputs"][0]["simpleText"]["text"]
 
-    assert "\uc2e4\uc2dc\uac04 \ucd94\ucc9c \uc0dd\uc131\uc5d0 \uc2e4\ud328\ud588\uc2b5\ub2c8\ub2e4" in text
-    assert "\ub2e4\uc2dc '\ucd94\ucc9c'" in text
+    assert "실시간 추천 생성에 실패했습니다" in text
+    assert "다시 '추천'" in text
 
 
 def test_guide_response_includes_recommendation_quick_reply(tmp_path: Path):
     bot = make_bot(tmp_path)
 
-    response = bot.handle_kakao_payload({"userRequest": {"utterance": "\ub3c4\uc6c0\ub9d0", "user": {"id": "u-guide-rec"}}})
+    response = bot.handle_kakao_payload({"userRequest": {"utterance": "도움말", "user": {"id": "u-guide-rec"}}})
 
-    assert any(reply["messageText"] == "\ucd94\ucc9c" for reply in response["template"]["quickReplies"])
+    assert any(reply["messageText"] == "추천" for reply in response["template"]["quickReplies"])
