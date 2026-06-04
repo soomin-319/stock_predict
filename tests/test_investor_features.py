@@ -1,7 +1,7 @@
 import pandas as pd
 
 from src.config.settings import AppConfig
-from src.features.price_features import build_features
+from src.features.price_features import DISPLAY_ONLY_CONTEXT_COLUMNS, build_features
 from src.pipeline import _feature_columns
 
 
@@ -84,7 +84,10 @@ def test_investor_feature_columns_are_created_from_optional_inputs():
 
     for c in EXPECTED_CORE_CONTEXT_COLUMNS:
         assert c in out.columns
-        assert c in feature_cols
+        if c in DISPLAY_ONLY_CONTEXT_COLUMNS:
+            assert c not in feature_cols
+        else:
+            assert c in feature_cols
 
     assert out["foreign_buy_signal"].isin([0.0, 1.0]).all()
     for removed in REMOVED_LOW_PRIORITY_COLUMNS:

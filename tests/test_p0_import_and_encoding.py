@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib
 import subprocess
 import sys
@@ -27,7 +28,13 @@ class BlockOptionalImports(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, BlockOptionalImports())
 import src.pipeline
 '''
-    result = subprocess.run([sys.executable, "-c", code], text=True, capture_output=True)
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+    )
 
     assert result.returncode == 0, result.stderr
 
@@ -70,9 +77,31 @@ def test_source_test_and_docs_do_not_contain_mojibake_markers():
     assert offenders == []
 
 
-def test_pytest_tmp_and_cache_are_not_under_result_outputs():
+def test_pytest_cache_uses_ignored_result_directory():
     config = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     pytest_options = config["tool"]["pytest"]["ini_options"]
 
-    assert not str(pytest_options.get("cache_dir", "")).replace("\\", "/").startswith("result/")
+    assert str(pytest_options.get("cache_dir", "")).replace("\\", "/") == "result/.pytest_cache"
     assert "--basetemp=result/" not in str(pytest_options.get("addopts", "")).replace("\\", "/")
+
+
+def test_text_subprocess_calls_pin_utf8_decoding():
+    checked = [
+        path
+        for root in (Path("src"), Path("news_impact"))
+        for path in root.rglob("*.py")
+    ]
+    offenders: list[str] = []
+    for path in checked:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+            text_arg = keywords.get("text") or keywords.get("universal_newlines")
+            if not (isinstance(text_arg, ast.Constant) and text_arg.value is True):
+                continue
+            if "encoding" not in keywords or "errors" not in keywords:
+                offenders.append(f"{path}:{node.lineno}")
+
+    assert offenders == []

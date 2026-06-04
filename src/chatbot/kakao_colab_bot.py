@@ -140,6 +140,8 @@ class PipelineRuntimeConfig:
         for key, value in secret_map.items():
             if value:
                 env[key] = value
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
         return env
 
 
@@ -989,6 +991,8 @@ class KakaoColabPredictionBot:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
                 env=subprocess_env,
             )

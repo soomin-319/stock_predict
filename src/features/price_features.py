@@ -127,8 +127,36 @@ FEATURE_COLUMN_BASE = frozenset(
 )
 
 
+DISPLAY_ONLY_CONTEXT_COLUMNS = frozenset(
+    {
+        "disclosure_score",
+        "news_sentiment",
+        "news_relevance_score",
+        "news_impact_score",
+        "news_article_count",
+        "news_positive_signal",
+        "news_negative_signal",
+        "news_same_day_signal",
+        "disclosure_same_day_signal",
+        # Composite score includes news/disclosure inputs, so it is context-only.
+        "investor_event_score",
+    }
+)
+
+MODEL_FEATURE_COLUMN_BASE = FEATURE_COLUMN_BASE - DISPLAY_ONLY_CONTEXT_COLUMNS
+
+
 def select_feature_columns(df: pd.DataFrame) -> list[str]:
-    return [c for c in df.columns if c.startswith(FEATURE_COLUMN_PREFIXES) or c in FEATURE_COLUMN_BASE]
+    return [
+        c
+        for c in df.columns
+        if c not in DISPLAY_ONLY_CONTEXT_COLUMNS
+        and (c.startswith(FEATURE_COLUMN_PREFIXES) or c in MODEL_FEATURE_COLUMN_BASE)
+    ]
+
+
+def display_context_columns(df: pd.DataFrame) -> list[str]:
+    return [c for c in df.columns if c in DISPLAY_ONLY_CONTEXT_COLUMNS]
 
 
 def _coerce_numeric_series(df: pd.DataFrame, aliases: list[str], default: float = 0.0) -> pd.Series:
