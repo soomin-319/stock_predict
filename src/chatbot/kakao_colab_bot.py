@@ -28,6 +28,8 @@ _LOGGER = logging.getLogger(__name__)
 from src.data.investor_context import collect_context_raw_events
 from src.data.krx_universe import find_symbol_candidates_by_name, get_symbol_name_map
 from src.data.fetch_real_data import normalize_user_symbols
+from src.chatbot.intent import is_help_utterance, is_status_utterance, normalize_utterance
+from src.chatbot.responses import attach_quick_replies, simple_text_response
 from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.news_impact_context import append_generated_news_impact_context
 from src.reports.result_formatter import validate_result_simple_schema
@@ -214,12 +216,12 @@ class KakaoColabPredictionBot:
             self._activate_safe_formatter_patch()
 
     def handle_kakao_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        utterance = ((payload.get("userRequest") or {}).get("utterance") or "").strip()
+        utterance = normalize_utterance((payload.get("userRequest") or {}).get("utterance"))
         user_id = self._extract_user_id(payload)
         return self.handle_utterance(utterance, user_id=user_id)
 
     def handle_utterance(self, utterance: str, user_id: str | None = None) -> dict[str, Any]:
-        text = str(utterance or "").strip()
+        text = normalize_utterance(utterance)
         self._refresh_job_states()
 
         if not text or self._is_help_request(text):
@@ -1608,10 +1610,10 @@ class KakaoColabPredictionBot:
         return intent
 
     def _is_help_request(self, text: str) -> bool:
-        return text.strip().lower() in _HELP_KEYWORDS
+        return is_help_utterance(text)
 
     def _is_status_request(self, text: str) -> bool:
-        return text.strip().lower() in _STATUS_KEYWORDS
+        return is_status_utterance(text)
 
     def _is_refresh_request(self, text: str) -> bool:
         return text.strip().lower() in _REFRESH_KEYWORDS
@@ -1640,28 +1642,7 @@ class KakaoColabPredictionBot:
         max_len = 900
         if len(message_text) > max_len:
             message_text = message_text[: max_len - 8].rstrip() + "\n...(생략)"
-        response = {
-            "version": "2.0",
-            "template": {
-                "outputs": [
-                    {
-                        "simpleText": {
-                            "text": message_text,
-                        }
-                    }
-                ]
-            },
-        }
-        if quick_replies:
-            response["template"]["quickReplies"] = [
-                {
-                    "action": "message",
-                    "label": label,
-                    "messageText": message_text,
-                }
-                for label, message_text in quick_replies[:10]
-            ]
-        return response
+        return attach_quick_replies(simple_text_response(message_text), quick_replies[:10] if quick_replies else None)
 
 
 def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: PipelineRuntimeConfig | None = None):
