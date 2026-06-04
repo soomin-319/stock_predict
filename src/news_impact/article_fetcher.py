@@ -7,7 +7,7 @@ from html.parser import HTMLParser
 from typing import Any, Callable
 from urllib import request
 
-from news_impact.schema import NewsItem
+from src.news_impact.schema import NewsItem
 
 
 @dataclass(frozen=True)

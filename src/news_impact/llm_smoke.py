@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from news_impact.llm_client import JsonTransport, LlamaCppClient
-from news_impact.llm_config import LLMConfig
+from src.news_impact.llm_client import JsonTransport, LlamaCppClient
+from src.news_impact.llm_config import LLMConfig
 
 
 def run_llm_smoke(

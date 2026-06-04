@@ -258,7 +258,7 @@ Change remaining checklist:
 Run:
 
 ```powershell
-python -m compileall -q src news_impact
+python -m compileall -q src
 ```
 
 Expected: exit code 0.

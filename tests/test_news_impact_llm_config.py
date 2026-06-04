@@ -2,9 +2,9 @@ import json
 from dataclasses import replace
 from urllib import request
 
-from news_impact.llm_client import UrllibJsonTransport
-from news_impact.llm_config import LLMConfig, load_llm_config
-from news_impact.llm_smoke import check_llama_cpp_prerequisites
+from src.news_impact.llm_client import UrllibJsonTransport
+from src.news_impact.llm_config import LLMConfig, load_llm_config
+from src.news_impact.llm_smoke import check_llama_cpp_prerequisites
 
 
 def test_news_impact_llm_default_uses_openai_without_hardcoded_api_key():

@@ -92,7 +92,7 @@
 
 ## 5) News Impact Scoring Package
 
-`news_impact/` is now included as a standalone news/disclosure scoring module.
+`src/news_impact/` is now included as a standalone news/disclosure scoring module.
 It is operationally separate from the prediction model and can be run through
 the `stock-news-impact` console script.
 

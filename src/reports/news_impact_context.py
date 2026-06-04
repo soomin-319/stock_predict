@@ -7,10 +7,10 @@ from typing import Any
 
 import pandas as pd
 
-from news_impact.report import REPORT_DISCLAIMER
-from news_impact.schema import ImpactEvent
-from news_impact.scorer import aggregate_scores
-from news_impact.stock_factors.classifier import analyze_stock_factors
+from src.news_impact.report import REPORT_DISCLAIMER
+from src.news_impact.schema import ImpactEvent
+from src.news_impact.scorer import aggregate_scores
+from src.news_impact.stock_factors.classifier import analyze_stock_factors
 
 NEWS_IMPACT_COLUMNS = {
     "run_id": "news_impact_run_id",

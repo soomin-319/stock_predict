@@ -208,15 +208,15 @@ LightGBM이 설치되어 있으면 LightGBM을 쓰고, 없으면 sklearn `Gradie
 
 ## News Impact Scoring Package Update
 
-`news_impact/` has been added as a top-level vendored package migrated from
+`src/news_impact/` has been added as a vendored package under `src/` migrated from
 `stock-news-impact`.
 
 Key surfaces:
 
-- Package modules: `news_impact.pipeline`, `news_impact.collectors`,
-  `news_impact.scorer`, `news_impact.schema`, `news_impact.llm_client`, and
-  `news_impact.stock_factors.*`.
-- Console entry point: `stock-news-impact = news_impact.run:main`.
+- Package modules: `src.news_impact.pipeline`, `src.news_impact.collectors`,
+  `src.news_impact.scorer`, `src.news_impact.schema`, `src.news_impact.llm_client`, and
+  `src.news_impact.stock_factors.*`.
+- Console entry point: `stock-news-impact = src.news_impact.run:main`.
 - Example runtime files:
   - `configs/news_impact.example.json`
   - `data/news_impact/watchlist.example.csv`

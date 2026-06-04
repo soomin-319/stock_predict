@@ -7,7 +7,7 @@
 3. Keep tests deterministic by using sample CSVs and repo-local pytest cache/temp paths.
 4. Reduce fragmented feature-frame writes and duplicate formatter/cache paths.
 5. Avoid Korean mojibake normalization in this cleanup; string literal normalization should be a separate change with fixture updates.
-6. Keep the vendored `news_impact` package independent from the prediction policy: reports may enrich display output, but must not affect `predicted_return`, ranking, or buy/sell/hold decisions.
+6. Keep the vendored `src.news_impact` package independent from the prediction policy: reports may enrich display output, but must not affect `predicted_return`, ranking, or buy/sell/hold decisions.
 
 ## Near-Term Work
 

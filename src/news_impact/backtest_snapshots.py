@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from news_impact.backtester import (
+from src.news_impact.backtester import (
     BacktestObservation,
     BacktestSignal,
     PriceBar,
@@ -14,7 +14,7 @@ from news_impact.backtester import (
     match_signal_returns,
     summarize_by_bucket,
 )
-from news_impact.performance_validation import (
+from src.news_impact.performance_validation import (
     PerformanceCriteria,
     evaluate_independent_performance,
 )

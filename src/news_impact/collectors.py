@@ -11,9 +11,9 @@ from typing import Any, Callable, Protocol
 from urllib import request
 from urllib.parse import urlencode, urlparse
 
-from news_impact.env_config import load_api_keys
-from news_impact.market_clock import KST, KrxTradingCalendar, classify_market_session
-from news_impact.schema import DisclosureItem, NewsItem, compute_signal_at
+from src.news_impact.env_config import load_api_keys
+from src.news_impact.market_clock import KST, KrxTradingCalendar, classify_market_session
+from src.news_impact.schema import DisclosureItem, NewsItem, compute_signal_at
 
 
 _HANGUL_RE = re.compile(r"[가-힣]")

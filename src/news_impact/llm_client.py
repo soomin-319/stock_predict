@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable, Protocol
 from urllib import error as urlerror, request
 
-from news_impact.llm_config import LLMConfig
+from src.news_impact.llm_config import LLMConfig
 
 
 class LLMResponseError(RuntimeError):

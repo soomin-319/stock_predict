@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from news_impact.article_fetcher import ArticleFetchResult
-from news_impact.mapper import MappingCandidate
-from news_impact.schema import ImpactEvent, NewsItem
+from src.news_impact.article_fetcher import ArticleFetchResult
+from src.news_impact.mapper import MappingCandidate
+from src.news_impact.schema import ImpactEvent, NewsItem
 
 
 LLM_REQUIRED_KEYS = (

@@ -9,13 +9,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Protocol
 
-from news_impact.deduper import (
+from src.news_impact.deduper import (
     ClusteredItem,
     assign_cluster_ids,
     dedupe_disclosures,
     dedupe_news_items,
 )
-from news_impact.impact_judge import (
+from src.news_impact.impact_judge import (
     LLM_REQUIRED_KEYS,
     NewsAnalysisInput,
     build_news_user_prompt,
@@ -23,15 +23,15 @@ from news_impact.impact_judge import (
     detect_prompt_injection,
     judgment_to_impact_event,
 )
-from news_impact.llm_client import FileLLMResponseCache, LLMResponseError, LlamaCppClient
-from news_impact.llm_config import LLMConfig, load_llm_config
-from news_impact.mapper import MappingCandidate
-from news_impact.market_clock import KST
-from news_impact.ranking import rank_report_rows
-from news_impact.report import ReportRow, write_csv_report, write_json_report
-from news_impact.schema import DisclosureItem, ImpactEvent, NewsItem, RunAudit
-from news_impact.scorer import aggregate_scores
-from news_impact.semantic_clusterer import SemanticClusterLLM, assign_semantic_cluster_ids
+from src.news_impact.llm_client import FileLLMResponseCache, LLMResponseError, LlamaCppClient
+from src.news_impact.llm_config import LLMConfig, load_llm_config
+from src.news_impact.mapper import MappingCandidate
+from src.news_impact.market_clock import KST
+from src.news_impact.ranking import rank_report_rows
+from src.news_impact.report import ReportRow, write_csv_report, write_json_report
+from src.news_impact.schema import DisclosureItem, ImpactEvent, NewsItem, RunAudit
+from src.news_impact.scorer import aggregate_scores
+from src.news_impact.semantic_clusterer import SemanticClusterLLM, assign_semantic_cluster_ids
 
 
 SCORING_VERSION = "scoring.v1"

@@ -5,8 +5,8 @@ import re
 from dataclasses import replace
 from typing import Any, Iterable, Protocol
 
-from news_impact.llm_client import LLMResponseError
-from news_impact.schema import ImpactEvent
+from src.news_impact.llm_client import LLMResponseError
+from src.news_impact.schema import ImpactEvent
 
 
 SEMANTIC_CLUSTER_REQUIRED_KEYS = (

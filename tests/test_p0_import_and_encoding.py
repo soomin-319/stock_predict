@@ -88,8 +88,7 @@ def test_pytest_cache_uses_ignored_result_directory():
 def test_text_subprocess_calls_pin_utf8_decoding():
     checked = [
         path
-        for root in (Path("src"), Path("news_impact"))
-        for path in root.rglob("*.py")
+        for path in Path("src").rglob("*.py")
     ]
     offenders: list[str] = []
     for path in checked:
