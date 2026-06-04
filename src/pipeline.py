@@ -6,7 +6,11 @@ import logging
 import os
 import random
 import sys
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
+from time import perf_counter
+from typing import Any, Iterator
 
 import numpy as np
 import pandas as pd
@@ -254,48 +258,44 @@ def _build_combined_symbol_results(pred_df: pd.DataFrame, summary_csv: str | Non
     return output_build_combined_symbol_results(pred_df, summary_csv, out_path)
 
 
-def run_pipeline(
-    input_csv: str,
-    output_csv: str,
-    universe_csv: str | None = None,
-    report_json: str | None = None,
-    figure_dir: str = "reports/figures",
-    use_external: bool = True,
-    use_investor_context: bool = False,
-    dart_api_key: str | None = None,
-    dart_corp_map_csv: str | None = None,
-    config_json: str | None = None,
-    enable_investor_disclosure: bool = True,
-    openai_api_key: str | None = None,
-    openai_model: str | None = None,
-    naver_client_id: str | None = None,
-    naver_client_secret: str | None = None,
-    min_value_traded: float | None = None,
-    turnover_limit: float | None = None,
-    min_up_probability: float | None = None,
-    min_signal_score: float | None = None,
-    min_external_coverage_ratio: float | None = None,
-    min_investor_coverage_ratio: float | None = None,
-    portfolio_value: float | None = None,
-    max_daily_participation: float | None = None,
-    max_positions_per_market_type: int | None = None,
-    issue_summary_symbols: list[str] | None = None,
-    news_impact_report: str | None = None,
-    walk_forward_n_jobs: int | None = None,
-    model_n_jobs: int | None = None,
-    model_head_n_jobs: int | None = None,
-    context_raw_event_n_jobs: int | None = None,
-    issue_summary_n_jobs: int = 1,
-    symbol_figure_limit: int | None = 30,
-):
-    effective_openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
-    effective_openai_model = openai_model or os.getenv("OPENAI_MODEL") or ("gpt-5-mini" if effective_openai_api_key else None)
-    dart_api_key = dart_api_key or os.getenv("DART_API_KEY")
-    dart_corp_map_csv = dart_corp_map_csv or os.getenv("DART_CORP_MAP_CSV")
-    naver_client_id = naver_client_id or os.getenv("NAVER_CLIENT_ID")
-    naver_client_secret = naver_client_secret or os.getenv("NAVER_CLIENT_SECRET")
-    total_steps = 13
-    _print_progress(1, total_steps, "Loading app configuration")
+@dataclass(slots=True)
+class PipelineDiagnostics:
+    timings_seconds: dict[str, float] = field(default_factory=dict)
+    row_counts: dict[str, int] = field(default_factory=dict)
+
+    @contextmanager
+    def time_stage(self, name: str) -> Iterator[None]:
+        started = perf_counter()
+        try:
+            yield
+        finally:
+            self.timings_seconds[name] = self.timings_seconds.get(name, 0.0) + (perf_counter() - started)
+
+    def set_rows(self, name: str, frame: pd.DataFrame | None) -> None:
+        self.row_counts[name] = 0 if frame is None else int(len(frame))
+
+    def to_report(self, coverage_summary: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "timings_seconds": {k: round(float(v), 6) for k, v in self.timings_seconds.items()},
+            "row_counts": dict(self.row_counts),
+            "coverage_summary": coverage_summary,
+        }
+
+
+def _build_pipeline_overrides(
+    min_value_traded: float | None,
+    turnover_limit: float | None,
+    min_up_probability: float | None,
+    min_signal_score: float | None,
+    min_external_coverage_ratio: float | None,
+    min_investor_coverage_ratio: float | None,
+    portfolio_value: float | None,
+    max_daily_participation: float | None,
+    max_positions_per_market_type: int | None,
+    walk_forward_n_jobs: int | None,
+    model_n_jobs: int | None,
+    model_head_n_jobs: int | None,
+) -> dict[str, dict]:
     cfg_overrides: dict[str, dict] = {"backtest": {}, "training": {}}
     if min_value_traded is not None:
         cfg_overrides["backtest"]["min_value_traded"] = float(min_value_traded)
@@ -321,17 +321,19 @@ def run_pipeline(
         cfg_overrides["training"]["model_n_jobs"] = int(model_n_jobs)
     if model_head_n_jobs is not None:
         cfg_overrides["training"]["model_head_n_jobs"] = int(model_head_n_jobs)
-    cfg_overrides = {section: values for section, values in cfg_overrides.items() if values}
+    return {section: values for section, values in cfg_overrides.items() if values}
+
+
+def _load_pipeline_config_and_data(
+    input_csv: str,
+    universe_csv: str | None,
+    config_json: str | None,
+    cfg_overrides: dict[str, dict],
+) -> tuple[Any, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str] | None]:
     cfg = load_app_config(config_json, overrides=cfg_overrides or None)
     seed_everything(cfg.training.random_state)
-
-    _print_progress(2, total_steps, f"Loading input data: {input_csv}")
-
     raw = load_ohlcv_csv(input_csv)
     cleaned = clean_ohlcv(raw)
-
-    _print_progress(3, total_steps, "Applying data cleaning and universe filter")
-    requested_universe_symbols = None
     if universe_csv:
         universe = load_universe_symbols(universe_csv)
         requested_universe_symbols = list(universe)
@@ -339,8 +341,19 @@ def run_pipeline(
     else:
         requested_universe_symbols = sorted(cleaned["Symbol"].astype(str).unique().tolist())
         data = cleaned.copy()
+    return cfg, raw, cleaned, data, requested_universe_symbols
 
-    _print_progress(4, total_steps, "Adding investor context")
+
+def _prepare_pipeline_context(
+    data: pd.DataFrame,
+    use_investor_context: bool,
+    enable_investor_disclosure: bool,
+    dart_api_key: str | None,
+    dart_corp_map_csv: str | None,
+    naver_client_id: str | None,
+    naver_client_secret: str | None,
+    context_raw_event_n_jobs: int | None,
+) -> tuple[pd.DataFrame, dict, pd.DataFrame]:
     investor_context_coverage = {
         "enabled": False,
         "flow": {"requested": 0, "successful": 0, "failed": 0},
@@ -382,10 +395,11 @@ def run_pipeline(
             context_raw_df = pd.DataFrame(
                 columns=["Date", "Symbol", "source_type", "title", "published_at", "provider", "url", "raw_id"]
             )
+    return data, investor_context_coverage, context_raw_df
 
-    _print_progress(5, total_steps, "Building price features")
+
+def _build_pipeline_feature_matrix(data: pd.DataFrame, cfg: Any, use_external: bool) -> tuple[pd.DataFrame, dict, list[str]]:
     feat = build_features(data, cfg.feature)
-    _print_progress(6, total_steps, "Adding external market features")
     external_coverage = {"requested": 0, "successful": 0, "failed": 0, "fallback_used": 0, "details": []}
     if cfg.external.enabled and use_external:
         feat, external_coverage = add_external_market_features_with_coverage(feat, cfg.external.market_symbols)
@@ -393,23 +407,10 @@ def run_pipeline(
     feat = add_investment_signal_features(feat, cfg.investment_criteria)
     feat = feat.dropna(subset=["target_log_return"]).copy()
     feature_columns = _feature_columns(feat)
+    return feat, external_coverage, feature_columns
 
-    _print_progress(7, total_steps, "Running walk-forward validation")
-    folds, oof = walk_forward_validate_with_oof(feat, feature_columns, cfg.training)
-    effective_cfg = cfg.training
-    if not folds:
-        effective_cfg = _adaptive_training_cfg(cfg, feat)
-        folds, oof = walk_forward_validate_with_oof(feat, feature_columns, effective_cfg)
 
-    wf_summary = pd.DataFrame([f.metrics for f in folds]).mean().to_dict() if folds else {}
-
-    _print_progress(8, total_steps, "Evaluating baselines")
-    baseline_summary = evaluate_baselines(feat)
-
-    _print_progress(9, total_steps, "Using walk-forward OOF predictions")
-    if oof.empty:
-        raise RuntimeError("OOF predictions are empty. Increase data length or adjust training window.")
-
+def _pipeline_coverage_summary(cfg: Any, use_external: bool, external_coverage: dict, investor_context_coverage: dict) -> tuple[float, float, str]:
     external_coverage_ratio = (
         float(external_coverage.get("successful", 0)) / float(external_coverage.get("requested", 1) or 1)
         if use_external and external_coverage.get("requested", 0)
@@ -422,6 +423,29 @@ def run_pipeline(
         investor_successful += int(investor_context_coverage.get(key, {}).get("successful", 0))
     investor_coverage_ratio = float(investor_successful) / float(investor_requested or 1) if investor_requested else 1.0
     coverage_gate_status = _coverage_gate_status(cfg, external_coverage_ratio, investor_coverage_ratio)
+    return external_coverage_ratio, investor_coverage_ratio, coverage_gate_status
+
+
+def _run_pipeline_validation(
+    feat: pd.DataFrame,
+    feature_columns: list[str],
+    cfg: Any,
+    use_external: bool,
+    external_coverage: dict,
+    investor_context_coverage: dict,
+) -> dict[str, Any]:
+    folds, oof = walk_forward_validate_with_oof(feat, feature_columns, cfg.training)
+    if not folds:
+        effective_cfg = _adaptive_training_cfg(cfg, feat)
+        folds, oof = walk_forward_validate_with_oof(feat, feature_columns, effective_cfg)
+    wf_summary = pd.DataFrame([f.metrics for f in folds]).mean().to_dict() if folds else {}
+    baseline_summary = evaluate_baselines(feat)
+    if oof.empty:
+        raise RuntimeError("OOF predictions are empty. Increase data length or adjust training window.")
+
+    external_coverage_ratio, investor_coverage_ratio, coverage_gate_status = _pipeline_coverage_summary(
+        cfg, use_external, external_coverage, investor_context_coverage
+    )
     prediction_context = PredictionFrameContext(
         external_coverage_ratio=external_coverage_ratio,
         investor_coverage_ratio=investor_coverage_ratio,
@@ -438,17 +462,13 @@ def run_pipeline(
         investment_criteria=cfg.investment_criteria,
     )
     scored_oof["coverage_gate_status"] = coverage_gate_status
-
     tune_df, eval_df = _split_oof_for_tuning_and_eval(scored_oof, tune_ratio=0.7)
 
-    _print_progress(10, total_steps, "Tuning signal weights (train split)")
     tuned = tune_signal_weights(tune_df)
     cfg.signal.return_weight = tuned["return_weight"]
     cfg.signal.up_prob_weight = tuned["up_prob_weight"]
     cfg.signal.rel_strength_weight = tuned["rel_strength_weight"]
     cfg.signal.uncertainty_penalty = tuned["uncertainty_penalty"]
-
-    # ④: signal_score만 새 가중치로 갱신 (나머지 피처/이벤트 부스트는 불변)
     scored_oof["signal_score"] = (
         cfg.signal.return_weight * scored_oof["norm_return"]
         + cfg.signal.up_prob_weight * scored_oof["up_probability"]
@@ -459,11 +479,34 @@ def run_pipeline(
     scored_oof["signal_label"] = signal_label_series(scored_oof["signal_score"])
     scored_oof["coverage_gate_status"] = coverage_gate_status
     tune_df, eval_df = _split_oof_for_tuning_and_eval(scored_oof, tune_ratio=0.7)
-
-    _print_progress(11, total_steps, "Running backtest on holdout split and creating figures")
     backtest_input = eval_df if not eval_df.empty else scored_oof
     backtest = run_long_only_topk_backtest(backtest_input, cfg.backtest)
     backtest_series = pd.DataFrame(backtest.get("series", []))
+    return {
+        "folds": folds,
+        "oof": oof,
+        "wf_summary": wf_summary,
+        "baseline_summary": baseline_summary,
+        "prediction_context": prediction_context,
+        "scored_oof": scored_oof,
+        "tune_df": tune_df,
+        "eval_df": eval_df,
+        "tuned": tuned,
+        "backtest_input": backtest_input,
+        "backtest": backtest,
+        "backtest_series": backtest_series,
+        "external_coverage_ratio": external_coverage_ratio,
+        "investor_coverage_ratio": investor_coverage_ratio,
+        "coverage_gate_status": coverage_gate_status,
+    }
+
+
+def _save_pipeline_figures(
+    backtest_series: pd.DataFrame,
+    scored_oof: pd.DataFrame,
+    figure_dir: str,
+    symbol_figure_limit: int | None,
+) -> tuple[Path, dict[str, Any]]:
     figure_dir_path = resolve_output_dir(figure_dir)
     fig_paths = save_backtest_figures(backtest_series, str(figure_dir_path))
     signal_hist = save_signal_histogram(scored_oof, str(figure_dir_path))
@@ -475,8 +518,32 @@ def run_pipeline(
         str(figure_dir_path),
         max_symbols=symbol_figure_limit,
     )
+    figure_artifacts = {
+        **fig_paths,
+        "signal_hist": signal_hist,
+        "actual_vs_predicted": actual_vs_pred,
+        "actual_vs_predicted_price": actual_vs_pred_price,
+        **diagnostic_figs,
+        **symbol_level_figs,
+    }
+    return figure_dir_path, figure_artifacts
 
-    _print_progress(12, total_steps, "Training final model and creating latest predictions")
+
+def _predict_pipeline_latest(
+    feat: pd.DataFrame,
+    feature_columns: list[str],
+    cfg: Any,
+    scored_oof: pd.DataFrame,
+    prediction_context: PredictionFrameContext,
+    coverage_gate_status: str,
+    context_raw_df: pd.DataFrame,
+    effective_openai_api_key: str | None,
+    effective_openai_model: str | None,
+    issue_summary_symbols: list[str] | None,
+    issue_summary_n_jobs: int,
+    news_impact_report: str | None,
+    figure_dir_path: Path,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
     lookback = int(getattr(cfg.training, "final_model_lookback_days", 0) or 0)
     if lookback > 0:
@@ -520,15 +587,42 @@ def run_pipeline(
         pred_df = append_generated_news_impact_context(pred_df, context_raw_df)
     pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True))
     pred_df["권고"] = pred_df["recommendation"]
+    symbol_summary_artifacts = save_symbol_summary_artifacts(pred_df, scored_oof, str(figure_dir_path))
+    oof_diagnostics = _compute_oof_diagnostics(scored_oof)
+    return pred_df, latest, symbol_summary_artifacts, oof_diagnostics
+
+
+def _write_pipeline_artifacts(
+    pred_df: pd.DataFrame,
+    latest: pd.DataFrame,
+    data: pd.DataFrame,
+    cfg: Any,
+    feature_columns: list[str],
+    requested_universe_symbols: list[str] | None,
+    context_raw_df: pd.DataFrame,
+    validation_result: dict[str, Any],
+    external_coverage: dict,
+    investor_context_coverage: dict,
+    figure_dir_path: Path,
+    figure_artifacts: dict[str, Any],
+    symbol_summary_artifacts: dict,
+    oof_diagnostics: dict,
+    report_json: str | None,
+    diagnostics: PipelineDiagnostics,
+) -> None:
+    scored_oof = validation_result["scored_oof"]
+    backtest = validation_result["backtest"]
+    backtest_input = validation_result["backtest_input"]
+    tune_df = validation_result["tune_df"]
+    tuned = validation_result["tuned"]
+    external_coverage_ratio = validation_result["external_coverage_ratio"]
+    investor_coverage_ratio = validation_result["investor_coverage_ratio"]
+    coverage_gate_status = validation_result["coverage_gate_status"]
 
     bt_summary_cols = _backtest_summary_fields(backtest)
     for k, v in bt_summary_cols.items():
         pred_df[k] = v
 
-    symbol_summary_artifacts = save_symbol_summary_artifacts(pred_df, scored_oof, str(figure_dir_path))
-    oof_diagnostics = _compute_oof_diagnostics(scored_oof)
-
-    _print_progress(13, total_steps, "Saving artifacts")
     pred_detail = pred_df.drop(columns=["Close"], errors="ignore")
     overlap_cols = [c for c in pred_detail.columns if c in latest.columns and c not in {"Date", "Symbol"}]
     detail_df = latest.merge(pred_detail.drop(columns=overlap_cols, errors="ignore"), on=["Date", "Symbol"], how="left")
@@ -565,9 +659,9 @@ def run_pipeline(
 
     detail_path = resolve_output_path("result_detail.csv")
     detail_path = _safe_to_csv(detail_df, detail_path)
-
     simple_path = resolve_output_path("result_simple.csv")
     simple_path = _safe_to_csv(simple_df, simple_path)
+
     issue_snapshot = _build_issue_summary_snapshot(pred_df)
     export_context_df = context_raw_df.copy()
     if not export_context_df.empty and "Date" in export_context_df.columns:
@@ -593,6 +687,7 @@ def run_pipeline(
         news_df["url"] = ""
         news_df["raw_id"] = ""
     news_path = _safe_to_csv(news_df, news_path)
+
     disclosure_path = resolve_output_path("result_disclosure.csv")
     disclosure_df = (
         export_context_df[export_context_df["source_type"].astype(str) == "disclosure"].copy()
@@ -613,13 +708,18 @@ def run_pipeline(
         disclosure_df["raw_id"] = ""
     disclosure_path = _safe_to_csv(disclosure_df, disclosure_path)
 
+    coverage_report_summary = {
+        "external_coverage_ratio": external_coverage_ratio,
+        "investor_coverage_ratio": investor_coverage_ratio,
+        "coverage_gate_status": coverage_gate_status,
+    }
     report = {
         "universe_name": cfg.universe.name,
         "universe_size_used": int(data["Symbol"].nunique()),
         "feature_count": len(feature_columns),
         "config": app_config_to_dict(cfg),
-        "walk_forward": wf_summary,
-        "baselines": baseline_summary,
+        "walk_forward": validation_result["wf_summary"],
+        "baselines": validation_result["baseline_summary"],
         "tuned_signal": tuned,
         "tuning_samples": int(len(tune_df)),
         "backtest_samples": int(len(backtest_input)),
@@ -632,6 +732,7 @@ def run_pipeline(
             "min_value_traded": cfg.backtest.min_value_traded,
             "status": coverage_gate_status,
         },
+        "diagnostics": diagnostics.to_report(coverage_report_summary),
         "oof_diagnostics": oof_diagnostics,
         "probability_calibration": probability_calibration_metrics(
             (scored_oof["target_log_return"] > 0).astype(int).values,
@@ -657,12 +758,7 @@ def run_pipeline(
             "result_news_csv": str(news_path),
             "result_disclosure_csv": str(disclosure_path),
             "figure_dir": str(figure_dir_path),
-            **fig_paths,
-            "signal_hist": signal_hist,
-            "actual_vs_predicted": actual_vs_pred,
-            "actual_vs_predicted_price": actual_vs_pred_price,
-            **diagnostic_figs,
-            **symbol_level_figs,
+            **figure_artifacts,
             **symbol_summary_artifacts,
         },
     }
@@ -676,8 +772,166 @@ def run_pipeline(
         report_path = resolve_output_path(report_json)
         report_path.write_text(json.dumps(_round_floats(report, 3), indent=2, ensure_ascii=False))
 
-    _print_prediction_console_summary(pred_df)
 
+def run_pipeline(
+    input_csv: str,
+    output_csv: str,
+    universe_csv: str | None = None,
+    report_json: str | None = None,
+    figure_dir: str = "reports/figures",
+    use_external: bool = True,
+    use_investor_context: bool = False,
+    dart_api_key: str | None = None,
+    dart_corp_map_csv: str | None = None,
+    config_json: str | None = None,
+    enable_investor_disclosure: bool = True,
+    openai_api_key: str | None = None,
+    openai_model: str | None = None,
+    naver_client_id: str | None = None,
+    naver_client_secret: str | None = None,
+    min_value_traded: float | None = None,
+    turnover_limit: float | None = None,
+    min_up_probability: float | None = None,
+    min_signal_score: float | None = None,
+    min_external_coverage_ratio: float | None = None,
+    min_investor_coverage_ratio: float | None = None,
+    portfolio_value: float | None = None,
+    max_daily_participation: float | None = None,
+    max_positions_per_market_type: int | None = None,
+    issue_summary_symbols: list[str] | None = None,
+    news_impact_report: str | None = None,
+    walk_forward_n_jobs: int | None = None,
+    model_n_jobs: int | None = None,
+    model_head_n_jobs: int | None = None,
+    context_raw_event_n_jobs: int | None = None,
+    issue_summary_n_jobs: int = 1,
+    symbol_figure_limit: int | None = 30,
+):
+    effective_openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+    effective_openai_model = openai_model or os.getenv("OPENAI_MODEL") or ("gpt-5-mini" if effective_openai_api_key else None)
+    dart_api_key = dart_api_key or os.getenv("DART_API_KEY")
+    dart_corp_map_csv = dart_corp_map_csv or os.getenv("DART_CORP_MAP_CSV")
+    naver_client_id = naver_client_id or os.getenv("NAVER_CLIENT_ID")
+    naver_client_secret = naver_client_secret or os.getenv("NAVER_CLIENT_SECRET")
+
+    diagnostics = PipelineDiagnostics()
+    total_steps = 13
+
+    _print_progress(1, total_steps, "Loading app configuration")
+    cfg_overrides = _build_pipeline_overrides(
+        min_value_traded,
+        turnover_limit,
+        min_up_probability,
+        min_signal_score,
+        min_external_coverage_ratio,
+        min_investor_coverage_ratio,
+        portfolio_value,
+        max_daily_participation,
+        max_positions_per_market_type,
+        walk_forward_n_jobs,
+        model_n_jobs,
+        model_head_n_jobs,
+    )
+    _print_progress(2, total_steps, f"Loading input data: {input_csv}")
+    _print_progress(3, total_steps, "Applying data cleaning and universe filter")
+    with diagnostics.time_stage("load_config_and_inputs"):
+        cfg, raw, cleaned, data, requested_universe_symbols = _load_pipeline_config_and_data(
+            input_csv=input_csv,
+            universe_csv=universe_csv,
+            config_json=config_json,
+            cfg_overrides=cfg_overrides,
+        )
+    diagnostics.set_rows("raw_input", raw)
+    diagnostics.set_rows("cleaned_input", cleaned)
+
+    _print_progress(4, total_steps, "Adding investor context")
+    with diagnostics.time_stage("prepare_context"):
+        data, investor_context_coverage, context_raw_df = _prepare_pipeline_context(
+            data=data,
+            use_investor_context=use_investor_context,
+            enable_investor_disclosure=enable_investor_disclosure,
+            dart_api_key=dart_api_key,
+            dart_corp_map_csv=dart_corp_map_csv,
+            naver_client_id=naver_client_id,
+            naver_client_secret=naver_client_secret,
+            context_raw_event_n_jobs=context_raw_event_n_jobs,
+        )
+    diagnostics.set_rows("context_input", data)
+    diagnostics.set_rows("context_raw_events", context_raw_df)
+
+    _print_progress(5, total_steps, "Building price features")
+    _print_progress(6, total_steps, "Adding external market features")
+    with diagnostics.time_stage("build_feature_matrix"):
+        feat, external_coverage, feature_columns = _build_pipeline_feature_matrix(data, cfg, use_external)
+    diagnostics.set_rows("features", feat)
+
+    _print_progress(7, total_steps, "Running walk-forward validation")
+    _print_progress(8, total_steps, "Evaluating baselines")
+    _print_progress(9, total_steps, "Using walk-forward OOF predictions")
+    _print_progress(10, total_steps, "Tuning signal weights (train split)")
+    with diagnostics.time_stage("validation_and_tuning"):
+        validation_result = _run_pipeline_validation(
+            feat=feat,
+            feature_columns=feature_columns,
+            cfg=cfg,
+            use_external=use_external,
+            external_coverage=external_coverage,
+            investor_context_coverage=investor_context_coverage,
+        )
+    scored_oof = validation_result["scored_oof"]
+    diagnostics.set_rows("oof_predictions", scored_oof)
+
+    _print_progress(11, total_steps, "Running backtest on holdout split and creating figures")
+    with diagnostics.time_stage("create_figures"):
+        figure_dir_path, figure_artifacts = _save_pipeline_figures(
+            validation_result["backtest_series"],
+            scored_oof,
+            figure_dir,
+            symbol_figure_limit,
+        )
+
+    _print_progress(12, total_steps, "Training final model and creating latest predictions")
+    with diagnostics.time_stage("train_final_and_predict_latest"):
+        pred_df, latest, symbol_summary_artifacts, oof_diagnostics = _predict_pipeline_latest(
+            feat=feat,
+            feature_columns=feature_columns,
+            cfg=cfg,
+            scored_oof=scored_oof,
+            prediction_context=validation_result["prediction_context"],
+            coverage_gate_status=validation_result["coverage_gate_status"],
+            context_raw_df=context_raw_df,
+            effective_openai_api_key=effective_openai_api_key,
+            effective_openai_model=effective_openai_model,
+            issue_summary_symbols=issue_summary_symbols,
+            issue_summary_n_jobs=issue_summary_n_jobs,
+            news_impact_report=news_impact_report,
+            figure_dir_path=figure_dir_path,
+        )
+    diagnostics.set_rows("latest_feature_rows", latest)
+    diagnostics.set_rows("latest_predictions", pred_df)
+
+    _print_progress(13, total_steps, "Saving artifacts")
+    with diagnostics.time_stage("save_pipeline_artifacts"):
+        _write_pipeline_artifacts(
+            pred_df=pred_df,
+            latest=latest,
+            data=data,
+            cfg=cfg,
+            feature_columns=feature_columns,
+            requested_universe_symbols=requested_universe_symbols,
+            context_raw_df=context_raw_df,
+            validation_result=validation_result,
+            external_coverage=external_coverage,
+            investor_context_coverage=investor_context_coverage,
+            figure_dir_path=figure_dir_path,
+            figure_artifacts=figure_artifacts,
+            symbol_summary_artifacts=symbol_summary_artifacts,
+            oof_diagnostics=oof_diagnostics,
+            report_json=report_json,
+            diagnostics=diagnostics,
+        )
+
+    _print_prediction_console_summary(pred_df)
 
 def build_cli_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Stock next-day prediction pipeline")
