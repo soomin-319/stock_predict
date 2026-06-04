@@ -6,18 +6,18 @@ from pathlib import Path
 from typing import Sequence
 from urllib.error import URLError
 
-from news_impact.backtest_snapshots import (
+from src.news_impact.backtest_snapshots import (
     build_observations_from_snapshots,
     build_validation_report,
     load_price_bar_snapshot,
     load_signal_snapshot,
     write_validation_report,
 )
-from news_impact.llm_config import load_llm_config
-from news_impact.llm_smoke import check_llama_cpp_prerequisites, run_llm_smoke
-from news_impact.performance_validation import PerformanceCriteria
-from news_impact.pipeline import DailyPipelineInputs, run_daily_pipeline
-from news_impact.report import ReportRow, write_csv_report, write_json_report
+from src.news_impact.llm_config import load_llm_config
+from src.news_impact.llm_smoke import check_llama_cpp_prerequisites, run_llm_smoke
+from src.news_impact.performance_validation import PerformanceCriteria
+from src.news_impact.pipeline import DailyPipelineInputs, run_daily_pipeline
+from src.news_impact.report import ReportRow, write_csv_report, write_json_report
 
 
 def main(argv: Sequence[str] | None = None) -> int:

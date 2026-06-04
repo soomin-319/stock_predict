@@ -78,7 +78,7 @@ Do not move background process registry, Flask app creation, ngrok launch, or li
 
 Run at minimum:
 
-- `python -m compileall -q src news_impact`
+- `python -m compileall -q src`
 - `pytest -q --basetemp result/.pytest_tmp/optimization_a`
 
 Add/update tests for:

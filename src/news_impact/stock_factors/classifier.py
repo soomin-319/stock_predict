@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from news_impact.stock_factors.factor_taxonomy import FACTOR_KEYWORDS, FACTOR_LABELS, FACTOR_ORDER
-from news_impact.stock_factors.freshness import detect_freshness_items, freshness_required
-from news_impact.stock_factors.impact_rules import (
+from src.news_impact.stock_factors.factor_taxonomy import FACTOR_KEYWORDS, FACTOR_LABELS, FACTOR_ORDER
+from src.news_impact.stock_factors.freshness import detect_freshness_items, freshness_required
+from src.news_impact.stock_factors.impact_rules import (
     build_impact_path,
     determine_affected_markets,
     determine_direction,
     determine_horizons,
     determine_sector_impacts,
 )
-from news_impact.stock_factors.output_schema import Direction, FactorCode, StockFactorAnalysis
+from src.news_impact.stock_factors.output_schema import Direction, FactorCode, StockFactorAnalysis
 
 
 _BASE_CAUTIONS = (

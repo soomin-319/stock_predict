@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from news_impact.report import ReportRow
+from src.news_impact.report import ReportRow
 
 
 def compute_sector_neutral_score(

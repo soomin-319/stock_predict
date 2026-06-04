@@ -2,7 +2,7 @@
 
 작성일: 2026-06-02 KST  
 대상 브랜치: `codex/kospi200-high-score-recommendations`  
-범위: `src/`, `news_impact/`, `tests/`, 설정/데이터/문서 일부
+범위: `src/`, `src/news_impact/`, `tests/`, 설정/데이터/문서 일부
 
 ## 요약
 

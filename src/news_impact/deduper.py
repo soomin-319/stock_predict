@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, TypeVar
 
-from news_impact.schema import DisclosureItem, NewsItem
+from src.news_impact.schema import DisclosureItem, NewsItem
 
 
 T = TypeVar("T")

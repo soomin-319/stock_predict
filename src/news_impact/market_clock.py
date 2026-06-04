@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Protocol
 
-from news_impact.schema import MarketSession
+from src.news_impact.schema import MarketSession
 
 
 KST = timezone(timedelta(hours=9), "Asia/Seoul")

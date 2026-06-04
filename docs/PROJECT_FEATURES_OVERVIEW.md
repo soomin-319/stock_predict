@@ -83,8 +83,8 @@
 - 예상 수익률, 매수/매도/관망 신호, 모델 피처에는 반영하지 않음
 
 
-### 4.5 News Impact scoring (`news_impact/`)
-- Vendored top-level package migrated from `stock-news-impact`.
+### 4.5 News Impact scoring (`src/news_impact/`)
+- Vendored package under `src/` migrated from `stock-news-impact`.
 - Standalone console script: `stock-news-impact`.
 - Example inputs:
   - `configs/news_impact.example.json`
@@ -184,6 +184,6 @@
 - 파이프라인 E2E 스모크 실행
 - 외부 지표 다운로드 실패 시 graceful 동작
 - Optional news-impact report joining stays display-only and no-op safe when report input is missing or invalid (`tests/test_news_impact_context.py`)
-- Vendored `news_impact` package import/package metadata is covered by `tests/test_news_impact_full_package.py`
+- Vendored `src.news_impact` package import/package metadata is covered by `tests/test_news_impact_full_package.py`
 
 ---

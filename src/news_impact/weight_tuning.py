@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from news_impact.backtester import BacktestMetrics
+from src.news_impact.backtester import BacktestMetrics
 
 
 WEIGHT_CANDIDATE_SCHEMA = "stock-news-impact.weight-candidates.v1"

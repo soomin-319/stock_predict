@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from news_impact.schema import ImpactEvent
+from src.news_impact.schema import ImpactEvent
 
 
 @dataclass(frozen=True)

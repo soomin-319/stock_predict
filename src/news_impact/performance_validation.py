@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from news_impact.backtester import BacktestMetrics
+from src.news_impact.backtester import BacktestMetrics
 
 
 @dataclass(frozen=True)

@@ -34,7 +34,7 @@ Tests use pytest, with cache and temporary files configured under ignored `resul
 
 ## News Impact Scoring Module
 
-The vendored `news_impact` package is the migrated `stock-news-impact` news/disclosure scoring module. Keep the original news collection principle: Korean news first, Korean company/industry/search terms by default, and non-Korean or overseas media only when explicitly needed. Within `stock_predict`, news impact data is display/review context only and must not alter `predicted_return`, expected-return ranking, recommendation, or automated signal decisions.
+The vendored `src.news_impact` package is the migrated `stock-news-impact` news/disclosure scoring module. Keep the original news collection principle: Korean news first, Korean company/industry/search terms by default, and non-Korean or overseas media only when explicitly needed. Within `stock_predict`, news impact data is display/review context only and must not alter `predicted_return`, expected-return ranking, recommendation, or automated signal decisions.
 
 ## Data, Outputs, and External Integrations
 

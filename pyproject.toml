@@ -25,10 +25,11 @@ dev = ["pytest"]
 [project.scripts]
 stock-predict = "src.pipeline:main"
 stock-predict-kakao = "src.chatbot.kakao_colab_bot:main"
-stock-news-impact = "news_impact.run:main"
+stock-news-impact = "src.news_impact.run:main"
 
-[tool.setuptools]
-packages = ["src", "src.chatbot", "src.config", "src.data", "src.domain", "src.features", "src.models", "src.validation", "src.inference", "src.reports", "src.recommendation", "news_impact", "news_impact.stock_factors"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
 
 [tool.pytest.ini_options]
 cache_dir = "result/.pytest_cache"

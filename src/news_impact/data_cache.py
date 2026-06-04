@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from news_impact.schema import DisclosureItem, NewsItem
+from src.news_impact.schema import DisclosureItem, NewsItem
 
 
 class DataCache:

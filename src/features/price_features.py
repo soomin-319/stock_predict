@@ -4,6 +4,19 @@ import numpy as np
 import pandas as pd
 
 from src.config.settings import FeatureConfig
+from src.features.feature_selection import (
+    DISPLAY_ONLY_CONTEXT_COLUMNS,
+    FEATURE_COLUMN_BASE,
+    FEATURE_COLUMN_PREFIXES,
+    MODEL_FEATURE_COLUMN_BASE,
+    display_context_columns,
+    select_feature_columns,
+)
+from src.features.technical_indicators import (
+    compute_macd as _compute_macd,
+    compute_rsi as _compute_rsi,
+    rolling_zscore as _rolling_zscore,
+)
 
 
 WARNING_LEVEL_MAP = {
@@ -19,144 +32,6 @@ WARNING_LEVEL_MAP = {
     "위험": 3.0,
     "investment_risk": 3.0,
 }
-
-
-FEATURE_COLUMN_PREFIXES = (
-    "ret_",
-    "ma_",
-    "close_to_ma_",
-    "vol_",
-    "ks",
-    "kq",
-    "gspc",
-    "ixic",
-    "nq_f",
-    "sox",
-    "vix",
-    "krw",
-    "tnx",
-)
-
-FEATURE_COLUMN_BASE = frozenset(
-    {
-        "daily_return",
-        "gap_return",
-        "intraday_return",
-        "range_pct",
-        "vol_ratio_20",
-        "rsi_14",
-        "macd",
-        "macd_signal",
-        "macd_hist",
-        "atr_14",
-        "stoch_k",
-        "stoch_d",
-        "cci_20",
-        "obv",
-        "obv_change_5d",
-        "value_traded",
-        "turnover_rank_daily",
-        "is_top_turnover_3",
-        "is_top_turnover_10",
-        "market_type_kospi",
-        "market_type_kosdaq",
-        "market_type_konex",
-        "venue_krx",
-        "venue_nxt",
-        "session_regular",
-        "session_premarket",
-        "session_aftermarket",
-        "session_offhours",
-        "days_since_listing",
-        "is_newly_listed",
-        "is_newly_listed_60d",
-        "individual_net_buy",
-        "foreign_net_buy",
-        "institution_net_buy",
-        "foreign_ownership_ratio",
-        "program_trading_flow",
-        "disclosure_score",
-        "news_sentiment",
-        "news_relevance_score",
-        "news_impact_score",
-        "news_article_count",
-        "foreign_buy_signal",
-        "institution_buy_signal",
-        "smart_money_buy_signal",
-        "foreign_buy_ratio",
-        "institution_buy_ratio",
-        "smart_money_strength",
-        "foreign_net_buy_z20",
-        "institution_net_buy_z20",
-        "foreign_net_buy_3d",
-        "foreign_net_buy_5d",
-        "institution_net_buy_3d",
-        "institution_net_buy_5d",
-        "news_positive_signal",
-        "news_negative_signal",
-        "close_to_52w_high",
-        "near_52w_high_flag",
-        "breakout_52w_flag",
-        "leader_confirmation_flag",
-        "rsi_pullback_buy_flag",
-        "rsi_overbought_sell_flag",
-        "investor_event_score",
-        "limit_hit_up_flag",
-        "limit_hit_down_flag",
-        "limit_event_flag",
-        "pbr",
-        "per",
-        "roe",
-        "dividend_yield",
-        "buyback_flag",
-        "share_cancellation_flag",
-        "shareholder_return_score",
-        "short_sell_event_score",
-        "is_top_turnover_15",
-        "foreign_high_conviction_buy_flag",
-        "institution_high_conviction_buy_flag",
-        "dual_high_conviction_buy_flag",
-        "distance_to_52w_high",
-        "nasdaq_tailwind_flag",
-        "nasdaq_headwind_flag",
-        "rsi_buy_watch_flag",
-        "news_same_day_signal",
-        "disclosure_same_day_signal",
-        "jongbae_score",
-    }
-)
-
-
-DISPLAY_ONLY_CONTEXT_COLUMNS = frozenset(
-    {
-        "disclosure_score",
-        "news_sentiment",
-        "news_relevance_score",
-        "news_impact_score",
-        "news_article_count",
-        "news_positive_signal",
-        "news_negative_signal",
-        "news_same_day_signal",
-        "disclosure_same_day_signal",
-        # Composite score includes news/disclosure inputs, so it is context-only.
-        "investor_event_score",
-    }
-)
-
-MODEL_FEATURE_COLUMN_BASE = FEATURE_COLUMN_BASE - DISPLAY_ONLY_CONTEXT_COLUMNS
-
-
-def select_feature_columns(df: pd.DataFrame) -> list[str]:
-    return [
-        c
-        for c in df.columns
-        if c not in DISPLAY_ONLY_CONTEXT_COLUMNS
-        and (c.startswith(FEATURE_COLUMN_PREFIXES) or c in MODEL_FEATURE_COLUMN_BASE)
-    ]
-
-
-def display_context_columns(df: pd.DataFrame) -> list[str]:
-    return [c for c in df.columns if c in DISPLAY_ONLY_CONTEXT_COLUMNS]
 
 
 def _coerce_numeric_series(df: pd.DataFrame, aliases: list[str], default: float = 0.0) -> pd.Series:
@@ -201,59 +76,6 @@ def _warning_level_series(df: pd.DataFrame) -> pd.Series:
     normalized = values.astype(str).str.strip().str.lower()
     mapped = normalized.map(WARNING_LEVEL_MAP)
     return mapped.fillna(0.0).astype(float)
-
-
-def _compute_rsi(close: pd.Series, period: int) -> pd.Series:
-    delta = close.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    return (100 - (100 / (1 + rs))).fillna(50)
-
-
-def _compute_macd(close: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
-    ema12 = close.ewm(span=12, adjust=False).mean()
-    ema26 = close.ewm(span=26, adjust=False).mean()
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9, adjust=False).mean()
-    hist = macd - signal
-    return macd, signal, hist
-
-
-def _compute_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
-    tr1 = high - low
-    tr2 = (high - close.shift(1)).abs()
-    tr3 = (low - close.shift(1)).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    return tr.rolling(period).mean()
-
-
-def _compute_stochastic(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> tuple[pd.Series, pd.Series]:
-    ll = low.rolling(period).min()
-    hh = high.rolling(period).max()
-    k = 100 * (close - ll) / (hh - ll + 1e-9)
-    d = k.rolling(3).mean()
-    return k, d
-
-
-def _compute_cci(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 20) -> pd.Series:
-    tp = (high + low + close) / 3
-    sma = tp.rolling(period).mean()
-    mad = tp.rolling(period).apply(lambda x: np.mean(np.abs(x - np.mean(x))), raw=True)
-    return (tp - sma) / (0.015 * mad.replace(0, np.nan))
-
-
-def _compute_obv(close: pd.Series, volume: pd.Series) -> pd.Series:
-    direction = np.sign(close.diff().fillna(0))
-    return (direction * volume.fillna(0)).cumsum()
-
-
-def _rolling_zscore(series: pd.Series, window: int) -> pd.Series:
-    mean = series.rolling(window).mean()
-    std = series.rolling(window).std().replace(0, np.nan)
-    return ((series - mean) / std).replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
 
 def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:

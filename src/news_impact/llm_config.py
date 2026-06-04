@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from news_impact.env_config import find_dotenv, load_dotenv
+from src.news_impact.env_config import find_dotenv, load_dotenv
 
 
 OLLAMA_ONLY_KEYS = {"ollama_base_url", "ollama_model"}

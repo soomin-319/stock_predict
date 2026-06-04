@@ -121,7 +121,7 @@ It reads cached predictions from `result/result_simple.csv`, starts background p
 
 ## News Impact Scoring Module
 
-This repository now vendors the full `news_impact` package from `stock-news-impact` as a top-level package. It can run independently through the `stock-news-impact` console entry point after editable install.
+This repository now vendors the full `src.news_impact` package from `stock-news-impact` under the main `src` package. It can run independently through the `stock-news-impact` console entry point after editable install.
 
 Example files:
 
@@ -139,7 +139,7 @@ stock-news-impact --help
 
 ## Environment Variables
 
-- `OPENAI_API_KEY`, `OPENAI_MODEL`: issue/news summary generation; `news_impact` also uses `OPENAI_API_KEY` by default.
+- `OPENAI_API_KEY`, `OPENAI_MODEL`: issue/news summary generation; `src.news_impact` also uses `OPENAI_API_KEY` by default.
 - `DART_API_KEY`, `DART_CORP_MAP_CSV`: disclosure context.
 - `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`: Naver news context.
 

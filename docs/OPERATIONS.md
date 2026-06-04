@@ -10,7 +10,7 @@ Artifacts are written under `result/` even when the CLI receives a path outside 
 
 ## News Impact Scoring
 
-`news_impact/` is vendored as a standalone package and installs the
+`src/news_impact/` is vendored as a standalone package and installs the
 `stock-news-impact` console entry point.
 
 Prepare local config from examples:
@@ -89,7 +89,7 @@ The output is one reference material for a user's own investment review. The ope
 
 ## Environment Variables
 
-- `OPENAI_API_KEY`, `OPENAI_MODEL`: issue/news summaries; `news_impact` uses
+- `OPENAI_API_KEY`, `OPENAI_MODEL`: issue/news summaries; `src.news_impact` uses
   `OPENAI_API_KEY` by default
 - `DART_API_KEY`, `DART_CORP_MAP_CSV`: DART disclosure context
 - `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`: Naver news context

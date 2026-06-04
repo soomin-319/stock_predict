@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from news_impact.stock_factors.output_schema import FactorCode
+from src.news_impact.stock_factors.output_schema import FactorCode
 
 
 FACTOR_KEYWORDS: dict[FactorCode, tuple[str, ...]] = {

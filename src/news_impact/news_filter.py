@@ -4,8 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Iterable
 
-from news_impact.mapper import CompanyMapper, MappingCandidate
-from news_impact.schema import NewsItem
+from src.news_impact.mapper import CompanyMapper, MappingCandidate
+from src.news_impact.schema import NewsItem
 
 
 @dataclass(frozen=True)

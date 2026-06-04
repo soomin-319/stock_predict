@@ -1,10 +1,11 @@
 ﻿from pathlib import Path
+import tomllib
 
 
 def test_news_impact_full_package_importable_with_internal_imports():
-    from news_impact.pipeline import DailyPipelineInputs, run_daily_pipeline
-    from news_impact.schema import ImpactEvent, NewsItem
-    from news_impact.stock_factors.classifier import classify_factors
+    from src.news_impact.pipeline import DailyPipelineInputs, run_daily_pipeline
+    from src.news_impact.schema import ImpactEvent, NewsItem
+    from src.news_impact.stock_factors.classifier import classify_factors
 
     assert DailyPipelineInputs.__name__ == "DailyPipelineInputs"
     assert callable(run_daily_pipeline)
@@ -13,12 +14,14 @@ def test_news_impact_full_package_importable_with_internal_imports():
     assert callable(classify_factors)
 
 
-def test_pyproject_packages_include_migrated_news_impact_package():
-    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+def test_pyproject_package_discovery_includes_migrated_news_impact_package():
+    pyproject_text = Path("pyproject.toml").read_text(encoding="utf-8")
+    pyproject = tomllib.loads(pyproject_text)
 
-    assert '"news_impact"' in pyproject
-    assert '"news_impact.stock_factors"' in pyproject
-    assert 'stock-news-impact = "news_impact.run:main"' in pyproject
+    package_find = pyproject["tool"]["setuptools"]["packages"]["find"]
+    assert package_find["where"] == ["."]
+    assert package_find["include"] == ["src*"]
+    assert pyproject["project"]["scripts"]["stock-news-impact"] == "src.news_impact.run:main"
 
 
 def test_news_impact_runtime_examples_are_migrated_without_private_config():

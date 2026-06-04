@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from news_impact.global_proxy_loader import GlobalMarketProxy
+from src.news_impact.global_proxy_loader import GlobalMarketProxy
 
 
 @dataclass(frozen=True)

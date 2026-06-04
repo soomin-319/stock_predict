@@ -2,7 +2,7 @@
 
 작성일: 2026-06-04  
 대상: `C:\Users\카운\Desktop\stock_predict`  
-범위: `src/`, `news_impact/`, `tests/`, 설정/문서/실행 흐름
+범위: `src/`, `src/news_impact/`, `tests/`, 설정/문서/실행 흐름
 
 > 본 프로젝트 산출물은 리서치/운영 보조 자료이며 투자 조언 또는 자동매매 시스템이 아니다. 특히 `predicted_return` 기반 매수/매도/관망 정책과 뉴스/공시의 display-only 원칙은 최적화 과정에서도 유지해야 한다.
 
@@ -25,7 +25,7 @@
   - `encoding="utf-8"`, `errors="replace"`
   - child env에 `PYTHONUTF8=1`, `PYTHONIOENCODING=utf-8` 주입
 - [x] 전체 검증 완료
-  - `python -m compileall -q src news_impact`
+  - `python -m compileall -q src`
   - `pytest -q --basetemp result\.pytest_tmp\p0_full_final2` → 189 passed
 
 ### 미진행
@@ -60,7 +60,7 @@
   - `src/chatbot/kakao_colab_bot.py`: 1,953라인, 함수/메서드 92개
   - `src/pipeline.py`: 840라인
   - `src/reports/issue_summary.py`: 661라인
-  - `news_impact/pipeline.py`: 609라인
+  - `src/news_impact/pipeline.py`: 609라인
   - `src/features/price_features.py`: 512라인
 
 ### 긴 함수 상위
@@ -71,12 +71,12 @@
 | `src.features.price_features.build_features` | 282 | 피처/타깃/legacy alias 혼재 |
 | `src.validation.backtest.run_long_only_topk_backtest` | 164 | 포트폴리오 선택/비용/리포트 혼재 |
 | `KakaoColabPredictionBot._handle_symbol_request` | 136 | intent/cache/job/summary 응답 혼재 |
-| `news_impact.pipeline.run_daily_pipeline` | 129 | 독립 패키지 오케스트레이션 집중 |
+| `src.news_impact.pipeline.run_daily_pipeline` | 129 | 독립 패키지 오케스트레이션 집중 |
 
 ### 검증 결과
 
 ```powershell
-python -m compileall -q src news_impact
+python -m compileall -q src
 # 통과
 
 pytest -q
@@ -94,7 +94,7 @@ pytest -q --basetemp result\.pytest_tmp\analysis_run
 
 - `src/data`, `src/features`, `src/models`, `src/validation`, `src/reports`, `src/domain`, `src/chatbot`로 기본 계층 분리가 되어 있다.
 - 워크포워드 OOF, probability calibration, holdout backtest, final model train 흐름이 명확하다.
-- `news_impact/`가 top-level vendored package로 분리되어 있어 독립 실행 가능하다.
+- `src/news_impact/`가 vendored package under `src/`로 분리되어 있어 독립 실행 가능하다.
 - `recommendation_from_signal()`은 `predicted_return`만으로 매수/매도/관망을 결정하도록 계약이 잡혀 있다.
 - 테스트 커버리지가 넓다. 특히 chatbot, signal policy, news impact display-only, persistence, smoke test가 존재한다.
 

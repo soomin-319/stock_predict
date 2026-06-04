@@ -24,7 +24,7 @@ Compatibility wrappers remain in `src/pipeline.py` for tests and older imports, 
 
 ## News Impact Package Boundary
 
-`news_impact/` is a vendored top-level package migrated from `stock-news-impact`.
+`src/news_impact/` is a vendored package under `src/` migrated from `stock-news-impact`.
 It has its own console entry point, config template, watchlist examples, collectors,
 deduplication, scoring, LLM client, stock-factor classifier, backtesting helpers, and
 JSON report generation.
