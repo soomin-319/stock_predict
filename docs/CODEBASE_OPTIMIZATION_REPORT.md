@@ -30,10 +30,10 @@
 
 ### 미진행
 
-- [ ] `run_pipeline()` 단계 함수 분해
-- [ ] `kakao_colab_bot.py` 모듈 분리
-- [ ] 외부 market feature 캐시 추가
-- [ ] `pipeline_report.json` timing/row-count/coverage diagnostics 추가
+- [x] `run_pipeline()` 단계 함수 분해
+- [x] `kakao_colab_bot.py` 저위험 helper 모듈 일부 분리
+- [ ] 외부 market feature 캐시 추가 (이번 범위 제외)
+- [x] `pipeline_report.json` timing/row-count/coverage diagnostics 추가
 
 ## 1. 요약
 
@@ -386,10 +386,10 @@ chatbot은 JSON registry/state 파일과 background thread를 사용한다.
 - [x] display-only context 불변성 테스트 추가 (완료: `tests/test_display_only_feature_guard.py`)
 - [x] `pyproject.toml` pytest cache를 `result/.pytest_cache`로 변경
 - [x] Windows subprocess 로그 UTF-8 처리 (완료: `encoding="utf-8"`, `errors="replace"`, UTF-8 env)
-- [ ] `run_pipeline()`을 6~7개 단계 함수로 분해
-- [ ] `kakao_colab_bot.py` 모듈 분리
-- [ ] 외부 market feature 캐시 추가
-- [ ] `pipeline_report.json`에 timing/row-count/coverage diagnostics 추가
+- [x] `run_pipeline()`을 6~7개 단계 함수로 분해
+- [x] `kakao_colab_bot.py` 저위험 helper 모듈 일부 분리
+- [ ] 외부 market feature 캐시 추가 (이번 범위 제외)
+- [x] `pipeline_report.json`에 timing/row-count/coverage diagnostics 추가
 
 ## 결론
 

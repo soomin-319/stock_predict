@@ -116,7 +116,7 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert result_dir.exists()
     detail_path = result_dir / "result_detail.csv"
     simple_path = result_dir / "result_simple.csv"
-    report_path = result_dir / rep.name
+    report_path = resolve_output_path(str(rep))
     assert detail_path.exists()
     assert simple_path.exists()
     assert report_path.exists()
@@ -132,6 +132,15 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "brier" in payload["probability_calibration"]
     assert "tuning_samples" in payload
     assert "backtest_samples" in payload
+    diagnostics = payload["diagnostics"]
+    assert "timings_seconds" in diagnostics
+    assert "row_counts" in diagnostics
+    assert "coverage_summary" in diagnostics
+    assert diagnostics["row_counts"]["raw_input"] > 0
+    assert diagnostics["row_counts"]["features"] > 0
+    assert diagnostics["row_counts"]["oof_predictions"] > 0
+    assert diagnostics["row_counts"]["latest_predictions"] > 0
+    assert diagnostics["coverage_summary"]["coverage_gate_status"] == payload["coverage_gate"]["status"]
     assert "avg_turnover" in payload["backtest"]
     assert "avg_selected_count" in payload["backtest"]
     assert Path(payload["artifacts"]["result_detail_csv"]).exists()
