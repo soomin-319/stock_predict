@@ -560,6 +560,10 @@ def test_starts_new_prediction_job_and_saves_session(tmp_path: Path):
     assert env.get("DART_API_KEY") == "demo-key"
     assert env.get("NAVER_CLIENT_ID") == "naver-id"
     assert env.get("NAVER_CLIENT_SECRET") == "naver-secret"
+    assert env.get("PYTHONUTF8") == "1"
+    assert env.get("PYTHONIOENCODING") == "utf-8"
+    assert runner.calls[0].get("encoding") == "utf-8"
+    assert runner.calls[0].get("errors") == "replace"
 
     session_path = tmp_path / "result" / "chatbot_sessions.json"
     assert session_path.exists()

@@ -31,4 +31,4 @@ stock-news-impact = "news_impact.run:main"
 packages = ["src", "src.chatbot", "src.config", "src.data", "src.domain", "src.features", "src.models", "src.validation", "src.inference", "src.reports", "src.recommendation", "news_impact", "news_impact.stock_factors"]
 
 [tool.pytest.ini_options]
-cache_dir = ".pytest_cache"
+cache_dir = "result/.pytest_cache"
