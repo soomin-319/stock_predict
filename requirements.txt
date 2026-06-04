@@ -1,4 +1,5 @@
-numpy>=2.0,<2.3
+numpy>=2.0,<2.3; python_version < "3.14"
+numpy>=2.3,<2.4; python_version >= "3.14"
 pandas
 scikit-learn
 yfinance
