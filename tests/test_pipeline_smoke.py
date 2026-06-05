@@ -70,6 +70,26 @@ def test_multihead_prediction_shapes():
     assert len(pred.predicted_return) == len(latest)
     assert len(pred.up_probability) == len(latest)
     assert (pred.quantile_high >= pred.quantile_low).all()
+    assert not hasattr(pred, "horizon_predicted_return")
+    assert not hasattr(pred, "horizon_up_probability")
+
+
+def test_build_features_creates_only_next_day_targets():
+    cfg = AppConfig()
+    feat = build_features(make_sample_df(), cfg.feature)
+
+    assert {"target_log_return", "target_up", "target_close"}.issubset(feat.columns)
+    assert not any(
+        column in feat.columns
+        for column in [
+            "target_log_return_5d",
+            "target_up_5d",
+            "target_close_5d",
+            "target_log_return_20d",
+            "target_up_20d",
+            "target_close_20d",
+        ]
+    )
 
 
 def test_resolve_output_path_creates_parent(tmp_path):
@@ -91,7 +111,7 @@ def test_drop_empty_detail_columns_removes_only_empty_optional_fields():
                 "Symbol": "005930.KS",
                 "foreign_net_buy": np.nan,
                 "news_sentiment": np.nan,
-                "target_up_20d": np.nan,
+                "target_up": np.nan,
                 "predicted_return": 0.012,
             }
         ]
@@ -101,7 +121,7 @@ def test_drop_empty_detail_columns_removes_only_empty_optional_fields():
 
     assert "foreign_net_buy" not in cleaned.columns
     assert "news_sentiment" not in cleaned.columns
-    assert "target_up_20d" not in cleaned.columns
+    assert "target_up" not in cleaned.columns
     assert "predicted_return" in cleaned.columns
 
 
@@ -176,17 +196,15 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "backtest_sharpe" in detail_df.columns
     assert "backtest_benchmark_cum_return" in detail_df.columns
     assert "backtest_excess_cum_return" in detail_df.columns
-    assert "predicted_return_5d" in detail_df.columns
-    assert "predicted_return_20d" in detail_df.columns
-    assert "up_probability_5d" in detail_df.columns
-    assert "up_probability_20d" in detail_df.columns
+    assert "predicted_return_5d" not in detail_df.columns
+    assert "predicted_return_20d" not in detail_df.columns
+    assert "up_probability_5d" not in detail_df.columns
+    assert "up_probability_20d" not in detail_df.columns
     assert "coverage_gate_status" in detail_df.columns
     assert "foreign_net_buy" in detail_df.columns
     assert "institution_net_buy" in detail_df.columns
     assert "내일 예상 종가" in detail_df.columns
     assert "상승확률(%)" in detail_df.columns
-    assert "5일 예상 수익률(%)" in detail_df.columns
-    assert "20일 예상 수익률(%)" in detail_df.columns
     assert "disclosure_score" in detail_df.columns
     assert "news_sentiment" in detail_df.columns
     assert "news_relevance_score" in detail_df.columns
@@ -208,13 +226,9 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "거래 게이트" not in simple_df.columns
     assert "내일 예상 종가" in simple_df.columns
     assert "내일 예상 수익률(%)" in simple_df.columns
-    assert "5일 예상 수익률(%)" in simple_df.columns
-    assert "20일 예상 수익률(%)" in simple_df.columns
     assert "상승확률(%)" in simple_df.columns
-    assert "5일 상승확률(%)" in simple_df.columns
-    assert "20일 상승확률(%)" in simple_df.columns
     assert "예측 신뢰도" in simple_df.columns
-    assert "예측 이유" in simple_df.columns
+    assert "예측 이유" not in simple_df.columns
 
 
 def test_build_cli_parser_uses_project_relative_defaults_and_exposes_coverage_override():
@@ -264,8 +278,6 @@ def test_build_scored_prediction_frame_keeps_signal_label_separate_from_confiden
         quantile_low=np.array([-0.01, -0.03]),
         quantile_mid=np.array([0.01, -0.01]),
         quantile_high=np.array([0.04, 0.01]),
-        horizon_predicted_return={5: np.array([0.05, -0.02]), 20: np.array([0.1, -0.03])},
-        horizon_up_probability={5: np.array([0.72, 0.38]), 20: np.array([0.75, 0.35])},
     )
 
     scored = build_scored_prediction_frame(
@@ -280,10 +292,10 @@ def test_build_scored_prediction_frame_keeps_signal_label_separate_from_confiden
         ["strong_negative", "weak_negative", "neutral", "weak_positive", "strong_positive"]
     ).all()
     assert "confidence_label" not in scored.columns
-    assert "predicted_return_5d" in scored.columns
-    assert "predicted_return_20d" in scored.columns
-    assert "up_probability_5d" in scored.columns
-    assert "up_probability_20d" in scored.columns
+    assert "predicted_return_5d" not in scored.columns
+    assert "predicted_return_20d" not in scored.columns
+    assert "up_probability_5d" not in scored.columns
+    assert "up_probability_20d" not in scored.columns
     assert scored["external_coverage_ratio"].eq(0.8).all()
     assert scored["investor_coverage_ratio"].eq(0.7).all()
 

@@ -22,23 +22,12 @@ def split_oof_for_tuning_and_eval(scored_oof: pd.DataFrame, tune_ratio: float = 
 
 
 def prediction_from_oof_df(oof: pd.DataFrame) -> MultiHeadPrediction:
-    horizon_predicted_return = {}
-    horizon_up_probability = {}
-    for horizon in (5, 20):
-        pred_col = f"predicted_return_{horizon}d"
-        prob_col = f"up_probability_{horizon}d"
-        if pred_col in oof.columns:
-            horizon_predicted_return[horizon] = oof[pred_col].values
-        if prob_col in oof.columns:
-            horizon_up_probability[horizon] = oof[prob_col].values
     return MultiHeadPrediction(
         predicted_return=oof["predicted_return"].values,
         up_probability=oof["up_probability"].values,
         quantile_low=oof["quantile_low"].values,
         quantile_mid=oof["quantile_mid"].values,
         quantile_high=oof["quantile_high"].values,
-        horizon_predicted_return=horizon_predicted_return,
-        horizon_up_probability=horizon_up_probability,
     )
 
 
