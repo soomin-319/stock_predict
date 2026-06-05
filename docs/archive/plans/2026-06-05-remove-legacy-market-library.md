@@ -52,7 +52,7 @@ Expected: PASS.
 - Modify: `docs/PROJECT_OPERATION_GUIDE.md`
 - Modify: `docs/archive/analysis-reports/CODEBASE_IMPROVEMENTS_2026-06-02.md`
 - Modify: `docs/archive/analysis-reports/EXPERT_CODEBASE_REVIEW.md`
-- Modify: `docs/superpowers/specs/2026-06-05-remove-legacy-market-library-design.md`
+- Modify: `docs/archive/specs/2026-06-05-remove-legacy-market-library-design.md`
 
 - [ ] **Step 1: Remove stale references**
 

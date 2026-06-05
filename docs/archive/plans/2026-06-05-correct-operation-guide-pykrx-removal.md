@@ -41,6 +41,6 @@ Expected: pykrx appears only in explicit “not used/not required” guidance; d
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add docs/PROJECT_OPERATION_GUIDE.md docs/superpowers/plans/2026-06-05-correct-operation-guide-pykrx-removal.md
+git add docs/PROJECT_OPERATION_GUIDE.md docs/archive/plans/2026-06-05-correct-operation-guide-pykrx-removal.md
 git commit -m "Clarify pykrx removal in operation guide"
 ```
