@@ -74,27 +74,12 @@ def test_format_recommendation_message_includes_rank_symbol_score_and_reason():
     assert "\uadfc\uac70:" in text
 
 
-def test_default_realtime_service_uses_bundled_universe_without_pykrx(monkeypatch):
-    import importlib.abc
-    import sys
-
-    for name in list(sys.modules):
-        if name.split(".", 1)[0] == "pykrx":
-            del sys.modules[name]
-
-    class BlockPykrx(importlib.abc.MetaPathFinder):
-        def find_spec(self, fullname, path=None, target=None):
-            if fullname.split(".", 1)[0] == "pykrx":
-                raise ModuleNotFoundError(fullname)
-            return None
-
-    blocker = BlockPykrx()
-    monkeypatch.setattr(sys, "meta_path", [blocker, *sys.meta_path])
-
+def test_default_realtime_service_uses_bundled_universe():
     service = RealTimeCloseBettingRecommendationService(today_provider=lambda: date(2026, 5, 27), universe_limit=5)
 
     symbols = service.symbols_provider()
 
+    assert not hasattr(service, "_load_kospi200_symbols")
     assert symbols["Symbol"].tolist() == ["005930.KS", "000660.KS", "373220.KS", "207940.KS", "005380.KS"]
     assert symbols["Name"].tolist()[:2] == [SAMSUNG, HYNIX]
     assert symbols["Market"].unique().tolist() == ["KOSPI"]

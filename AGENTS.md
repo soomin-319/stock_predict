@@ -38,7 +38,7 @@ The vendored `src.news_impact` package is the migrated `stock-news-impact` news/
 
 ## Data, Outputs, and External Integrations
 
-All generated CSV, JSON, and figure outputs should stay under `result/`, including `result_detail.csv`, `result_simple.csv`, `result_news.csv`, `result_disclosure.csv`, `pm_report.json`, `pipeline_report.json`, and selected figure directories. CSV outputs should remain `utf-8-sig` for Excel/Windows compatibility. Sample and universe inputs belong in `data/`; avoid adding large or private market data. Live integrations include yfinance/pykrx, DART, Naver News, OpenAI summaries, Flask, and pyngrok. Keep tests deterministic by mocking or disabling these integrations unless the change explicitly targets a live-fetch path.
+All generated CSV, JSON, and figure outputs should stay under `result/`, including `result_detail.csv`, `result_simple.csv`, `result_news.csv`, `result_disclosure.csv`, `pm_report.json`, `pipeline_report.json`, and selected figure directories. CSV outputs should remain `utf-8-sig` for Excel/Windows compatibility. Sample and universe inputs belong in `data/`; avoid adding large or private market data. Live integrations include yfinance, DART, Naver News, OpenAI summaries, Flask, and pyngrok. Keep tests deterministic by mocking or disabling these integrations unless the change explicitly targets a live-fetch path.
 
 ## Commit & Pull Request Guidelines
 

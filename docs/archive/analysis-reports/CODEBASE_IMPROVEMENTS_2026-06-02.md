@@ -65,7 +65,7 @@ pytest -q --basetemp=C:\tmp\stock_predict_pytest_tmp -o cache_dir=C:\tmp\stock_p
 실제 남은 실패:
 
 ```text
-FAILED tests/test_realtime_close_betting.py::test_default_realtime_service_uses_bundled_universe_without_pykrx
+FAILED tests/test_realtime_close_betting.py::test_default_realtime_service_uses_bundled_universe
 ```
 
 원인 추정:
@@ -220,7 +220,7 @@ def _load_krx_symbol_name_df() -> pd.DataFrame:
 ```toml
 [project.optional-dependencies]
 ml = ["scikit-learn", "lightgbm"]
-live = ["yfinance", "pykrx"]
+live = ["yfinance"]
 llm = ["openai"]
 chatbot = ["flask", "pyngrok"]
 dev = ["pytest"]
@@ -258,7 +258,7 @@ $env:PYTHONIOENCODING="utf-8"
 
 권장:
 
-- pytest fixture로 외부 HTTP/yfinance/pykrx 호출을 기본 차단.
+- pytest fixture로 외부 HTTP/yfinance 호출을 기본 차단.
 - live path 테스트는 명시 marker 필요.
 
 예:

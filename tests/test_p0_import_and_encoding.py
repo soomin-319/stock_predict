@@ -14,7 +14,7 @@ def test_pipeline_imports_without_market_or_llm_extras():
 import importlib.abc
 import sys
 
-BLOCKED = {"yfinance", "openai", "pykrx", "joblib", "sklearn", "lightgbm"}
+BLOCKED = {"yfinance", "openai", "joblib", "sklearn", "lightgbm"}
 for name in list(sys.modules):
     if name.split(".", 1)[0] in BLOCKED:
         del sys.modules[name]

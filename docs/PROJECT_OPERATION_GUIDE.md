@@ -70,7 +70,7 @@ flowchart TD
 
 - 종목 유니버스 CSV
 - yfinance 기반 실시간/최신 OHLCV
-- pykrx 기반 투자자 수급
+- 투자자 수급 외부 수집 비활성화
 - DART 공시
 - Naver 뉴스
 - 외부 시장 지표
@@ -437,4 +437,3 @@ pytest tests/test_pipeline_smoke.py
 10. `src/domain/signal_policy.py`
 11. `src/reports/output.py`
 12. `src/chatbot/kakao_colab_bot.py`
-
