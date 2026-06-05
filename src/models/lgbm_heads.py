@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
@@ -54,8 +54,6 @@ class MultiHeadPrediction:
     quantile_low: np.ndarray
     quantile_mid: np.ndarray
     quantile_high: np.ndarray
-    horizon_predicted_return: dict[int, np.ndarray] = field(default_factory=dict)
-    horizon_up_probability: dict[int, np.ndarray] = field(default_factory=dict)
 
 
 class MultiHeadStockModel:
@@ -79,8 +77,6 @@ class MultiHeadStockModel:
         self.reg_model = None
         self.cls_model = None
         self.quantile_models: Dict[float, Any] = {}
-        self.horizon_reg_models: Dict[int, Any] = {}
-        self.horizon_cls_models: Dict[int, Any] = {}
         self.backend: str = "lightgbm" if LIGHTGBM_AVAILABLE else "sklearn"
 
     def _lightgbm_params(self) -> dict[str, Any]:
@@ -146,21 +142,6 @@ class MultiHeadStockModel:
             *[(self._build_regressor(loss="quantile", alpha=q), x, y_reg) for q in quantiles],
         ]
 
-        # ⑤: train은 이미 feature_columns에 NaN이 없으므로 호라이즌 타깃만 추가로 검사한다.
-        horizon_order: list[int] = []
-        for horizon in (5, 20):
-            reg_target = f"target_log_return_{horizon}d"
-            cls_target = f"target_up_{horizon}d"
-            if reg_target not in train.columns or cls_target not in train.columns:
-                continue
-            horizon_train = train.dropna(subset=[reg_target, cls_target])
-            if horizon_train.empty:
-                continue
-            hx = horizon_train[feature_columns]
-            tasks.append((self._build_regressor(), hx, horizon_train[reg_target]))
-            tasks.append((self._build_classifier(), hx, horizon_train[cls_target]))
-            horizon_order.append(horizon)
-
         # ③: LightGBM은 C++ 구간에서 GIL을 해제하므로 스레드 병렬로 실질적인 속도 향상이 가능하다.
         if self.head_n_jobs == 1:
             fitted = [_fit_one(task) for task in tasks]
@@ -173,13 +154,6 @@ class MultiHeadStockModel:
         self.reg_model = fitted[0]
         self.cls_model = fitted[1]
         self.quantile_models = {q: fitted[2 + i] for i, q in enumerate(quantiles)}
-
-        base = 2 + len(quantiles)
-        self.horizon_reg_models = {}
-        self.horizon_cls_models = {}
-        for i, horizon in enumerate(horizon_order):
-            self.horizon_reg_models[horizon] = fitted[base + i * 2]
-            self.horizon_cls_models[horizon] = fitted[base + i * 2 + 1]
 
     def predict(self, df: pd.DataFrame) -> MultiHeadPrediction:
         if not self._feature_columns:
@@ -199,13 +173,6 @@ class MultiHeadStockModel:
 
         quantiles = sorted(self.quantile_models)
         q_preds = {q: self.quantile_models[q].predict(x) for q in quantiles}
-        horizon_predicted_return = {
-            horizon: model.predict(x) for horizon, model in self.horizon_reg_models.items()
-        }
-        horizon_up_probability = {
-            horizon: model.predict_proba(x)[:, 1] for horizon, model in self.horizon_cls_models.items()
-        }
-
         if len(quantiles) < 3:
             raise RuntimeError(
                 f"MultiHeadPrediction requires at least 3 quantile heads, got {len(quantiles)}: {quantiles}"
@@ -216,8 +183,6 @@ class MultiHeadStockModel:
             quantile_low=q_preds[quantiles[0]],
             quantile_mid=q_preds[quantiles[len(quantiles) // 2]],
             quantile_high=q_preds[quantiles[-1]],
-            horizon_predicted_return=horizon_predicted_return,
-            horizon_up_probability=horizon_up_probability,
         )
 
     def _feature_columns_hash(self) -> str:
@@ -236,7 +201,6 @@ class MultiHeadStockModel:
             "feature_count": len(self._feature_columns),
             "feature_hash": self._feature_columns_hash() if self._feature_columns else None,
             "quantiles": sorted(self.quantile_models.keys()),
-            "horizons": sorted(self.horizon_reg_models.keys()),
         }
 
     def save(self, path: str | Path) -> Path:
@@ -263,8 +227,6 @@ class MultiHeadStockModel:
             "reg_model": self.reg_model,
             "cls_model": self.cls_model,
             "quantile_models": self.quantile_models,
-            "horizon_reg_models": self.horizon_reg_models,
-            "horizon_cls_models": self.horizon_cls_models,
             "saved_at": datetime.now(timezone.utc).isoformat(),
         }
         joblib = _require_joblib()
@@ -295,8 +257,6 @@ class MultiHeadStockModel:
         model.reg_model = payload["reg_model"]
         model.cls_model = payload["cls_model"]
         model.quantile_models = payload.get("quantile_models", {})
-        model.horizon_reg_models = payload.get("horizon_reg_models", {})
-        model.horizon_cls_models = payload.get("horizon_cls_models", {})
 
         stored_hash = payload.get("feature_hash")
         if stored_hash and stored_hash != model._feature_columns_hash():

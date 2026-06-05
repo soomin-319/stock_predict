@@ -465,7 +465,6 @@ flowchart TD
 | 회귀 | 다음 날 로그수익률 |
 | 분류 | 다음 날 상승확률 |
 | 분위수 회귀 | 낮음·중앙·높음 예상 수익률 구간 |
-| 다중 기간 | 5일·20일 로그수익률과 상승확률 |
 
 LightGBM을 사용할 수 없으면 sklearn Gradient Boosting 계열 모델로 대체한다.
 
@@ -491,7 +490,7 @@ uncertainty_width = quantile_high - quantile_low
 - 최소 학습 구간: 756 거래일
 - 검증 구간: 252 거래일
 - 이동 간격: 126 거래일
-- purge gap: 20일
+- purge gap: 1일
 - embargo: 0일
 
 데이터가 부족하면 파이프라인이 구간을 줄여 재시도할 수 있다.
