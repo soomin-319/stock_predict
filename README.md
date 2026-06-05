@@ -1,6 +1,6 @@
 # Stock Predict
 
-Python stock prediction pipeline for next-day and multi-horizon return signals. It builds price, market, and investor-flow features, validates with walk-forward OOF predictions, runs a long-only top-k backtest, and writes CSV/JSON/figure artifacts under `result/`.
+Python stock prediction pipeline for next-day and multi-horizon return signals. It builds price, market, and investor-flow features, validates with walk-forward OOF predictions, runs a long-only top-k backtest, and writes CSV/JSON artifacts under `result/`.
 
 This project is for research and operations support. The client uses its outputs as one reference material for investment decisions; it is not an investment-advice or automated trading system. Buy/sell/hold signals are based only on the next-day expected return (`predicted_return`). News and disclosures are collected and summarized only for user display, and must not change the expected return or the buy/sell decision.
 
@@ -18,7 +18,7 @@ python -m pip install -e .
 Sample data, no live market downloads:
 
 ```powershell
-python src/pipeline.py --input data/sample_ohlcv.csv --disable-external --report-json pipeline_report_smoke.json --figure-dir figures_smoke
+python src/pipeline.py --input data/sample_ohlcv.csv --disable-external --report-json pipeline_report_smoke.json
 ```
 
 Installed console entry point:
@@ -45,7 +45,6 @@ python src/pipeline.py --input data/real_ohlcv.csv --add-symbols 005930 000660.K
 - `--output`: legacy compatibility option. CSV outputs are always normalized under `result/`.
 - `--universe-csv`: optional CSV with a `Symbol` column.
 - `--report-json`: pipeline report JSON filename. Default: `pipeline_report.json`.
-- `--figure-dir`: generated figure directory under `result/`. Default: `figures`.
 - `--fetch-real`: download OHLCV before the run. Uses all 200 bundled KOSPI200 symbols when no symbols or universe CSV are specified.
 - `--real-symbols`: explicit symbols for `--fetch-real`.
 - `--real-start`: start date for real-data fetch. Default: `2020-01-01`.
@@ -88,7 +87,6 @@ All generated outputs are written under `result/`:
 - `result_news.csv`, `result_disclosure.csv`: live/raw context or generated issue-summary snapshots.
 - `pm_report.json`: portfolio-manager style summary.
 - `pipeline_report.json` or the `--report-json` filename.
-- figure files under the selected `--figure-dir`.
 
 CSV files are saved with `utf-8-sig` for Excel/Windows compatibility.
 

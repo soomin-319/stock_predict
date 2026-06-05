@@ -79,7 +79,6 @@ def make_bot(tmp_path: Path, runner=None) -> KakaoColabPredictionBot:
         python_executable="python",
         input_csv="data/real_ohlcv.csv",
         report_json="pipeline_report_with_context.json",
-        figure_dir="figures_with_context",
         dart_api_key="demo-key",
         dart_corp_map_csv="data/dart_corp_map.csv",
         naver_client_id="naver-id",
@@ -94,6 +93,17 @@ def make_bot(tmp_path: Path, runner=None) -> KakaoColabPredictionBot:
         session_path="result/chatbot_sessions.json",
         process_runner=runner,
     )
+
+
+def test_pipeline_runtime_config_removes_graph_options(tmp_path: Path):
+    runtime_config = PipelineRuntimeConfig(project_root=tmp_path, python_executable="python")
+
+    command = runtime_config.build_command("005930.KS")
+    signature = _runtime_cache_signature(runtime_config, tmp_path)
+
+    assert "--figure-dir" not in command
+    assert "figure_dir" not in signature
+    assert not hasattr(runtime_config, "figure_dir")
 
 
 def test_returns_cached_prediction_message_from_kakao_payload(tmp_path: Path):
@@ -359,7 +369,6 @@ def test_collect_live_events_uses_short_ttl_cache(tmp_path: Path, monkeypatch):
         python_executable="python",
         input_csv="data/real_ohlcv.csv",
         report_json="pipeline_report_with_context.json",
-        figure_dir="figures_with_context",
         naver_client_id="real_id",
         naver_client_secret="real_secret",
         bootstrap_default_symbols=False,
@@ -626,7 +635,6 @@ def test_request_during_bootstrap_returns_global_progress_and_queues_summary(tmp
         python_executable="python",
         input_csv="data/real_ohlcv.csv",
         report_json="pipeline_report_with_context.json",
-        figure_dir="figures_with_context",
         bootstrap_default_symbols=True,
     )
     bot = KakaoColabPredictionBot(
@@ -829,7 +837,6 @@ def test_start_job_skips_disable_external_flag_when_external_features_enabled(tm
         python_executable="python",
         input_csv="data/real_ohlcv.csv",
         report_json="pipeline_report_with_context.json",
-        figure_dir="figures_with_context",
         dart_api_key="demo-key",
         dart_corp_map_csv="data/dart_corp_map.csv",
         use_external=True,
@@ -1280,7 +1287,6 @@ def test_prewarm_prediction_cache_runs_colab_pipeline(monkeypatch, tmp_path: Pat
         project_root=tmp_path,
         input_csv="data/sample_ohlcv.csv",
         report_json="prewarm_report.json",
-        figure_dir="prewarm_figures",
         enable_investor_disclosure=False,
         openai_api_key="sk-prewarm",
         openai_model="gpt-test",
@@ -1295,7 +1301,7 @@ def test_prewarm_prediction_cache_runs_colab_pipeline(monkeypatch, tmp_path: Pat
 
     assert captured["input_csv"] == "data/sample_ohlcv.csv"
     assert captured["report_json"] == "prewarm_report.json"
-    assert captured["figure_dir"] == "prewarm_figures"
+    assert "figure_dir" not in captured
     assert captured["use_investor_context"] is True
     assert captured["enable_investor_disclosure"] is False
     assert captured["openai_api_key"] == "sk-prewarm"

@@ -3,7 +3,6 @@ numpy>=2.3,<2.4; python_version >= "3.14"
 pandas
 scikit-learn
 yfinance
-matplotlib
 lightgbm
 openai
 flask

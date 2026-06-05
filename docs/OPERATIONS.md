@@ -3,7 +3,7 @@
 ## Local Run
 
 ```powershell
-python src/pipeline.py --input data/sample_ohlcv.csv --disable-external --report-json pipeline_report_smoke.json --figure-dir figures_smoke
+python src/pipeline.py --input data/sample_ohlcv.csv --disable-external --report-json pipeline_report_smoke.json
 ```
 
 Artifacts are written under `result/` even when the CLI receives a path outside that directory.

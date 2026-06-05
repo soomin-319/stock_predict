@@ -14,7 +14,6 @@ Usage in Google Colab:
        input_csv="data/sample_ohlcv.csv",
        use_external=False,
        report_json="pipeline_report_colab.json",
-       figure_dir="figures_colab",
    )
 
 Outputs are always saved under ./result as:
@@ -93,7 +92,6 @@ def run_colab_pipeline(
     input_csv: str = "data/sample_ohlcv.csv",
     universe_csv: str | None = None,
     report_json: str | None = "pipeline_report_colab.json",
-    figure_dir: str = "figures_colab",
     use_external: bool = False,
     use_investor_context: bool = False,
     enable_investor_disclosure: bool = True,
@@ -140,7 +138,6 @@ def run_colab_pipeline(
         output_csv="result_detail.csv",
         universe_csv=universe_csv,
         report_json=report_json,
-        figure_dir=figure_dir,
         use_external=use_external,
         use_investor_context=use_investor_context,
         dart_api_key=dart_api_key,
@@ -158,7 +155,6 @@ def run_colab_pipeline(
         "result_detail_csv": (result_dir / "result_detail.csv").as_posix(),
         "result_simple_csv": (result_dir / "result_simple.csv").as_posix(),
         "report_json": (result_dir / Path(report_json).name).as_posix() if report_json else "",
-        "figure_dir": (result_dir / Path(figure_dir).name).as_posix(),
     }
 
 

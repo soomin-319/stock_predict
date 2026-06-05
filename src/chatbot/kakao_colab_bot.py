@@ -73,7 +73,6 @@ class PipelineRuntimeConfig:
     python_executable: str = sys.executable
     input_csv: str = "data/real_ohlcv.csv"
     report_json: str = "pipeline_report_with_context.json"
-    figure_dir: str = "figures_with_context"
     dart_api_key: str | None = None
     dart_corp_map_csv: str | None = "data/dart_corp_map.csv"
     fetch_investor_context: bool = True
@@ -120,8 +119,6 @@ class PipelineRuntimeConfig:
             cmd.append("--disable-external")
         if self.report_json:
             cmd.extend(["--report-json", self.report_json])
-        if self.figure_dir:
-            cmd.extend(["--figure-dir", self.figure_dir])
         cmd.extend(self.extra_args)
         return [str(part) for part in cmd]
 
@@ -1737,7 +1734,6 @@ def _runtime_cache_signature(cfg: PipelineRuntimeConfig, project_root: Path) -> 
         "input_stat": _stat_payload(input_path),
         "default_universe_stat": _stat_payload(universe_path),
         "report_json": str(cfg.report_json),
-        "figure_dir": str(cfg.figure_dir),
         "fetch_investor_context": bool(cfg.fetch_investor_context),
         "use_external": bool(cfg.use_external),
         "bootstrap_default_symbols": bool(cfg.bootstrap_default_symbols),
@@ -1882,7 +1878,6 @@ def prewarm_prediction_cache(runtime_config: PipelineRuntimeConfig | None = None
         input_csv=cfg.input_csv,
         universe_csv=None,
         report_json=cfg.report_json,
-        figure_dir=cfg.figure_dir,
         use_external=cfg.use_external,
         use_investor_context=cfg.fetch_investor_context,
         enable_investor_disclosure=cfg.enable_investor_disclosure,
@@ -1940,7 +1935,6 @@ def main():
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--input", default="data/real_ohlcv.csv")
     parser.add_argument("--report-json", default="pipeline_report_with_context.json")
-    parser.add_argument("--figure-dir", default="figures_with_context")
     parser.add_argument("--dart-api-key", default=None)
     parser.add_argument("--dart-corp-map-csv", default="data/dart_corp_map.csv")
     parser.add_argument("--openai-api-key", default=None)
@@ -1955,7 +1949,6 @@ def main():
     runtime_config = PipelineRuntimeConfig(
         input_csv=args.input,
         report_json=args.report_json,
-        figure_dir=args.figure_dir,
         dart_api_key=args.dart_api_key or os.getenv("DART_API_KEY"),
         dart_corp_map_csv=args.dart_corp_map_csv or os.getenv("DART_CORP_MAP_CSV") or "data/dart_corp_map.csv",
         openai_api_key=args.openai_api_key or os.getenv("OPENAI_API_KEY"),

@@ -13,6 +13,13 @@ from src.pipeline import _drop_empty_detail_columns, _split_oof_for_tuning_and_e
 from src.pipeline_support import PredictionFrameContext, build_scored_prediction_frame
 
 
+def test_graph_module_and_dependency_are_removed():
+    assert not Path("src/reports/visualize.py").exists()
+    assert not Path("tests/test_visualize_recent_month.py").exists()
+    assert "matplotlib" not in Path("requirements.txt").read_text().lower()
+    assert "matplotlib" not in Path("pyproject.toml").read_text().lower()
+
+
 def make_sample_df(days: int = 320):
     rng = np.random.default_rng(42)
     dates = pd.date_range("2023-01-01", periods=days, freq="B")
@@ -125,12 +132,11 @@ def test_drop_empty_detail_columns_removes_only_empty_optional_fields():
     assert "predicted_return" in cleaned.columns
 
 
-def test_run_pipeline_generates_report_and_figures(tmp_path):
+def test_run_pipeline_generates_report_without_graph_artifacts(tmp_path):
     inp = Path("data/sample_ohlcv.csv")
     out = tmp_path / "predictions.csv"
     rep = tmp_path / "report.json"
-    fig = tmp_path / "figures"
-    run_pipeline(str(inp), str(out), universe_csv=None, report_json=str(rep), figure_dir=str(fig), use_external=False)
+    run_pipeline(str(inp), str(out), universe_csv=None, report_json=str(rep), use_external=False)
 
     result_dir = Path("result")
     assert result_dir.exists()
@@ -166,19 +172,17 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert Path(payload["artifacts"]["result_detail_csv"]).exists()
     assert Path(payload["artifacts"]["result_simple_csv"]).exists()
     assert Path(payload["artifacts"]["result_disclosure_csv"]).exists()
-    assert Path(payload["artifacts"]["actual_vs_predicted"]).exists()
-    assert Path(payload["artifacts"]["actual_vs_predicted_price"]).exists()
     assert Path(payload["artifacts"]["pm_report_json"]).exists()
-    assert Path(payload["artifacts"]["symbol_summary_png"]).exists()
+    assert "visualization_note" not in payload
+    assert not any(
+        "figure" in key.lower() or "plot" in key.lower() or str(value).lower().endswith(".png")
+        for key, value in payload["artifacts"].items()
+    )
 
     news_df = pd.read_csv(payload["artifacts"]["result_news_csv"])
     disclosure_df = pd.read_csv(payload["artifacts"]["result_disclosure_csv"])
     assert "뉴스 요약" in news_df.columns
     assert "공시 요약" in disclosure_df.columns
-    assert Path(payload["artifacts"]["symbol_level_figure_dir"]).exists()
-    assert payload["artifacts"]["symbol_level_figure_count"] > 0
-    assert Path(payload["artifacts"]["symbol_level_recent_month_dir"]).exists()
-    assert payload["artifacts"]["symbol_level_recent_month_figure_count"] > 0
     detail_df = pd.read_csv(detail_path)
     simple_df = pd.read_csv(simple_path)
     assert "signal_label" in detail_df.columns
@@ -231,13 +235,13 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert "예측 이유" not in simple_df.columns
 
 
-def test_build_cli_parser_uses_project_relative_defaults_and_exposes_coverage_override():
+def test_build_cli_parser_removes_graph_options():
     parser = build_cli_parser()
     args = parser.parse_args([])
 
     assert args.output == "result_detail.csv"
     assert args.report_json == "pipeline_report.json"
-    assert args.figure_dir == "figures"
+    assert not hasattr(args, "figure_dir")
     assert hasattr(args, "min_external_coverage_ratio")
     assert hasattr(args, "min_investor_coverage_ratio")
     assert hasattr(args, "portfolio_value")
@@ -247,7 +251,11 @@ def test_build_cli_parser_uses_project_relative_defaults_and_exposes_coverage_ov
     assert hasattr(args, "model_head_n_jobs")
     assert hasattr(args, "context_raw_event_n_jobs")
     assert hasattr(args, "issue_summary_n_jobs")
-    assert args.symbol_figure_limit == 30
+    assert not hasattr(args, "symbol_figure_limit")
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--figure-dir", "figures"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--symbol-figure-limit", "30"])
 
 
 def test_build_scored_prediction_frame_keeps_signal_label_separate_from_confidence_context():
@@ -304,7 +312,6 @@ def test_run_pipeline_promotes_investor_context_to_separate_progress_step(tmp_pa
     inp = Path("data/sample_ohlcv.csv")
     out = tmp_path / "predictions.csv"
     rep = tmp_path / "report.json"
-    fig = tmp_path / "figures"
 
     def _fake_add_context(data, config):
         coverage = {
@@ -322,15 +329,14 @@ def test_run_pipeline_promotes_investor_context_to_separate_progress_step(tmp_pa
         str(out),
         universe_csv=None,
         report_json=str(rep),
-        figure_dir=str(fig),
         use_external=False,
         use_investor_context=True,
     )
 
     out_text = capsys.readouterr().out
-    assert "[4/13] Adding investor context" in out_text
-    assert "[5/13] Building price features" in out_text
-    assert "[6/13] Adding external market features" in out_text
+    assert "[4/12] Adding investor context" in out_text
+    assert "[5/12] Building price features" in out_text
+    assert "[6/12] Adding external market features" in out_text
 
 
 def test_external_features_fail_gracefully_without_noise(monkeypatch):
