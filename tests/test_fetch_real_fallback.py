@@ -8,13 +8,13 @@ from src.data import universe as universe_module
 def test_fallback_symbols_loads_repo_managed_default_universe():
     symbols = pipeline._fallback_symbols_from_input_or_default("dummy.csv")
 
-    assert len(symbols) == 5
+    assert len(symbols) == 200
     assert symbols[:5] == [
-        "005930.KS",
-        "000660.KS",
-        "373220.KS",
-        "207940.KS",
-        "005380.KS",
+        "018880.KS",
+        "011780.KS",
+        "066570.KS",
+        "009150.KS",
+        "009420.KS",
     ]
 
 
@@ -22,7 +22,7 @@ def test_fallback_symbols_loads_repo_managed_default_universe():
 def test_fallback_symbols_match_default_universe_csv_contents():
     symbols = pipeline._fallback_symbols_from_input_or_default("dummy.csv")
 
-    assert symbols == universe_module.load_default_universe_symbols()[:5]
+    assert symbols == universe_module.load_default_universe_symbols()
 
 
 

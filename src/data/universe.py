@@ -6,7 +6,7 @@ from typing import Iterable
 import pandas as pd
 
 
-DEFAULT_UNIVERSE_CSV = Path(__file__).resolve().parents[2] / "data" / "default_universe_kospi50_kosdaq50.csv"
+DEFAULT_UNIVERSE_CSV = Path(__file__).resolve().parents[2] / "data" / "kospi200_symbol_name_map.csv"
 
 
 def load_universe_symbols_list(path: str | Path) -> list[str]:
