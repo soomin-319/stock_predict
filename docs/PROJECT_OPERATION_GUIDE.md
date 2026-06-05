@@ -76,6 +76,16 @@ flowchart TD
 - 외부 시장 지표
 - 별도 `stock-news-impact` 실행 결과
 
+### 기본 종목 유니버스
+
+기본 종목 유니버스는 `data/kospi200_symbol_name_map.csv`에 저장된 **KOSPI200 200종목**이다.
+
+- `--fetch-real` 또는 `--auto-refresh-real` 실행 시 `--real-symbols`와 `--universe-csv`를 모두 생략하면 KOSPI200 전체 200종목을 수집한다.
+- `--real-symbols`를 지정하면 해당 종목 목록을 우선 사용한다.
+- `--universe-csv`를 지정하면 해당 CSV의 `Symbol` 열을 우선 사용한다.
+- 일반 파이프라인 실행은 `--universe-csv`를 생략하면 입력 OHLCV CSV에 존재하는 종목 전체를 처리한다.
+- KOSDAQ 지수는 외부 시장 피처로 사용할 수 있지만, KOSDAQ 종목은 기본 종목 유니버스에 포함되지 않는다.
+
 실데이터 갱신 기능은 `src/data/fetch_real_data.py`, 입력 정제는 `src/data/cleaners.py`, 유니버스 필터는 `src/data/universe.py`가 담당한다.
 
 ---
@@ -381,7 +391,25 @@ python src/pipeline.py `
 stock-predict --input data/sample_ohlcv.csv --disable-external
 ```
 
-### 실데이터 갱신 후 실행
+### 기본 KOSPI200 전체 실데이터 갱신 후 실행
+
+`--real-symbols`와 `--universe-csv`를 생략하면 기본 KOSPI200 200종목 전체를 수집한다.
+
+```powershell
+python src/pipeline.py `
+  --fetch-real `
+  --input data/real_ohlcv.csv
+```
+
+최신 데이터를 증분 갱신하려면 다음을 실행한다.
+
+```powershell
+python src/pipeline.py `
+  --auto-refresh-real `
+  --input data/real_ohlcv.csv
+```
+
+### 지정 종목만 실데이터 갱신 후 실행
 
 ```powershell
 python src/pipeline.py `
