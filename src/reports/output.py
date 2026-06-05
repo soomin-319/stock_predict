@@ -146,12 +146,6 @@ def drop_empty_detail_columns(detail_df: pd.DataFrame) -> pd.DataFrame:
         "leader_confirmation_flag",
         "investor_event_score",
         "target_up",
-        "target_log_return_5d",
-        "target_up_5d",
-        "target_close_5d",
-        "target_log_return_20d",
-        "target_up_20d",
-        "target_close_20d",
     ]
     drop_cols: list[str] = []
     for col in optional_cols:

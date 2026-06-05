@@ -5,14 +5,10 @@ import pandas as pd
 from src.domain.signal_policy import prediction_reason
 
 
-def test_prediction_reason_excludes_probability_and_horizon_phrases() -> None:
+def test_prediction_reason_excludes_probability_phrases() -> None:
     row = pd.Series(
         {
             "up_probability": 0.809,
-            "predicted_return_5d": 6.16,
-            "predicted_return_20d": 13.22,
-            "up_probability_5d": 0.798,
-            "up_probability_20d": 0.734,
             "turnover_rank_daily": 10,
             "history_direction_accuracy": 0.64,
         }

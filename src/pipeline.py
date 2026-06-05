@@ -636,18 +636,6 @@ def _write_pipeline_artifacts(
     detail_df["up_probability_display"] = detail_df["up_probability"].map(
         lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True)
     )
-    if "predicted_return_5d" in detail_df.columns:
-        detail_df["5일 예상 수익률(%)"] = detail_df["predicted_return_5d"].map(lambda v: formatter_format_percentage_text(v, digits=3))
-    if "predicted_return_20d" in detail_df.columns:
-        detail_df["20일 예상 수익률(%)"] = detail_df["predicted_return_20d"].map(lambda v: formatter_format_percentage_text(v, digits=3))
-    if "up_probability_5d" in detail_df.columns:
-        detail_df["5일 상승확률(%)"] = detail_df["up_probability_5d"].map(
-            lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True)
-        )
-    if "up_probability_20d" in detail_df.columns:
-        detail_df["20일 상승확률(%)"] = detail_df["up_probability_20d"].map(
-            lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True)
-        )
     detail_df["confidence_score_display"] = detail_df["confidence_score"].map(
         lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True)
     )

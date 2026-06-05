@@ -22,13 +22,6 @@ RESULT_SIMPLE_NEWS_IMPACT_COLUMNS = (
     "뉴스/공시 영향 요약",
     "뉴스/공시 영향 참고",
 )
-RESULT_SIMPLE_HORIZON_COLUMNS = (
-    "5일 예상 수익률(%)",
-    "20일 예상 수익률(%)",
-    "5일 상승확률(%)",
-    "20일 상승확률(%)",
-    "예측 이유",
-)
 
 
 def display_width(text: str) -> int:
@@ -88,20 +81,6 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
         lambda v: "-" if pd.isna(v) else f"{float(v):,.0f}원"
     )
     simple["내일 예상 수익률(%)"] = out["predicted_return"].map(lambda v: format_percentage_text(v, digits=3))
-    if "predicted_return_5d" in out.columns:
-        simple["5일 예상 수익률(%)"] = out["predicted_return_5d"].map(lambda v: format_percentage_text(v, digits=3))
-    if "predicted_return_20d" in out.columns:
-        simple["20일 예상 수익률(%)"] = out["predicted_return_20d"].map(lambda v: format_percentage_text(v, digits=3))
-    if "up_probability_5d" in out.columns:
-        simple["5일 상승확률(%)"] = out["up_probability_5d"].map(
-            lambda v: format_percentage_text(v, digits=1, unit_interval=True)
-        )
-    if "up_probability_20d" in out.columns:
-        simple["20일 상승확률(%)"] = out["up_probability_20d"].map(
-            lambda v: format_percentage_text(v, digits=1, unit_interval=True)
-        )
-    if "prediction_reason" in out.columns and any(c in out.columns for c in ("predicted_return_5d", "predicted_return_20d")):
-        simple["예측 이유"] = out["prediction_reason"].fillna("").astype(str)
     simple["_sort_confidence"] = pd.to_numeric(out["confidence_score"], errors="coerce").values
     simple["_sort_return"] = pd.to_numeric(out["predicted_return"], errors="coerce").values
     simple = simple.sort_values(["_sort_confidence", "_sort_return"], ascending=[False, False]).reset_index(drop=True)
@@ -109,7 +88,6 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
     # Schema contract: keep only current public columns in stable order.
     ordered = [
         *RESULT_SIMPLE_REQUIRED_COLUMNS,
-        *[c for c in RESULT_SIMPLE_HORIZON_COLUMNS if c in simple.columns],
         *[c for c in RESULT_SIMPLE_OPTIONAL_COLUMNS if c in simple.columns],
         *[c for c in RESULT_SIMPLE_NEWS_IMPACT_COLUMNS if c in simple.columns],
     ]

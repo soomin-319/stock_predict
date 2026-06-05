@@ -85,12 +85,6 @@ def risk_flag(row: pd.Series) -> str:
         flags.append("DATA_COVERAGE_LOW")
     if float(row.get("market_headwind_score", 0) or 0) <= -1:
         flags.append("MARKET_HEADWIND")
-    pred_5d = pd.to_numeric(pd.Series([row.get("predicted_return_5d")]), errors="coerce").iloc[0]
-    pred_20d = pd.to_numeric(pd.Series([row.get("predicted_return_20d")]), errors="coerce").iloc[0]
-    if not pd.isna(pred_5d) and not pd.isna(pred_20d) and pred_5d < 0 < pred_20d:
-        flags.append("SHORT_TERM_PULLBACK")
-    if not pd.isna(pred_5d) and not pd.isna(pred_20d) and pred_5d > 0 > pred_20d:
-        flags.append("LONG_TERM_DOWNSIDE")
     return "|".join(flags) if flags else "NORMAL"
 
 
@@ -264,7 +258,7 @@ def build_pm_summary_fields(row: pd.Series, cfg: InvestmentCriteriaConfig | None
 
     if coverage_status == "halt" or "COVERAGE_HALT" in risk:
         trading_gate = "거래중단"
-    elif "MARKET_HEADWIND" in risk or "DATA_COVERAGE_LOW" in risk or "LONG_TERM_DOWNSIDE" in risk:
+    elif "MARKET_HEADWIND" in risk or "DATA_COVERAGE_LOW" in risk:
         trading_gate = "보수모드"
     elif "LOW_LIQUIDITY" in risk:
         trading_gate = "체결주의"

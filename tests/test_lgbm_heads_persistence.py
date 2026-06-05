@@ -90,3 +90,21 @@ def test_predict_rejects_missing_feature_columns():
     partial = df.drop(columns=["f2"])
     with pytest.raises(ValueError, match="missing .* feature columns"):
         model.predict(partial)
+
+
+def test_model_ignores_legacy_multi_horizon_targets():
+    feature_cols = ["f1", "f2", "f3"]
+    df = _make_training_frame(feature_cols=feature_cols)
+    df["target_log_return_5d"] = df["target_log_return"] * 5
+    df["target_up_5d"] = (df["target_log_return_5d"] > 0).astype(int)
+    df["target_log_return_20d"] = df["target_log_return"] * 20
+    df["target_up_20d"] = (df["target_log_return_20d"] > 0).astype(int)
+
+    model = MultiHeadStockModel(random_state=7, n_jobs=1)
+    model.fit(df, feature_cols, quantiles=[0.1, 0.5, 0.9])
+    prediction = model.predict(df)
+
+    assert not hasattr(model, "horizon_reg_models")
+    assert not hasattr(model, "horizon_cls_models")
+    assert not hasattr(prediction, "horizon_predicted_return")
+    assert not hasattr(prediction, "horizon_up_probability")

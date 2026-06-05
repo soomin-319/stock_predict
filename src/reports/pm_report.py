@@ -21,27 +21,24 @@ def build_pm_report(pred_df: pd.DataFrame, report: dict) -> dict:
         "trading_gate",
         "risk_flag",
         "predicted_return",
-        "predicted_return_5d",
-        "predicted_return_20d",
         "up_probability",
-        "up_probability_5d",
-        "up_probability_20d",
         "prediction_reason",
     ]
     focus_columns = [column for column in focus_columns if column in top_buys.columns]
     top_buy_payload = top_buys[focus_columns].to_dict(orient="records")
 
-    horizon_summary = {}
-    for horizon in (1, 5, 20):
-        return_col = "predicted_return" if horizon == 1 else f"predicted_return_{horizon}d"
-        prob_col = "up_probability" if horizon == 1 else f"up_probability_{horizon}d"
-        if return_col in work.columns:
-            prob_source = work[prob_col] if prob_col in work.columns else pd.Series(0.5, index=work.index)
-            horizon_summary[f"{horizon}d"] = {
-                "avg_predicted_return_pct": float(pd.to_numeric(work[return_col], errors="coerce").fillna(0.0).mean()),
-                "positive_signal_count": int((pd.to_numeric(work[return_col], errors="coerce").fillna(0.0) > 0).sum()),
-                "avg_up_probability": float(pd.to_numeric(prob_source, errors="coerce").fillna(0.5).mean()),
-            }
+    up_probability = (
+        pd.to_numeric(work["up_probability"], errors="coerce").fillna(0.5)
+        if "up_probability" in work.columns
+        else pd.Series(0.5, index=work.index)
+    )
+    horizon_summary = {
+        "1d": {
+            "avg_predicted_return_pct": float(pd.to_numeric(work["predicted_return"], errors="coerce").fillna(0.0).mean()),
+            "positive_signal_count": int((pd.to_numeric(work["predicted_return"], errors="coerce").fillna(0.0) > 0).sum()),
+            "avg_up_probability": float(up_probability.mean()),
+        }
+    }
 
     coverage_gate = report.get("coverage_gate", {})
     risk_counts = work["risk_flag"].astype(str).value_counts(dropna=False).to_dict() if "risk_flag" in work.columns else {}
