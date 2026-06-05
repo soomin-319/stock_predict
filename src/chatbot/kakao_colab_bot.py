@@ -253,19 +253,67 @@ class KakaoColabPredictionBot:
         return self._handle_symbol_request(symbol, user_id=user_id, force_refresh=False, from_session=False)
 
     def _handle_recommendation_request(self) -> dict[str, Any]:
+        submitted_at = datetime.now(timezone.utc)
         try:
             recommendations = self.recommendation_service.get_recommendations(top_n=None, min_final_score=200)
+            message = format_recommendation_message(recommendations)
+            self._write_recommendation_log(
+                submitted_at=submitted_at,
+                status="completed",
+                recommendations=recommendations,
+                response_text=message,
+            )
             return self._build_response(
-                format_recommendation_message(recommendations),
+                message,
                 quick_replies=[("다시 추천", "추천"), ("도움말", "도움말")],
             )
         except Exception as exc:
+            self._write_recommendation_log(
+                submitted_at=submitted_at,
+                status="failed",
+                error=f"{type(exc).__name__}: {exc}",
+            )
             self._console_log(f"실시간 추천 처리 오류({type(exc).__name__}): {exc}")
             return self._build_response(
                 "실시간 추천 생성에 실패했습니다.\n"
                 "데이터 수집 또는 네트워크 상태를 확인한 뒤 다시 '추천'을 입력해주세요.",
                 quick_replies=[("다시 추천", "추천"), ("도움말", "도움말")],
             )
+
+    def _write_recommendation_log(
+        self,
+        *,
+        submitted_at: datetime,
+        status: str,
+        recommendations: list[Any] | tuple[Any, ...] | None = None,
+        response_text: str | None = None,
+        error: str | None = None,
+    ) -> Path | None:
+        timestamp = submitted_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        log_path = self.log_dir / f"recommendation_{timestamp}.log"
+        try:
+            rows = list(recommendations or [])
+            lines = [
+                f"submitted_at={submitted_at.astimezone(timezone.utc).isoformat()}",
+                f"status={status}",
+                f"result_count={len(rows)}",
+            ]
+            if error:
+                lines.append(f"error={error}")
+            for item in rows:
+                rank = getattr(item, "rank", "-")
+                name = getattr(item, "name", "-")
+                symbol = getattr(item, "symbol", "-")
+                score = getattr(item, "final_score", "-")
+                lines.append(f"recommendation={rank}|{name}|{symbol}|{score}")
+            if response_text:
+                lines.append("response_text=")
+                lines.append(str(response_text))
+            log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return log_path
+        except Exception as exc:
+            self._console_log(f"추천 로그 기록 실패({type(exc).__name__}): {exc}")
+            return None
 
     def _handle_symbol_request(
         self,

@@ -1814,6 +1814,12 @@ def test_recommendation_keyword_returns_realtime_recommendations(tmp_path: Path)
     assert "[실시간 추천]" in text
     assert "1위 삼성전자(005930)" in text
     assert "점수: 200" in text
+    log_files = list((tmp_path / "result" / "chatbot_logs").glob("recommendation_*.log"))
+    assert len(log_files) == 1
+    log_text = log_files[0].read_text(encoding="utf-8")
+    assert "status=completed" in log_text
+    assert "result_count=1" in log_text
+    assert "삼성전자" in log_text
 
 
 def test_recommendation_keyword_returns_failure_message_when_service_raises(tmp_path: Path):
@@ -1825,6 +1831,11 @@ def test_recommendation_keyword_returns_failure_message_when_service_raises(tmp_
 
     assert "실시간 추천 생성에 실패했습니다" in text
     assert "다시 '추천'" in text
+    log_files = list((tmp_path / "result" / "chatbot_logs").glob("recommendation_*.log"))
+    assert len(log_files) == 1
+    log_text = log_files[0].read_text(encoding="utf-8")
+    assert "status=failed" in log_text
+    assert "RuntimeError: network down" in log_text
 
 
 def test_guide_response_includes_recommendation_quick_reply(tmp_path: Path):
