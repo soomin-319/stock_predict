@@ -45,7 +45,7 @@
 - 중복(`Date, Symbol`) 제거
 
 ### 3.3 유니버스 (`src/data/universe.py`)
-- 기본 유니버스 컨셉: `KOSPI200 + KOSDAQ150`
+- 기본 유니버스: `data/kospi200_symbol_name_map.csv`의 KOSPI200 200종목
 - CSV 기반 심볼 유니버스 로딩/필터링 지원
 
 ### 3.4 실데이터 수집 (`src/data/fetch_real_data.py`)
@@ -152,11 +152,12 @@
 - `--output`: 최종 예측 CSV 경로
 - `--report-json`: 실행 리포트 JSON
 - `--figure-dir`: 그래프 저장 경로
-- `--fetch-real`: 실데이터 자동 수집
+- `--fetch-real`: 실데이터 자동 수집. 심볼 미지정 시 기본 KOSPI200 전체 수집
 - `--real-symbols`: 수집 심볼 목록
 - `--real-start`: 수집 시작일
 - `--disable-external`: 외부 피처 병합 비활성화
 - `--universe-csv`: 유니버스 CSV
+- `--auto-refresh-real`: 기본 KOSPI200 전체의 최신 OHLCV 증분 수집
 - `--config-json`: nested AppConfig 오버라이드
 - `--disable-investor-flow`, `--disable-disclosure-context`, `--disable-news-context`
 - `--news-scoring-mode`, `--openai-api-key`, `--openai-model`
