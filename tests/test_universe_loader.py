@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from src.config.settings import UniverseConfig
 from src.data import universe as universe_module
 from src.data.universe import load_default_universe_symbols, load_universe_symbols, load_universe_symbols_list
 
@@ -32,3 +33,10 @@ def test_load_default_universe_symbols_uses_repo_csv():
     assert symbols[-1] == "0126Z0.KS"
     assert all(symbol.endswith(".KS") for symbol in symbols)
     assert universe_module.DEFAULT_UNIVERSE_CSV == Path("data/kospi200_symbol_name_map.csv").resolve()
+
+
+def test_default_universe_config_is_kospi200_only():
+    config = UniverseConfig()
+
+    assert config.name == "KOSPI200"
+    assert config.expected_size == 200

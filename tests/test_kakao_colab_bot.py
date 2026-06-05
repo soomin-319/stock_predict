@@ -1371,10 +1371,11 @@ def test_prewarm_prediction_cache_reuses_cache_only_when_signature_matches(monke
     input_path = tmp_path / "data" / "real_ohlcv.csv"
     input_path.parent.mkdir(parents=True, exist_ok=True)
     input_path.write_text("Date,Symbol,Open,High,Low,Close,Volume\n", encoding="utf-8")
-    universe_path = tmp_path / "data" / "default_universe_kospi50_kosdaq50.csv"
+    universe_path = tmp_path / "data" / "kospi200_symbol_name_map.csv"
     universe_path.write_text("Symbol\n005930.KS\n", encoding="utf-8")
 
     signature = _runtime_cache_signature(runtime_config, tmp_path)
+    assert signature["default_universe_stat"]["size"] == universe_path.stat().st_size
     meta_path = result_dir / "prewarm_cache_meta.json"
     meta_path.write_text(
         json.dumps({"signature": signature, "signature_hash": _cache_signature_hash(signature)}, ensure_ascii=False),
@@ -1435,7 +1436,7 @@ def test_prewarm_prediction_cache_invalidates_stale_daily_signature(monkeypatch,
     input_path = tmp_path / "data" / "real_ohlcv.csv"
     input_path.parent.mkdir(parents=True, exist_ok=True)
     input_path.write_text("Date,Symbol,Open,High,Low,Close,Volume\n", encoding="utf-8")
-    universe_path = tmp_path / "data" / "default_universe_kospi50_kosdaq50.csv"
+    universe_path = tmp_path / "data" / "kospi200_symbol_name_map.csv"
     universe_path.write_text("Symbol\n005930.KS\n", encoding="utf-8")
 
     stale_signature = _runtime_cache_signature(runtime_config, tmp_path)

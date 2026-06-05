@@ -9,6 +9,7 @@ import pandas as pd
 
 from src.data.fetch_real_data import fetch_real_ohlcv
 from src.data.krx_universe import get_symbol_name_map
+from src.data.universe import DEFAULT_UNIVERSE_CSV
 from src.recommendation.close_betting import (
     CloseBettingRecommendation,
     add_technical_indicators,
@@ -20,7 +21,6 @@ from src.recommendation.close_betting import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-DEFAULT_UNIVERSE_CSV = Path(__file__).resolve().parents[2] / "data" / "default_universe_kospi50_kosdaq50.csv"
 
 SymbolsProvider = Callable[[], pd.DataFrame]
 OhlcvFetcher = Callable[[list[str], str, str | None], pd.DataFrame]

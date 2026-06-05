@@ -1723,7 +1723,7 @@ def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: Pipel
 
 def _runtime_cache_signature(cfg: PipelineRuntimeConfig, project_root: Path) -> dict[str, Any]:
     input_path = project_root / cfg.input_csv
-    universe_path = project_root / "data" / "default_universe_kospi50_kosdaq50.csv"
+    universe_path = project_root / "data" / "kospi200_symbol_name_map.csv"
 
     def _stat_payload(path: Path) -> dict[str, int | None]:
         if not path.exists():
