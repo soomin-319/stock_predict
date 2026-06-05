@@ -147,9 +147,6 @@ Do not commit API keys, credentials, or private market data.
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [Operations](docs/OPERATIONS.md)
-- [Roadmap](docs/ROADMAP.md)
-- [Feature overview](docs/PROJECT_FEATURES_OVERVIEW.md)
-- [External data integration](docs/EXTERNAL_DATA_INTEGRATION_GUIDE.md)
-- [Prediction formulas](docs/PREDICTION_FORMULAS.md)
+- [Project operation guide](docs/PROJECT_OPERATION_GUIDE.md)
+- [Documentation index](docs/README.md)
+- [Archived reference documents](docs/archive/README.md)
