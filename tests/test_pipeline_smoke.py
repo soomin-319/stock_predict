@@ -305,7 +305,6 @@ def test_run_pipeline_promotes_investor_context_to_separate_progress_step(tmp_pa
     inp = Path("data/sample_ohlcv.csv")
     out = tmp_path / "predictions.csv"
     rep = tmp_path / "report.json"
-    fig = tmp_path / "figures"
 
     def _fake_add_context(data, config):
         coverage = {
@@ -323,15 +322,14 @@ def test_run_pipeline_promotes_investor_context_to_separate_progress_step(tmp_pa
         str(out),
         universe_csv=None,
         report_json=str(rep),
-        figure_dir=str(fig),
         use_external=False,
         use_investor_context=True,
     )
 
     out_text = capsys.readouterr().out
-    assert "[4/13] Adding investor context" in out_text
-    assert "[5/13] Building price features" in out_text
-    assert "[6/13] Adding external market features" in out_text
+    assert "[4/12] Adding investor context" in out_text
+    assert "[5/12] Building price features" in out_text
+    assert "[6/12] Adding external market features" in out_text
 
 
 def test_external_features_fail_gracefully_without_noise(monkeypatch):
