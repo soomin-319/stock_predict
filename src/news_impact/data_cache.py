@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from src.news_impact.schema import DisclosureItem, NewsItem
+from src.utils.atomic_files import atomic_write_text
 
 
 class DataCache:
@@ -93,8 +94,8 @@ class DataCache:
         return self.root / "market" / vendor / ticker / f"{trading_day.isoformat()}.json"
 
     def _write_json(self, path: Path, payload: dict[str, Any]) -> Path:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
+        atomic_write_text(
+            path,
             json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )

@@ -10,6 +10,7 @@ from src.reports.result_formatter import (
     build_result_simple as format_result_simple,
     print_prediction_console_summary as format_prediction_console_summary,
 )
+from src.utils.atomic_files import _tmp_path
 
 
 def project_result_dir() -> Path:
@@ -51,15 +52,40 @@ def resolve_output_dir(output_dir: str) -> Path:
     return out_dir
 
 
-def safe_to_csv(df: pd.DataFrame, path: Path) -> Path:
+def safe_to_csv(df: pd.DataFrame, path: Path, *, allow_fallback: bool = True) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _tmp_path(path)
     try:
-        df.to_csv(path, index=False, encoding="utf-8-sig")
+        df.to_csv(tmp, index=False, encoding="utf-8-sig")
+        tmp.replace(path)
         return path
     except PermissionError:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        if not allow_fallback:
+            raise
         fallback = path.with_name(f"{path.stem}_fallback{path.suffix}")
-        df.to_csv(fallback, index=False, encoding="utf-8-sig")
+        fallback_tmp = _tmp_path(fallback)
+        try:
+            df.to_csv(fallback_tmp, index=False, encoding="utf-8-sig")
+            fallback_tmp.replace(fallback)
+        finally:
+            try:
+                if fallback_tmp.exists():
+                    fallback_tmp.unlink()
+            except OSError:
+                pass
         print(f"[경고] 파일이 열려 있어 기본 경로에 저장하지 못했습니다. 대체 경로로 저장: {fallback}")
         return fallback
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
 
 
 def build_pipeline_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:

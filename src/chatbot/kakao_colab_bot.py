@@ -33,6 +33,7 @@ from src.chatbot.responses import attach_quick_replies, simple_text_response
 from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.news_impact_context import append_generated_news_impact_context
 from src.reports.result_formatter import validate_result_simple_schema
+from src.utils.atomic_files import atomic_write_text
 from src.recommendation.close_betting import format_recommendation_message
 from src.recommendation.realtime_close_betting import RealTimeCloseBettingRecommendationService
 
@@ -666,10 +667,10 @@ class KakaoColabPredictionBot:
             if not ok:
                 self._console_log(f"예측 캐시 CSV 스키마 불일치: 필수 컬럼 누락 {missing}. 파일={self.result_simple_path}")
                 with self._state_lock:
-                    self._result_simple_cache = loaded
-                    self._result_simple_cache_mtime_ns = stat_mtime_ns
+                    self._result_simple_cache = None
+                    self._result_simple_cache_mtime_ns = None
                     self._issue_summary_cache = {}
-                return loaded.copy()
+                return pd.DataFrame()
             with self._state_lock:
                 self._result_simple_cache = loaded
                 self._result_simple_cache_mtime_ns = stat_mtime_ns
@@ -1764,8 +1765,7 @@ def _load_prewarm_meta(path: Path) -> dict[str, Any]:
 
 
 def _write_prewarm_meta(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write_text(path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def _is_colab_runtime() -> bool:
