@@ -93,8 +93,8 @@ from src.validation.support import (
 )
 
 
-def _fallback_symbols_from_input_or_default(input_csv: str, limit: int = 5) -> list[str]:
-    """Return the repo-managed default fetch universe subset used when no explicit fetch universe is provided."""
+def _fallback_symbols_from_input_or_default(input_csv: str, limit: int = 0) -> list[str]:
+    """Return the repo-managed default fetch universe used when no explicit fetch universe is provided."""
     return data_fallback_symbols_from_input_or_default(input_csv, limit=limit)
 
 
