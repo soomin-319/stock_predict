@@ -42,9 +42,9 @@
 
 - `sklearn`, `yfinance`, `openai`, `joblib` 미설치
 - 현재 로컬 Python: `3.14.5`
-- 설치된 주요 패키지: `numpy 2.4.6`, `pandas 2.3.3`, `matplotlib 3.10.9`, `pykrx 1.2.8`, `pytest 9.0.3`
+- 설치된 주요 패키지: `numpy 2.4.6`, `pandas 2.3.3`, `matplotlib 3.10.9`, `pytest 9.0.3`
 - `requirements.txt`는 `numpy>=2.0,<2.3`를 요구하지만 실제 환경은 `numpy 2.4.6`
-- `requirements.txt`에는 `pykrx`가 없지만 `pyproject.toml`에는 있다.
+- 시장 데이터 패키지 선언이 의존성 파일 사이에서 일치하지 않는다.
 - pytest cache가 `result/.pytest_cache` 아래에 쓰이도록 되어 있으나, 현재 환경에서 permission warning이 발생했다.
 
 ### 즉시 수정 권장
@@ -55,7 +55,7 @@
 2. 의존성 원천을 하나로 정한다.
    - `pyproject.toml` 기준으로 관리하고 `requirements.txt`는 생성물로 취급하거나,
    - 반대로 `requirements*.txt`를 기준으로 하고 `pyproject.toml`을 동기화.
-3. `requirements.txt`에 `pykrx` 추가 또는 `pyproject.toml`에서 optional extra로 분리.
+3. 시장 데이터 패키지는 필요 시 optional extra로 분리.
 4. `dev` extra에 최소 테스트 실행 의존성을 포함한다.
    - 현재 `dev = ["pytest"]`만으로는 테스트 수집도 불가.
 
@@ -69,11 +69,10 @@ dev = [
   "joblib",
   "yfinance",
   "openai",
-  "pykrx",
 ]
 bot = ["flask", "pyngrok"]
 llm = ["openai"]
-market = ["yfinance", "pykrx"]
+market = ["yfinance"]
 ```
 
 ## 4. 최우선 개선 과제
@@ -96,7 +95,7 @@ market = ["yfinance", "pykrx"]
 - 외부 통합은 함수 내부 lazy import로 이동.
 - optional dependency가 없을 때 명확한 메시지와 fallback 제공.
 - `src/recommendation/__init__.py`에서 `RealTimeCloseBettingRecommendationService` 자동 import 제거 또는 lazy accessor 사용.
-- `--disable-external` 경로는 yfinance/openai/pykrx 없이도 import와 기본 테스트가 가능해야 한다.
+- `--disable-external` 경로는 yfinance/openai 없이도 import와 기본 테스트가 가능해야 한다.
 
 완료 기준:
 
@@ -199,7 +198,6 @@ market = ["yfinance", "pykrx"]
 외부 통합:
 
 - yfinance
-- pykrx
 - DART
 - Naver News
 - OpenAI

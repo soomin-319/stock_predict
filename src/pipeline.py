@@ -250,8 +250,8 @@ def _calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Ind
     return validation_calibrate_up_probability(oof_df, up_probs)
 
 
-def _safe_to_csv(df: pd.DataFrame, path: Path) -> Path:
-    return output_safe_to_csv(df, path)
+def _safe_to_csv(df: pd.DataFrame, path: Path, *, allow_fallback: bool = True) -> Path:
+    return output_safe_to_csv(df, path, allow_fallback=allow_fallback)
 
 
 def _build_combined_symbol_results(pred_df: pd.DataFrame, summary_csv: str | None, out_path: Path) -> str | None:
@@ -658,9 +658,9 @@ def _write_pipeline_artifacts(
     simple_df = _build_result_simple(detail_df)
 
     detail_path = resolve_output_path("result_detail.csv")
-    detail_path = _safe_to_csv(detail_df, detail_path)
+    detail_path = _safe_to_csv(detail_df, detail_path, allow_fallback=False)
     simple_path = resolve_output_path("result_simple.csv")
-    simple_path = _safe_to_csv(simple_df, simple_path)
+    simple_path = _safe_to_csv(simple_df, simple_path, allow_fallback=False)
 
     issue_snapshot = _build_issue_summary_snapshot(pred_df)
     export_context_df = context_raw_df.copy()

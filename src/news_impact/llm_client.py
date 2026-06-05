@@ -7,6 +7,7 @@ from typing import Any, Iterable, Protocol
 from urllib import error as urlerror, request
 
 from src.news_impact.llm_config import LLMConfig
+from src.utils.atomic_files import atomic_write_text
 
 
 class LLMResponseError(RuntimeError):
@@ -58,7 +59,8 @@ class FileLLMResponseCache:
 
     def set(self, key: str, value: dict[str, Any]) -> None:
         path = self._path(key)
-        path.write_text(
+        atomic_write_text(
+            path,
             json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )

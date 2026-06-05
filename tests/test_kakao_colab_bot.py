@@ -17,6 +17,7 @@ from src.chatbot.kakao_colab_bot import (
     launch_colab_kakao_bot,
     _cache_signature_hash,
     _runtime_cache_signature,
+    _write_prewarm_meta,
     prewarm_prediction_cache,
     start_pyngrok_tunnel,
 )
@@ -1472,6 +1473,20 @@ def test_load_cached_result_simple_logs_parse_failures(tmp_path: Path, capsys):
     assert "예측 캐시 CSV 로드 실패" in captured.out
 
 
+def test_load_cached_result_simple_returns_empty_for_schema_mismatch(tmp_path: Path, capsys):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir(parents=True, exist_ok=True)
+    (result_dir / "result_simple.csv").write_text("종목코드,종목명\n005930,삼성전자\n", encoding="utf-8-sig")
+
+    bot = make_bot(tmp_path)
+    out = bot._load_cached_result_simple()
+
+    captured = capsys.readouterr()
+    assert out.empty
+    assert "예측 캐시 CSV 스키마 불일치" in captured.out
+    assert bot._result_simple_cache is None
+
+
 def test_finalize_process_logs_completion_without_inline_formatting(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
@@ -1592,7 +1607,11 @@ def test_load_cached_result_simple_uses_mtime_cache(monkeypatch, tmp_path: Path)
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True, exist_ok=True)
     csv_path = result_dir / "result_simple.csv"
-    csv_path.write_text("종목코드,종목명\n005930,삼성전자\n", encoding="utf-8-sig")
+    csv_path.write_text(
+        "종목코드,종목명,권고,내일 예상 종가,내일 예상 수익률(%),상승확률(%),예측 신뢰도\n"
+        "005930,삼성전자,매수,\"71,200원\",1.234%,78.9%,65.0%\n",
+        encoding="utf-8-sig",
+    )
 
     bot = make_bot(tmp_path)
     original_read_csv = pd.read_csv
@@ -1609,6 +1628,23 @@ def test_load_cached_result_simple_uses_mtime_cache(monkeypatch, tmp_path: Path)
 
     assert calls["count"] == 1
     assert not out1.empty and not out2.empty
+
+
+def test_write_prewarm_meta_writes_via_replace(monkeypatch, tmp_path: Path):
+    target = tmp_path / "result" / "prewarm_cache_meta.json"
+    replaced: list[Path] = []
+    original_replace = Path.replace
+
+    def _record_replace(self: Path, target_path: Path):
+        replaced.append(Path(target_path))
+        return original_replace(self, target_path)
+
+    monkeypatch.setattr(Path, "replace", _record_replace)
+
+    _write_prewarm_meta(target, {"signature_hash": "abc"})
+
+    assert replaced == [target]
+    assert json.loads(target.read_text(encoding="utf-8"))["signature_hash"] == "abc"
 
 
 def test_issue_summary_timeout_does_not_block_webhook_response(tmp_path: Path, monkeypatch):
@@ -1814,6 +1850,12 @@ def test_recommendation_keyword_returns_realtime_recommendations(tmp_path: Path)
     assert "[실시간 추천]" in text
     assert "1위 삼성전자(005930)" in text
     assert "점수: 200" in text
+    log_files = list((tmp_path / "result" / "chatbot_logs").glob("recommendation_*.log"))
+    assert len(log_files) == 1
+    log_text = log_files[0].read_text(encoding="utf-8")
+    assert "status=completed" in log_text
+    assert "result_count=1" in log_text
+    assert "삼성전자" in log_text
 
 
 def test_recommendation_keyword_returns_failure_message_when_service_raises(tmp_path: Path):
@@ -1825,6 +1867,11 @@ def test_recommendation_keyword_returns_failure_message_when_service_raises(tmp_
 
     assert "실시간 추천 생성에 실패했습니다" in text
     assert "다시 '추천'" in text
+    log_files = list((tmp_path / "result" / "chatbot_logs").glob("recommendation_*.log"))
+    assert len(log_files) == 1
+    log_text = log_files[0].read_text(encoding="utf-8")
+    assert "status=failed" in log_text
+    assert "RuntimeError: network down" in log_text
 
 
 def test_guide_response_includes_recommendation_quick_reply(tmp_path: Path):

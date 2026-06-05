@@ -31,7 +31,7 @@
   3. 필요하면 감성/관련도 점수를 보조 메타데이터로 저장할 수 있으나, 예상 수익률 또는 매수/매도 신호에는 반영하지 않음.
 
 ### D. 외국인/기관 수급
-- **pykrx (권장)**: 국내 주식 투자자별 순매수(외국인/기관/개인) 조회 가능.
+- 현재 외부 수집 경로는 비활성화되어 있다.
 - 연동 방식:
   1. 일자별 종목 순매수 데이터 수집.
   2. `foreign_net_buy`, `institution_net_buy` 컬럼으로 저장.
@@ -48,7 +48,7 @@
 1. **수집 레이어**
    - `fetch_disclosures.py` (OpenDART)
    - `fetch_news_issues.py` (뉴스 원문/요약)
-   - `fetch_investor_flow.py` (pykrx)
+   - `fetch_investor_flow.py` (향후 수급 데이터 공급자 연동)
 
 2. **정규화 레이어**
    - 컬럼 표준화: `Date`, `Symbol`, `disclosure_summary`, `news_summary`, `foreign_net_buy`, `institution_net_buy`
@@ -78,7 +78,7 @@
 ## 4) 최소 구현 로드맵 (2주)
 
 ### Week 1
-- OpenDART + pykrx 수집 스크립트 작성
+- OpenDART + 투자자 수급 수집 스크립트 작성
 - 일자-종목 스키마 통일 CSV 생성
 
 ### Week 2

@@ -129,7 +129,7 @@ LightGBM이 설치되어 있으면 LightGBM을 쓰고, 없으면 sklearn `Gradie
 외부 호출은 선택적이다.
 
 - yfinance: 실 OHLCV와 외부 시장 지표 다운로드.
-- pykrx: 투자자 수급 컨텍스트 경로에서 사용된다.
+- 투자자 수급 컨텍스트: 현재 외부 수집 경로가 비활성화되어 있다.
 - DART: 공시 컨텍스트와 raw disclosure event 수집.
 - Naver News Search: 뉴스 raw event 수집.
 - OpenAI: 공시/뉴스 이슈 요약 생성.
