@@ -13,6 +13,13 @@ from src.pipeline import _drop_empty_detail_columns, _split_oof_for_tuning_and_e
 from src.pipeline_support import PredictionFrameContext, build_scored_prediction_frame
 
 
+def test_graph_module_and_dependency_are_removed():
+    assert not Path("src/reports/visualize.py").exists()
+    assert not Path("tests/test_visualize_recent_month.py").exists()
+    assert "matplotlib" not in Path("requirements.txt").read_text().lower()
+    assert "matplotlib" not in Path("pyproject.toml").read_text().lower()
+
+
 def make_sample_df(days: int = 320):
     rng = np.random.default_rng(42)
     dates = pd.date_range("2023-01-01", periods=days, freq="B")
