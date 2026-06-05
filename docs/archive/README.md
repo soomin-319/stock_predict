@@ -4,6 +4,7 @@
 
 ## 구조
 
+- `reference/`: 기존 구조, 운영, 기능, 공식, 연동 참고 문서
 - `analysis-reports/`: 날짜별 코드베이스 분석, 개선안, 리뷰 리포트
 - `superpowers/plans/`: 과거 구현 계획
 - `superpowers/specs/`: 과거 설계 문서
