@@ -9,8 +9,8 @@ import pandas as pd
 from src.data.universe import load_default_universe_symbols, load_universe_symbols
 
 
-def fallback_symbols_from_input_or_default(input_csv: str, limit: int = 5) -> list[str]:
-    """Return the repo-managed default fetch universe subset."""
+def fallback_symbols_from_input_or_default(input_csv: str, limit: int = 0) -> list[str]:
+    """Return the repo-managed default fetch universe."""
     _ = input_csv
     symbols = load_default_universe_symbols()
     if limit <= 0:

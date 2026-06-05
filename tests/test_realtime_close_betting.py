@@ -75,13 +75,13 @@ def test_format_recommendation_message_includes_rank_symbol_score_and_reason():
 
 
 def test_default_realtime_service_uses_bundled_universe():
-    service = RealTimeCloseBettingRecommendationService(today_provider=lambda: date(2026, 5, 27), universe_limit=5)
+    service = RealTimeCloseBettingRecommendationService(today_provider=lambda: date(2026, 5, 27))
 
     symbols = service.symbols_provider()
 
     assert not hasattr(service, "_load_kospi200_symbols")
-    assert symbols["Symbol"].tolist() == ["005930.KS", "000660.KS", "373220.KS", "207940.KS", "005380.KS"]
-    assert symbols["Name"].tolist()[:2] == [SAMSUNG, HYNIX]
+    assert len(symbols) == 200
+    assert symbols["Symbol"].tolist()[:5] == ["018880.KS", "011780.KS", "066570.KS", "009150.KS", "009420.KS"]
     assert symbols["Market"].unique().tolist() == ["KOSPI"]
     assert service.top_trade_value_count == 20
 

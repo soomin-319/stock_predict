@@ -9,8 +9,8 @@ from typing import List
 
 @dataclass
 class UniverseConfig:
-    name: str = "KOSPI200_KOSDAQ150"
-    expected_size: int = 350
+    name: str = "KOSPI200"
+    expected_size: int = 200
 
 
 @dataclass

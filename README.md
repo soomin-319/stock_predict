@@ -46,10 +46,10 @@ python src/pipeline.py --input data/real_ohlcv.csv --add-symbols 005930 000660.K
 - `--universe-csv`: optional CSV with a `Symbol` column.
 - `--report-json`: pipeline report JSON filename. Default: `pipeline_report.json`.
 - `--figure-dir`: generated figure directory under `result/`. Default: `figures`.
-- `--fetch-real`: download OHLCV before the run.
+- `--fetch-real`: download OHLCV before the run. Uses all 200 bundled KOSPI200 symbols when no symbols or universe CSV are specified.
 - `--real-symbols`: explicit symbols for `--fetch-real`.
 - `--real-start`: start date for real-data fetch. Default: `2020-01-01`.
-- `--auto-refresh-real`: incrementally append latest OHLCV when not doing a full refresh.
+- `--auto-refresh-real`: incrementally append latest OHLCV when not doing a full refresh. Uses all 200 bundled KOSPI200 symbols by default.
 - `--add-symbols`: normalize and append user-entered stock codes/symbols to the input CSV.
 - `--disable-external`: skip external market features.
 - `--fetch-investor-context`: enable investor flow/disclosure/news context.

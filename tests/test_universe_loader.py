@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from src.config.settings import UniverseConfig
 from src.data import universe as universe_module
 from src.data.universe import load_default_universe_symbols, load_universe_symbols, load_universe_symbols_list
 
@@ -26,9 +27,16 @@ def test_load_universe_symbols_reads_symbol_column(tmp_path):
 def test_load_default_universe_symbols_uses_repo_csv():
     symbols = load_default_universe_symbols()
 
-    assert len(symbols) == 100
-    assert symbols[0] == "005930.KS"
-    assert symbols[49] == "012450.KS"
-    assert symbols[50] == "247540.KQ"
-    assert symbols[-1] == "900140.KQ"
-    assert universe_module.DEFAULT_UNIVERSE_CSV == Path("data/default_universe_kospi50_kosdaq50.csv").resolve()
+    assert len(symbols) == 200
+    assert symbols[0] == "018880.KS"
+    assert symbols[49] == "007340.KS"
+    assert symbols[-1] == "0126Z0.KS"
+    assert all(symbol.endswith(".KS") for symbol in symbols)
+    assert universe_module.DEFAULT_UNIVERSE_CSV == Path("data/kospi200_symbol_name_map.csv").resolve()
+
+
+def test_default_universe_config_is_kospi200_only():
+    config = UniverseConfig()
+
+    assert config.name == "KOSPI200"
+    assert config.expected_size == 200
