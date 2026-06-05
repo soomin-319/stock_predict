@@ -54,7 +54,7 @@ src/
 - **계층 분리가 대체로 명확함**: `data → features → validation/models → inference/domain → reports` 흐름이 유지된다.
 - **운영 가드레일 명확함**: 매수/매도/관망은 `predicted_return`만 사용하고, 뉴스/공시는 표시용으로 제한한다.
 - **테스트 범위 넓음**: 파이프라인 스모크, Kakao bot, 신호 정책, 뉴스임팩트, 실데이터 fallback, 시각화 등 핵심 경로가 테스트된다.
-- **산출물 위치 일관성**: 생성 CSV/JSON/figure가 `result/` 아래로 모인다.
+- **산출물 위치 일관성**: 생성 CSV/JSON이 `result/` 아래로 모인다.
 - **문서가 이미 풍부함**: `docs/ARCHITECTURE.md`, `OPERATIONS.md`, `CODEBASE_ANALYSIS.md`, `ROADMAP.md`가 있어 온보딩 기반이 있다.
 
 ## 5. 발견한 구조상 리스크
@@ -66,11 +66,10 @@ src/
 | 파일 | 대략 라인 수 | 리스크 |
 |---|---:|---|
 | `src/chatbot/kakao_colab_bot.py` | 1958 | Flask 라우팅, 세션, 캐시, 작업 큐, 응답 포맷, Colab 실행이 한 파일에 집중 |
-| `src/pipeline.py` | 841 | CLI, refresh, 설정, 13단계 실행, 출력 연결이 한 파일에 집중 |
+| `src/pipeline.py` | 841 | CLI, refresh, 설정, 실행 단계, 출력 연결이 한 파일에 집중 |
 | `src/reports/issue_summary.py` | 662 | rule 기반 요약, OpenAI 요약, 포맷/예외 처리가 혼재 |
 | `src/news_impact/pipeline.py` | 612 | vendored 패키지 내부 오케스트레이션 비대 |
 | `src/features/price_features.py` | 541 | 가격 지표, 타깃, 이벤트/레거시 컬럼 처리가 혼재 |
-| `src/reports/visualize.py` | 478 | 여러 종류의 figure 생성이 한 파일에 집중 |
 
 ### 5.2 테스트 파일도 일부 비대
 
@@ -97,7 +96,7 @@ src/
 
 ### 5.6 `result/` 로컬 산출물 과다
 
-`result/`는 ignore 대상이지만 로컬에 많은 JSON/CSV/figure와 pytest 임시물이 쌓여 있다. 기능 문제는 아니나, 폴더 탐색과 백업/동기화 비용이 커진다.
+`result/`는 ignore 대상이지만 로컬에 많은 JSON/CSV와 pytest 임시물이 쌓여 있다. 기능 문제는 아니나, 폴더 탐색과 백업/동기화 비용이 커진다.
 
 ### 5.7 `src` 패키지명
 
@@ -148,7 +147,7 @@ src/pipeline_steps/
 ├─ build_features.py        # price/external/regime/investor feature 단계
 ├─ validate.py              # walk-forward/OOF/baseline/calibration
 ├─ train_predict.py         # 최종 모델 학습/최신 예측
-└─ write_outputs.py         # reports/figures/json 저장
+└─ write_outputs.py         # reports/json 저장
 ```
 
 주의:
@@ -311,8 +310,7 @@ src/
 ├─ inference/
 ├─ domain/
 ├─ reports/
-│  ├─ issue_summary/
-│  └─ visualize.py
+│  └─ issue_summary/
 ├─ recommendation/
 └─ news_impact/
 ```
@@ -342,7 +340,7 @@ stock_predict/
    - 13단계 로그와 산출물 이름 유지
    - step별 dataclass/context 도입 검토
 4. **리포트/피처 대형 파일 분할**
-   - `issue_summary`, `price_features`, `visualize` 순서 권장
+    - `issue_summary`, `price_features` 순서 권장
 5. **테스트 디렉터리 재배치**
    - 기능별 테스트 파일로 나누되 fixture 중복 제거
 6. **패키징/의존성 정리**

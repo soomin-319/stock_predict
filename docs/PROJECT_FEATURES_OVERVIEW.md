@@ -24,11 +24,10 @@
 8. Baseline 성능 계산
 9. OOF 예측 생성
 10. 신호 가중치 튜닝
-11. Top-K 백테스트 및 그래프 생성
-12. 최종 모델 학습 후 최신 시점 추론
-13. CSV/JSON/그래프 산출물 저장 + PM 요약 및 표시용 뉴스/공시 요약 생성
+11. 최종 모델 학습 후 최신 시점 추론
+12. CSV/JSON 산출물 저장 + PM 요약 및 표시용 뉴스/공시 요약 생성
 
-실행 시 콘솔에는 `[1/13]` 형태로 진행률이 출력됩니다.
+실행 시 콘솔에는 `[1/12]` 형태로 진행률이 출력됩니다.
 
 ---
 
@@ -139,19 +138,11 @@
 - 누적수익률, Sharpe, MDD + 평균 turnover/평균 선정 종목 수 계산
 - benchmark/excess return 및 비용 시나리오 비교
 
-### 6.4 시각화 (`src/reports/visualize.py`)
-- `equity_curve.png`
-- `drawdown_curve.png`
-- `signal_score_hist.png`
-
----
-
 ## 7. CLI 기능 (`src/pipeline.py`)
 주요 옵션:
 - `--input`: 입력 CSV 경로
 - `--output`: 최종 예측 CSV 경로
 - `--report-json`: 실행 리포트 JSON
-- `--figure-dir`: 그래프 저장 경로
 - `--fetch-real`: 실데이터 자동 수집. 심볼 미지정 시 기본 KOSPI200 전체 수집
 - `--real-symbols`: 수집 심볼 목록
 - `--real-start`: 수집 시작일
@@ -174,7 +165,6 @@
 - 표시용 이슈 컨텍스트: `result_news.csv`, `result_disclosure.csv`
 - Optional news-impact context: `news_impact_*` columns in detail/simple output when `--news-impact-report` is provided
 - OOF 결과: `reports/oof_predictions.csv`
-- 그래프: `--figure-dir/*.png`
 
 ---
 
