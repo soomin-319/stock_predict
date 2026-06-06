@@ -1691,6 +1691,72 @@ def test_issue_summary_timeout_does_not_block_webhook_response(tmp_path: Path, m
     assert elapsed < 0.12
 
 
+def test_keyed_timeout_work_is_single_flight(tmp_path: Path):
+    bot = make_bot(tmp_path)
+    started = threading.Event()
+    release = threading.Event()
+    calls = {"count": 0}
+    completed = []
+
+    def _slow_work():
+        calls["count"] += 1
+        started.set()
+        release.wait(timeout=1.0)
+        return "done"
+
+    assert bot._run_in_background_with_timeout(
+        _slow_work,
+        timeout=0.01,
+        key="same",
+        on_complete=completed.append,
+    ) is None
+    assert started.wait(timeout=0.2)
+    assert bot._run_in_background_with_timeout(_slow_work, timeout=0.01, key="same") is None
+    assert calls["count"] == 1
+
+    release.set()
+    deadline = time.time() + 1.0
+    while time.time() < deadline and bot._timed_futures:
+        time.sleep(0.01)
+    assert bot._timed_futures == {}
+    assert completed == ["done"]
+
+
+def test_timed_summary_completion_is_cached_without_duplicate_background_job(tmp_path: Path, monkeypatch):
+    bot = make_bot(tmp_path)
+    bot.ISSUE_SUMMARY_TIMEOUT_SEC = 0.01
+    monkeypatch.setattr(bot, "_prediction_date_for_symbol", lambda symbol: "2026-06-05")
+    monkeypatch.setattr(
+        bot,
+        "_load_result_news",
+        lambda: pd.DataFrame(
+            [{"Date": pd.Timestamp("2026-06-05"), "Symbol": "005930.KS", "source_type": "news", "title": "실적 개선"}]
+        ),
+    )
+    background_calls = []
+    monkeypatch.setattr(bot, "_start_issue_summary_background", lambda *args: background_calls.append(args))
+
+    def _slow_summary(base, **kwargs):
+        time.sleep(0.05)
+        out = base.copy()
+        out["공시 요약"] = "확인된 공시 없음"
+        out["뉴스 요약"] = "실적 개선"
+        return out
+
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.append_issue_summary_columns", _slow_summary)
+    row = pd.Series({"종목명": "삼성전자"})
+
+    returned = bot._attach_live_issue_summary(row, "005930.KS")
+    assert returned.equals(row)
+    assert background_calls == []
+
+    deadline = time.time() + 1.0
+    while time.time() < deadline and "005930.KS" not in bot._issue_summary_cache:
+        time.sleep(0.01)
+    assert bot._issue_summary_cache["005930.KS"]["뉴스 요약"] == "실적 개선"
+    assert bot._issue_summary_jobs["005930.KS"]["status"] == "completed"
+
+
 def test_cached_prediction_does_not_regenerate_issue_summary_when_summary_exists(tmp_path: Path, monkeypatch):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True, exist_ok=True)

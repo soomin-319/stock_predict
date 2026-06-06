@@ -13,6 +13,19 @@ import pandas as pd
 MODEL_ARTIFACT_VERSION = 1
 
 
+def _validate_quantiles(quantiles: List[float]) -> list[float]:
+    values = list(quantiles)
+    if len(values) < 3:
+        raise ValueError(f"quantiles must contain at least 3 values, got {values}")
+    if any(not isinstance(q, (int, float)) or isinstance(q, bool) or not 0 < q < 1 for q in values):
+        raise ValueError(f"quantiles must be numeric values strictly between 0 and 1, got {values}")
+    if len(set(values)) != len(values):
+        raise ValueError(f"quantiles must not contain duplicates, got {values}")
+    if values != sorted(values):
+        raise ValueError(f"quantiles must be strictly increasing, got {values}")
+    return values
+
+
 def _fit_one(task):
     """joblib Parallel 호환을 위한 모듈 수준 헬퍼."""
     model, x, y = task
@@ -129,6 +142,7 @@ class MultiHeadStockModel:
         )
 
     def fit(self, df: pd.DataFrame, feature_columns: List[str], quantiles: List[float]):
+        quantiles = _validate_quantiles(quantiles)
         train = df.dropna(subset=feature_columns + ["target_log_return", "target_up"])
         x = train[feature_columns]
         y_reg = train["target_log_return"]
