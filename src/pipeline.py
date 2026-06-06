@@ -345,6 +345,14 @@ def _prepare_pipeline_context(
         "flow": {"requested": 0, "successful": 0, "failed": 0},
         "disclosure": {"requested": 0, "successful": 0, "failed": 0},
         "news": {"requested": 0, "successful": 0, "failed": 0},
+        "raw_events": {
+            "status": "disabled",
+            "requested": 0,
+            "collected": 0,
+            "failed_symbols": [],
+            "error_types": [],
+            "details": [],
+        },
     }
     context_raw_df = pd.DataFrame(
         columns=["Date", "Symbol", "source_type", "title", "published_at", "provider", "url", "raw_id"]
@@ -360,13 +368,25 @@ def _prepare_pipeline_context(
                 raw_event_n_jobs=int(context_raw_event_n_jobs or 4),
             ),
         )
+        investor_context_coverage.setdefault(
+            "raw_events",
+            {
+                "status": "disabled",
+                "requested": 0,
+                "collected": 0,
+                "failed_symbols": [],
+                "error_types": [],
+                "details": [],
+            },
+        )
 
     should_collect_context_raw = bool(dart_api_key or (naver_client_id and naver_client_secret))
     if should_collect_context_raw:
+        context_symbols = sorted(data["Symbol"].dropna().astype(str).unique().tolist())
+        investor_context_coverage["raw_events"]["requested"] = len(context_symbols)
         try:
-            context_symbols = sorted(data["Symbol"].dropna().astype(str).unique().tolist())
             context_symbol_name_map = get_symbol_name_map(context_symbols)
-            context_raw_df = collect_context_raw_events(
+            collected = collect_context_raw_events(
                 symbols=context_symbols,
                 start=data["Date"].min().strftime("%Y-%m-%d"),
                 end=data["Date"].max().strftime("%Y-%m-%d"),
@@ -376,10 +396,32 @@ def _prepare_pipeline_context(
                 naver_client_id=naver_client_id,
                 naver_client_secret=naver_client_secret,
                 raw_event_n_jobs=int(context_raw_event_n_jobs or 4),
+                return_status=True,
             )
-        except Exception:
+            if isinstance(collected, tuple):
+                context_raw_df, raw_event_status = collected
+                investor_context_coverage["raw_events"] = raw_event_status
+            else:
+                context_raw_df = collected
+                investor_context_coverage["raw_events"]["collected"] = int(len(context_raw_df))
+                investor_context_coverage["raw_events"]["status"] = "no_events" if context_raw_df.empty else "success"
+        except Exception as exc:
             context_raw_df = pd.DataFrame(
                 columns=["Date", "Symbol", "source_type", "title", "published_at", "provider", "url", "raw_id"]
+            )
+            investor_context_coverage["raw_events"].update(
+                {
+                    "status": "collection_failed",
+                    "failed_symbols": context_symbols,
+                    "error_types": [type(exc).__name__],
+                    "details": [
+                        {
+                            "scope": "raw_events",
+                            "error_type": type(exc).__name__,
+                            "message": str(exc),
+                        }
+                    ],
+                }
             )
     return data, investor_context_coverage, context_raw_df
 

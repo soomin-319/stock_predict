@@ -104,17 +104,58 @@ class AppConfig:
     backtest: BacktestConfig = field(default_factory=BacktestConfig)
 
 
-def _merge_dataclass_config(instance, overrides: dict):
+def _merge_dataclass_config(instance, overrides: dict, path: str = ""):
     valid_fields = {f.name: f for f in fields(instance)}
     for key, value in overrides.items():
+        field_path = f"{path}.{key}" if path else key
         if key not in valid_fields:
-            continue
+            raise ValueError(f"Unknown configuration key: {field_path}")
         current = getattr(instance, key)
-        if is_dataclass(current) and isinstance(value, dict):
-            _merge_dataclass_config(current, value)
+        if is_dataclass(current):
+            if not isinstance(value, dict):
+                raise ValueError(f"Configuration section must be an object: {field_path}")
+            _merge_dataclass_config(current, value, field_path)
         else:
             setattr(instance, key, value)
     return instance
+
+
+def _validate_positive(value, path: str, *, allow_zero: bool = False) -> None:
+    valid = isinstance(value, (int, float)) and not isinstance(value, bool)
+    valid = valid and (value >= 0 if allow_zero else value > 0)
+    if not valid:
+        comparator = "non-negative" if allow_zero else "positive"
+        raise ValueError(f"{path} must be {comparator}, got {value!r}")
+
+
+def _validate_ratio(value, path: str) -> None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 1:
+        raise ValueError(f"{path} must be between 0 and 1, got {value!r}")
+
+
+def _validate_app_config(cfg: AppConfig) -> None:
+    for name in ("min_train_size", "test_size", "step_size"):
+        _validate_positive(getattr(cfg.training, name), f"training.{name}")
+    for name in ("purge_gap_days", "embargo_days", "final_model_lookback_days"):
+        _validate_positive(getattr(cfg.training, name), f"training.{name}", allow_zero=True)
+    quantiles = cfg.training.quantiles
+    valid_quantile_values = isinstance(quantiles, list) and all(
+        isinstance(q, (int, float)) and not isinstance(q, bool) and 0 < q < 1 for q in quantiles
+    )
+    if (
+        not valid_quantile_values
+        or len(quantiles) < 3
+        or len(set(quantiles)) != len(quantiles)
+        or quantiles != sorted(quantiles)
+    ):
+        raise ValueError(f"training.quantiles must contain at least 3 unique increasing values in (0, 1), got {quantiles!r}")
+    _validate_positive(cfg.backtest.top_k, "backtest.top_k")
+    _validate_positive(cfg.backtest.portfolio_value, "backtest.portfolio_value")
+    _validate_ratio(cfg.backtest.max_daily_participation, "backtest.max_daily_participation")
+    _validate_ratio(cfg.backtest.min_up_probability, "backtest.min_up_probability")
+    _validate_ratio(cfg.backtest.turnover_limit, "backtest.turnover_limit")
+    _validate_ratio(cfg.backtest.min_external_coverage_ratio, "backtest.min_external_coverage_ratio")
+    _validate_ratio(cfg.backtest.min_investor_coverage_ratio, "backtest.min_investor_coverage_ratio")
 
 
 def load_app_config(config_path: str | Path | None = None, overrides: dict | None = None) -> AppConfig:
@@ -127,6 +168,7 @@ def load_app_config(config_path: str | Path | None = None, overrides: dict | Non
         _merge_dataclass_config(cfg, payload)
     if overrides:
         _merge_dataclass_config(cfg, overrides)
+    _validate_app_config(cfg)
     return cfg
 
 

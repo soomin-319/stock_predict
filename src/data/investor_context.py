@@ -170,6 +170,7 @@ def _fetch_naver_news_items(
     end_dt: pd.Timestamp,
     client_id: str | None,
     client_secret: str | None,
+    errors: list[dict] | None = None,
 ) -> list[dict]:
     if not client_id or not client_secret:
         return []
@@ -189,7 +190,16 @@ def _fetch_naver_news_items(
         try:
             with urlopen(req, timeout=15) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
-        except Exception:
+        except Exception as exc:
+            if errors is not None:
+                errors.append(
+                    {
+                        "source": "naver_news_api",
+                        "symbol": symbol,
+                        "error_type": type(exc).__name__,
+                        "message": str(exc),
+                    }
+                )
             continue
 
         for item in payload.get("items", []) if isinstance(payload, dict) else []:
@@ -285,8 +295,10 @@ def collect_context_raw_events(
     naver_client_id: str | None = None,
     naver_client_secret: str | None = None,
     raw_event_n_jobs: int = 4,
-) -> pd.DataFrame:
+    return_status: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
     rows: list[dict] = []
+    errors: list[dict] = []
     start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
     symbols = [str(symbol) for symbol in symbols]
     max_workers = min(max(1, int(raw_event_n_jobs or 1)), max(1, len(symbols)))
@@ -300,6 +312,7 @@ def collect_context_raw_events(
             end_dt=end_dt,
             client_id=naver_client_id,
             client_secret=naver_client_secret,
+            errors=errors,
         )
 
     if naver_client_id and naver_client_secret and symbols:
@@ -322,7 +335,15 @@ def collect_context_raw_events(
             try:
                 payload = _dart_list(dart_api_key, corp, start, end)
                 items = _dart_items(payload)
-            except Exception:
+            except Exception as exc:
+                errors.append(
+                    {
+                        "source": "dart",
+                        "symbol": symbol,
+                        "error_type": type(exc).__name__,
+                        "message": str(exc),
+                    }
+                )
                 items = []
             for item in items:
                 rcept_dt = str(item.get("rcept_dt") or "").strip()
@@ -362,8 +383,27 @@ def collect_context_raw_events(
                 for part in executor.map(_dart_rows_for_symbol, symbols):
                     rows.extend(part)
 
+    def _with_status(frame: pd.DataFrame) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
+        if not return_status:
+            return frame
+        details = sorted(errors, key=lambda error: (str(error["symbol"]), str(error["source"]), str(error["error_type"])))
+        failed_symbols = sorted({str(error["symbol"]) for error in details})
+        error_types = sorted({str(error["error_type"]) for error in details})
+        if details:
+            status = "partial_failure" if not frame.empty or len(failed_symbols) < len(symbols) else "collection_failed"
+        else:
+            status = "no_events" if frame.empty else "success"
+        return frame, {
+            "status": status,
+            "requested": len(symbols),
+            "collected": int(len(frame)),
+            "failed_symbols": failed_symbols,
+            "error_types": error_types,
+            "details": details,
+        }
+
     if not rows:
-        return pd.DataFrame(
+        empty = pd.DataFrame(
             columns=[
                 "Date",
                 "Symbol",
@@ -379,10 +419,11 @@ def collect_context_raw_events(
                 "source",
             ]
         )
+        return _with_status(empty)
 
     out = pd.DataFrame(rows).drop_duplicates(subset=["Date", "Symbol", "source_type", "title", "raw_id"]).reset_index(drop=True)
     out["Date"] = pd.to_datetime(out["Date"], errors="coerce").dt.normalize()
     out = out[(out["Date"] >= start_dt.normalize()) & (out["Date"] <= end_dt.normalize())].copy()
     out["Date"] = out["Date"].dt.strftime("%Y-%m-%d")
     out = out.sort_values(["Date", "Symbol", "source_type", "title"]).reset_index(drop=True)
-    return out
+    return _with_status(out)
