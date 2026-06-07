@@ -51,3 +51,9 @@ def test_job_registry_and_streamed_log_redact_configured_secrets(tmp_path: Path)
 
 def test_redact_text_masks_registered_values():
     assert redact_text("failed secret-value", ["secret-value"]) == "failed [REDACTED]"
+
+
+def test_redact_text_masks_unregistered_secret_assignments():
+    text = "OPENAI_API_KEY=sk-unknown --token token-value normal=value"
+
+    assert redact_text(text) == "OPENAI_API_KEY=[REDACTED] --token [REDACTED] normal=value"

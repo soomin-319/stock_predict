@@ -13,6 +13,11 @@ SECRET_FLAGS = {
     "--naver-client-secret",
 }
 _SECRET_NAME_PATTERN = re.compile(r"(?:api[-_]?key|token|secret|password)", re.IGNORECASE)
+_SECRET_ASSIGNMENT_PATTERN = re.compile(
+    r"(?P<name>(?:--)?[A-Za-z0-9_-]*(?:api[-_]?key|token|secret|password)[A-Za-z0-9_-]*)"
+    r"(?P<separator>\s*=\s*|\s+)(?P<value>[^\s]+)",
+    re.IGNORECASE,
+)
 
 
 def _secret_values(values: Iterable[object]) -> tuple[str, ...]:
@@ -23,7 +28,10 @@ def redact_text(text: object, secret_values: Iterable[object] = ()) -> str:
     result = str(text)
     for value in _secret_values(secret_values):
         result = result.replace(value, REDACTED)
-    return result
+    return _SECRET_ASSIGNMENT_PATTERN.sub(
+        lambda match: f"{match.group('name')}{match.group('separator')}{REDACTED}",
+        result,
+    )
 
 
 def redact_argv(argv: Iterable[object], secret_values: Iterable[object] = ()) -> list[str]:
