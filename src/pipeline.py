@@ -52,6 +52,7 @@ from src.pipeline_support import (
 )
 from src.reports.pm_report import build_pm_report, save_pm_report
 from src.reports.report_metadata import build_report_metadata, generate_run_id
+from src.reports.run_artifacts import RunArtifactManager
 from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.news_impact_context import append_generated_news_impact_context, append_news_impact_context
 from src.reports.result_formatter import (
@@ -92,7 +93,6 @@ from src.validation.support import (
     prediction_from_oof_df as validation_prediction_from_oof_df,
     split_oof_for_tuning_and_eval as validation_split_oof_for_tuning_and_eval,
 )
-from src.utils.atomic_files import atomic_write_text
 
 
 def _fallback_symbols_from_input_or_default(input_csv: str, limit: int = 0) -> list[str]:
@@ -508,8 +508,10 @@ def _save_pipeline_figures(
     scored_oof: pd.DataFrame,
     figure_dir: str,
     symbol_figure_limit: int | None,
+    figure_dir_path: Path | None = None,
 ) -> tuple[Path, dict[str, Any]]:
-    figure_dir_path = resolve_output_dir(figure_dir)
+    figure_dir_path = figure_dir_path or resolve_output_dir(figure_dir)
+    figure_dir_path.mkdir(parents=True, exist_ok=True)
     fig_paths = save_backtest_figures(backtest_series, str(figure_dir_path))
     signal_hist = save_signal_histogram(scored_oof, str(figure_dir_path))
     actual_vs_pred = save_actual_vs_predicted_plot(scored_oof, str(figure_dir_path))
@@ -612,7 +614,8 @@ def _write_pipeline_artifacts(
     report_json: str | None,
     diagnostics: PipelineDiagnostics,
     report_metadata: dict[str, Any],
-) -> None:
+    artifact_manager: RunArtifactManager,
+) -> dict[str, Any]:
     scored_oof = validation_result["scored_oof"]
     backtest = validation_result["backtest"]
     backtest_input = validation_result["backtest_input"]
@@ -648,10 +651,8 @@ def _write_pipeline_artifacts(
     detail_df = _drop_empty_detail_columns(detail_df)
     simple_df = _build_result_simple(detail_df)
 
-    detail_path = resolve_output_path("result_detail.csv")
-    detail_path = _safe_to_csv(detail_df, detail_path, allow_fallback=False)
-    simple_path = resolve_output_path("result_simple.csv")
-    simple_path = _safe_to_csv(simple_df, simple_path, allow_fallback=False)
+    detail_path = artifact_manager.write_csv("csv/result_detail.csv", detail_df)
+    simple_path = artifact_manager.write_csv("csv/result_simple.csv", simple_df)
 
     issue_snapshot = _build_issue_summary_snapshot(pred_df)
     export_context_df = context_raw_df.copy()
@@ -659,7 +660,6 @@ def _write_pipeline_artifacts(
         export_context_df["Date"] = pd.to_datetime(export_context_df["Date"], errors="coerce").dt.normalize()
         today_kst = pd.Timestamp.now(tz="Asia/Seoul").normalize().tz_localize(None)
         export_context_df = export_context_df[export_context_df["Date"] == today_kst].copy()
-    news_path = resolve_output_path("result_news.csv")
     news_df = (
         export_context_df[export_context_df["source_type"].astype(str) == "news"].copy()
         if "source_type" in export_context_df.columns
@@ -677,9 +677,8 @@ def _write_pipeline_artifacts(
         news_df["provider"] = "summary"
         news_df["url"] = ""
         news_df["raw_id"] = ""
-    news_path = _safe_to_csv(news_df, news_path)
+    news_path = artifact_manager.write_csv("csv/result_news.csv", news_df)
 
-    disclosure_path = resolve_output_path("result_disclosure.csv")
     disclosure_df = (
         export_context_df[export_context_df["source_type"].astype(str) == "disclosure"].copy()
         if "source_type" in export_context_df.columns
@@ -697,7 +696,7 @@ def _write_pipeline_artifacts(
         disclosure_df["provider"] = "summary"
         disclosure_df["url"] = ""
         disclosure_df["raw_id"] = ""
-    disclosure_path = _safe_to_csv(disclosure_df, disclosure_path)
+    disclosure_path = artifact_manager.write_csv("csv/result_disclosure.csv", disclosure_df)
 
     coverage_report_summary = {
         "external_coverage_ratio": external_coverage_ratio,
@@ -755,18 +754,19 @@ def _write_pipeline_artifacts(
         },
     }
 
-    pm_report_path = resolve_output_path("pm_report.json")
+    pm_report_path = artifact_manager.path("pm_report.json")
     pm_report = build_pm_report(pred_df, report)
     save_pm_report(pm_report, pm_report_path)
     report["artifacts"]["pm_report_json"] = str(pm_report_path)
 
-    if report_json:
-        report_path = resolve_output_path(report_json)
-        atomic_write_text(
-            report_path,
-            json.dumps(_round_floats(report, 3), indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+    canonical_report = artifact_manager.path("pipeline_report.json")
+    report["artifacts"]["pipeline_report_json"] = str(canonical_report)
+    artifact_manager.write_json("pipeline_report.json", _round_floats(report, 3))
+    if report_json and Path(report_json).name != "pipeline_report.json":
+        artifact_manager.write_json(Path(report_json).name, _round_floats(report, 3))
+    manifest = artifact_manager.finalize()
+    report["manifest"] = manifest
+    return report
 
 
 def run_pipeline(
@@ -875,6 +875,7 @@ def run_pipeline(
         context_as_of_date=context_as_of_date,
         config_payload=app_config_to_dict(cfg),
     )
+    artifact_manager = RunArtifactManager(_project_result_dir(), report_metadata)
 
     _print_progress(5, total_steps, "Building price features")
     _print_progress(6, total_steps, "Adding external market features")
@@ -905,6 +906,7 @@ def run_pipeline(
             scored_oof,
             figure_dir,
             symbol_figure_limit,
+            figure_dir_path=artifact_manager.path("figures"),
         )
 
     _print_progress(12, total_steps, "Training final model and creating latest predictions")
@@ -929,7 +931,7 @@ def run_pipeline(
 
     _print_progress(13, total_steps, "Saving artifacts")
     with diagnostics.time_stage("save_pipeline_artifacts"):
-        _write_pipeline_artifacts(
+        report = _write_pipeline_artifacts(
             pred_df=pred_df,
             latest=latest,
             data=data,
@@ -947,9 +949,11 @@ def run_pipeline(
             report_json=report_json,
             diagnostics=diagnostics,
             report_metadata=report_metadata,
+            artifact_manager=artifact_manager,
         )
 
     _print_prediction_console_summary(pred_df)
+    return report
 
 def build_cli_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Stock next-day prediction pipeline")
