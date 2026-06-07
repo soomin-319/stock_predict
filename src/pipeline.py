@@ -153,6 +153,63 @@ def _build_issue_summary_snapshot(pred_df: pd.DataFrame) -> pd.DataFrame:
     return output_build_issue_summary_snapshot(pred_df)
 
 
+def _classify_context_export(
+    events: pd.DataFrame,
+    issue_snapshot: pd.DataFrame,
+    *,
+    source_type: str,
+    metadata: dict[str, Any],
+    no_data_reason: str = "no_accepted_context",
+    collection_error: str = "",
+) -> pd.DataFrame:
+    summary_column = "뉴스 요약" if source_type == "news" else "공시 요약"
+    if not events.empty:
+        result = events.copy()
+        if not issue_snapshot.empty:
+            result = result.merge(issue_snapshot, on="Symbol", how="left")
+        result["record_type"] = "event"
+        result["collection_status"] = "completed"
+        result["no_data_reason"] = ""
+        result["collection_error"] = ""
+    elif not issue_snapshot.empty:
+        result = issue_snapshot.copy()
+        result["Date"] = metadata.get("context_as_of_date") or metadata.get("input_as_of_date")
+        result["source_type"] = f"{source_type}_summary"
+        result["title"] = result.get(summary_column, pd.Series(index=result.index, dtype=object)).fillna("-")
+        result["published_at"] = ""
+        result["provider"] = "summary"
+        result["url"] = ""
+        result["raw_id"] = ""
+        result["record_type"] = "summary"
+        result["collection_status"] = "completed"
+        result["no_data_reason"] = ""
+        result["collection_error"] = ""
+    else:
+        result = pd.DataFrame(
+            [{
+                "Date": metadata.get("context_as_of_date") or metadata.get("input_as_of_date"),
+                "Symbol": "",
+                "source_type": source_type,
+                "title": "",
+                "record_type": "no_data",
+                "collection_status": "failed" if collection_error else (
+                    "excluded" if no_data_reason == "context_date_gap_exceeded" else "empty"
+                ),
+                "no_data_reason": no_data_reason,
+                "collection_error": collection_error,
+            }]
+        )
+    for key in (
+        "environment",
+        "data_mode",
+        "input_as_of_date",
+        "prediction_for_date",
+        "context_as_of_date",
+    ):
+        result[key] = metadata.get(key)
+    return result
+
+
 def _backtest_summary_fields(backtest: dict) -> dict[str, float]:
     return validation_backtest_summary_fields(backtest)
 
@@ -703,46 +760,34 @@ def _write_pipeline_artifacts(
             ).allowed
         )
         export_context_df = export_context_df[allowed].copy()
-    news_df = (
+    news_events = (
         export_context_df[export_context_df["source_type"].astype(str) == "news"].copy()
         if "source_type" in export_context_df.columns
         else pd.DataFrame()
     )
-    if not news_df.empty:
-        news_df = news_df.merge(issue_snapshot, on="Symbol", how="left")
-    elif not issue_snapshot.empty:
-        today_kst = pd.Timestamp.now(tz="Asia/Seoul").normalize().tz_localize(None)
-        news_df = issue_snapshot.copy()
-        news_df["Date"] = today_kst
-        news_df["source_type"] = "news_summary"
-        news_df["title"] = news_df["뉴스 요약"].fillna("-")
-        news_df["published_at"] = ""
-        news_df["provider"] = "summary"
-        news_df["url"] = ""
-        news_df["raw_id"] = ""
-    for key, value in csv_metadata.items():
-        news_df[key] = value
+    rejected_context = not context_raw_df.empty and export_context_df.empty
+    no_data_reason = "context_date_gap_exceeded" if rejected_context else "no_accepted_context"
+    news_df = _classify_context_export(
+        news_events,
+        pd.DataFrame() if rejected_context else issue_snapshot,
+        source_type="news",
+        metadata=report_metadata,
+        no_data_reason=no_data_reason,
+    )
     news_path = artifact_manager.write_csv("csv/result_news.csv", news_df)
 
-    disclosure_df = (
+    disclosure_events = (
         export_context_df[export_context_df["source_type"].astype(str) == "disclosure"].copy()
         if "source_type" in export_context_df.columns
         else pd.DataFrame()
     )
-    if not disclosure_df.empty:
-        disclosure_df = disclosure_df.merge(issue_snapshot, on="Symbol", how="left")
-    elif not issue_snapshot.empty:
-        today_kst = pd.Timestamp.now(tz="Asia/Seoul").normalize().tz_localize(None)
-        disclosure_df = issue_snapshot.copy()
-        disclosure_df["Date"] = today_kst
-        disclosure_df["source_type"] = "disclosure_summary"
-        disclosure_df["title"] = disclosure_df["공시 요약"].fillna("-")
-        disclosure_df["published_at"] = ""
-        disclosure_df["provider"] = "summary"
-        disclosure_df["url"] = ""
-        disclosure_df["raw_id"] = ""
-    for key, value in csv_metadata.items():
-        disclosure_df[key] = value
+    disclosure_df = _classify_context_export(
+        disclosure_events,
+        pd.DataFrame() if rejected_context else issue_snapshot,
+        source_type="disclosure",
+        metadata=report_metadata,
+        no_data_reason=no_data_reason,
+    )
     disclosure_path = artifact_manager.write_csv("csv/result_disclosure.csv", disclosure_df)
 
     coverage_report_summary = {

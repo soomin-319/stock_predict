@@ -6,6 +6,36 @@ import pandas as pd
 from src.domain.signal_policy import recommendation_from_signal
 from src.reports.news_impact_context import append_generated_news_impact_context, append_news_impact_context
 from src.reports.result_formatter import build_result_simple
+from src.pipeline import _classify_context_export
+
+
+def test_context_export_classifies_event_summary_and_no_data():
+    metadata = {"environment": "production", "data_mode": "real"}
+    event = _classify_context_export(
+        pd.DataFrame([{"Symbol": "005930.KS", "source_type": "news", "title": "event"}]),
+        pd.DataFrame(),
+        source_type="news",
+        metadata=metadata,
+    )
+    summary = _classify_context_export(
+        pd.DataFrame(),
+        pd.DataFrame([{"Symbol": "005930.KS", "뉴스 요약": "summary"}]),
+        source_type="news",
+        metadata=metadata,
+    )
+    no_data = _classify_context_export(
+        pd.DataFrame(),
+        pd.DataFrame(),
+        source_type="news",
+        metadata=metadata,
+        no_data_reason="context_date_gap_exceeded",
+    )
+
+    assert event.iloc[0]["record_type"] == "event"
+    assert summary.iloc[0]["record_type"] == "summary"
+    assert no_data.iloc[0]["record_type"] == "no_data"
+    assert no_data.iloc[0]["collection_status"] == "excluded"
+    assert no_data.iloc[0]["no_data_reason"] == "context_date_gap_exceeded"
 
 
 def test_append_news_impact_context_joins_display_only_columns_without_changing_recommendation(tmp_path):

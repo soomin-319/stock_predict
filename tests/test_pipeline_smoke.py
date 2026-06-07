@@ -170,6 +170,14 @@ def test_run_pipeline_generates_report_without_graph_artifacts(tmp_path):
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["run_id"] == payload["run_id"]
     assert manifest["promoted"] is False
+    for key in ("result_news_csv", "result_disclosure_csv"):
+        context_frame = pd.read_csv(payload["artifacts"][key], encoding="utf-8-sig")
+        assert {
+            "record_type",
+            "collection_status",
+            "no_data_reason",
+            "collection_error",
+        }.issubset(context_frame.columns)
     pm_payload = json.loads(Path(payload["artifacts"]["pm_report_json"]).read_text(encoding="utf-8"))
     assert pm_payload["run_id"] == payload["run_id"]
     assert "walk_forward" in payload
