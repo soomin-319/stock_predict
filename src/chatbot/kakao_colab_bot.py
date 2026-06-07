@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import traceback
 import urllib.request
 import zipfile
@@ -74,7 +75,6 @@ class PipelineRuntimeConfig:
     python_executable: str = sys.executable
     input_csv: str = "data/real_ohlcv.csv"
     report_json: str = "pipeline_report_with_context.json"
-    figure_dir: str = "figures_with_context"
     dart_api_key: str | None = None
     dart_corp_map_csv: str | None = "data/dart_corp_map.csv"
     fetch_investor_context: bool = True
@@ -121,8 +121,6 @@ class PipelineRuntimeConfig:
             cmd.append("--disable-external")
         if self.report_json:
             cmd.extend(["--report-json", self.report_json])
-        if self.figure_dir:
-            cmd.extend(["--figure-dir", self.figure_dir])
         cmd.extend(self.extra_args)
         return [str(part) for part in cmd]
 
@@ -210,6 +208,8 @@ class KakaoColabPredictionBot:
         self._queued_summary_symbols: set[str] = set()
         self._live_events_cache: dict[tuple[str, str], tuple[datetime, pd.DataFrame]] = {}
         self._live_events_cache_ttl = timedelta(minutes=15)
+        self._timed_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+        self._timed_futures: dict[str, concurrent.futures.Future] = {}
         self._bootstrap_thread: threading.Thread | None = None
         self._state_lock = threading.RLock()
         self._legacy_formatter_patched = False
@@ -1304,8 +1304,22 @@ class KakaoColabPredictionBot:
                     naver_client_id=self.runtime_config.naver_client_id,
                     naver_client_secret=self.runtime_config.naver_client_secret,
                 )
+
+            def _cache_completed_events(completed_events: Any) -> None:
+                if not isinstance(completed_events, pd.DataFrame) or completed_events.empty:
+                    return
+                normalized = completed_events.copy()
+                normalized["Date"] = pd.to_datetime(normalized["Date"], errors="coerce").dt.normalize()
+                with self._state_lock:
+                    self._live_events_cache[cache_key] = (datetime.now(timezone.utc), normalized)
+
             if use_timeout:
-                events = self._run_in_background_with_timeout(_fetch, timeout=self.LIVE_EVENTS_TIMEOUT_SEC)
+                events = self._run_in_background_with_timeout(
+                    _fetch,
+                    timeout=self.LIVE_EVENTS_TIMEOUT_SEC,
+                    key=f"live-events:{symbol}:{reference_date}",
+                    on_complete=_cache_completed_events,
+                )
                 if events is None:
                     self._console_log(
                         f"{self._display_code(symbol)} 라이브 원문 수집 시간초과({self.LIVE_EVENTS_TIMEOUT_SEC:.1f}s). 백그라운드 요약에서 계속 수집합니다."
@@ -1390,10 +1404,36 @@ class KakaoColabPredictionBot:
         if not has_existing_summary:
             base = pd.DataFrame([{"Symbol": symbol, "종목명": str(row.get("종목명", self._display_code(symbol)))}])
             if use_timeout_for_summary:
+                summary_operation_key = f"issue-summary:{symbol}:{prediction_date}"
+
+                def _cache_completed_summary(completed_summary: Any) -> None:
+                    if isinstance(completed_summary, pd.DataFrame) and not completed_summary.empty:
+                        self._cache_issue_summary(symbol, completed_summary.iloc[0])
+                        return
+                    with self._state_lock:
+                        self._issue_summary_jobs[str(symbol)] = {
+                            "status": "failed",
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                            "reason": "empty_summary",
+                        }
+                        self._issue_summary_timeout_symbols.discard(str(symbol))
+
+                def _record_summary_error(exc: BaseException) -> None:
+                    with self._state_lock:
+                        self._issue_summary_jobs[str(symbol)] = {
+                            "status": "failed",
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                            "reason": f"{type(exc).__name__}: {exc}",
+                        }
+                        self._issue_summary_timeout_symbols.discard(str(symbol))
+
                 summarized_df = self._run_in_background_with_timeout(
                     append_issue_summary_columns,
                     base,
                     timeout=self.ISSUE_SUMMARY_TIMEOUT_SEC,
+                    key=summary_operation_key,
+                    on_complete=_cache_completed_summary,
+                    on_error=_record_summary_error,
                     context_raw_df=same_day.copy(),
                     openai_api_key=self.runtime_config.openai_api_key,
                     openai_model=self.runtime_config.openai_model,
@@ -1404,8 +1444,12 @@ class KakaoColabPredictionBot:
                         f"{self._display_code(symbol)} issue summary timed out ({self.ISSUE_SUMMARY_TIMEOUT_SEC:.1f}s); keeping current response."
                     )
                     with self._state_lock:
-                        self._issue_summary_timeout_symbols.add(str(symbol))
-                    self._start_issue_summary_background(symbol, row)
+                        if summary_operation_key in self._timed_futures:
+                            self._issue_summary_timeout_symbols.add(str(symbol))
+                            self._issue_summary_jobs[str(symbol)] = {
+                                "status": "running",
+                                "updated_at": datetime.now(timezone.utc).isoformat(),
+                            }
                     return row
             else:
                 summarized_df = append_issue_summary_columns(
@@ -1629,16 +1673,41 @@ class KakaoColabPredictionBot:
             out[col] = value
         return out
 
-    def _run_in_background_with_timeout(self, fn: Callable[..., Any], *args, timeout: float, **kwargs) -> Any | None:
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(fn, *args, **kwargs)
+    def _run_in_background_with_timeout(
+        self,
+        fn: Callable[..., Any],
+        *args,
+        timeout: float,
+        key: str | None = None,
+        on_complete: Callable[[Any], None] | None = None,
+        on_error: Callable[[BaseException], None] | None = None,
+        **kwargs,
+    ) -> Any | None:
+        operation_key = key or f"anonymous:{id(fn)}:{time.monotonic_ns()}"
+        with self._state_lock:
+            future = self._timed_futures.get(operation_key)
+            if future is None:
+                future = self._timed_executor.submit(fn, *args, **kwargs)
+                self._timed_futures[operation_key] = future
+
+                def _remove_completed(completed: concurrent.futures.Future) -> None:
+                    try:
+                        result = completed.result()
+                    except Exception as exc:
+                        if on_error is not None:
+                            on_error(exc)
+                    else:
+                        if on_complete is not None:
+                            on_complete(result)
+                    with self._state_lock:
+                        if self._timed_futures.get(operation_key) is completed:
+                            self._timed_futures.pop(operation_key, None)
+
+                future.add_done_callback(_remove_completed)
         try:
             return future.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
-            future.cancel()
             return None
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
 
     def _refresh_job_states(self):
         with self._state_lock:
@@ -1758,7 +1827,6 @@ def _runtime_cache_signature(cfg: PipelineRuntimeConfig, project_root: Path) -> 
         "input_stat": _stat_payload(input_path),
         "default_universe_stat": _stat_payload(universe_path),
         "report_json": str(cfg.report_json),
-        "figure_dir": str(cfg.figure_dir),
         "fetch_investor_context": bool(cfg.fetch_investor_context),
         "use_external": bool(cfg.use_external),
         "bootstrap_default_symbols": bool(cfg.bootstrap_default_symbols),
@@ -1903,7 +1971,6 @@ def prewarm_prediction_cache(runtime_config: PipelineRuntimeConfig | None = None
         input_csv=cfg.input_csv,
         universe_csv=None,
         report_json=cfg.report_json,
-        figure_dir=cfg.figure_dir,
         use_external=cfg.use_external,
         use_investor_context=cfg.fetch_investor_context,
         enable_investor_disclosure=cfg.enable_investor_disclosure,
@@ -1961,7 +2028,6 @@ def main():
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--input", default="data/real_ohlcv.csv")
     parser.add_argument("--report-json", default="pipeline_report_with_context.json")
-    parser.add_argument("--figure-dir", default="figures_with_context")
     parser.add_argument("--dart-api-key", default=None)
     parser.add_argument("--dart-corp-map-csv", default="data/dart_corp_map.csv")
     parser.add_argument("--openai-api-key", default=None)
@@ -1976,7 +2042,6 @@ def main():
     runtime_config = PipelineRuntimeConfig(
         input_csv=args.input,
         report_json=args.report_json,
-        figure_dir=args.figure_dir,
         dart_api_key=args.dart_api_key or os.getenv("DART_API_KEY"),
         dart_corp_map_csv=args.dart_corp_map_csv or os.getenv("DART_CORP_MAP_CSV") or "data/dart_corp_map.csv",
         openai_api_key=args.openai_api_key or os.getenv("OPENAI_API_KEY"),

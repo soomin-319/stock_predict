@@ -65,18 +65,8 @@ from src.reports.output import (
     drop_empty_detail_columns as output_drop_empty_detail_columns,
     print_pipeline_prediction_console_summary as output_print_pipeline_prediction_console_summary,
     project_result_dir as output_project_result_dir,
-    resolve_output_dir as output_resolve_output_dir,
     resolve_output_path as output_resolve_output_path,
     safe_to_csv as output_safe_to_csv,
-)
-from src.reports.visualize import (
-    save_actual_vs_predicted_plot,
-    save_actual_vs_predicted_price_plot,
-    save_diagnostic_figures,
-    save_symbol_level_comparison_figures,
-    save_backtest_figures,
-    save_signal_histogram,
-    save_symbol_summary_artifacts,
 )
 from src.validation.backtest import (
     backtest_summary_fields as validation_backtest_summary_fields,
@@ -133,10 +123,6 @@ def _project_result_dir() -> Path:
 def resolve_output_path(output_csv: str, is_windows: bool | None = None) -> Path:
     """Force all file outputs under project-local ./result directory."""
     return output_resolve_output_path(output_csv, is_windows=is_windows)
-
-
-def resolve_output_dir(output_dir: str) -> Path:
-    return output_resolve_output_dir(output_dir)
 
 
 def _feature_columns(df: pd.DataFrame) -> list[str]:
@@ -361,6 +347,14 @@ def _prepare_pipeline_context(
         "flow": {"requested": 0, "successful": 0, "failed": 0},
         "disclosure": {"requested": 0, "successful": 0, "failed": 0},
         "news": {"requested": 0, "successful": 0, "failed": 0},
+        "raw_events": {
+            "status": "disabled",
+            "requested": 0,
+            "collected": 0,
+            "failed_symbols": [],
+            "error_types": [],
+            "details": [],
+        },
     }
     context_raw_df = pd.DataFrame(
         columns=["Date", "Symbol", "source_type", "title", "published_at", "provider", "url", "raw_id"]
@@ -376,13 +370,25 @@ def _prepare_pipeline_context(
                 raw_event_n_jobs=int(context_raw_event_n_jobs or 4),
             ),
         )
+        investor_context_coverage.setdefault(
+            "raw_events",
+            {
+                "status": "disabled",
+                "requested": 0,
+                "collected": 0,
+                "failed_symbols": [],
+                "error_types": [],
+                "details": [],
+            },
+        )
 
     should_collect_context_raw = bool(dart_api_key or (naver_client_id and naver_client_secret))
     if should_collect_context_raw:
+        context_symbols = sorted(data["Symbol"].dropna().astype(str).unique().tolist())
+        investor_context_coverage["raw_events"]["requested"] = len(context_symbols)
         try:
-            context_symbols = sorted(data["Symbol"].dropna().astype(str).unique().tolist())
             context_symbol_name_map = get_symbol_name_map(context_symbols)
-            context_raw_df = collect_context_raw_events(
+            collected = collect_context_raw_events(
                 symbols=context_symbols,
                 start=data["Date"].min().strftime("%Y-%m-%d"),
                 end=data["Date"].max().strftime("%Y-%m-%d"),
@@ -392,10 +398,32 @@ def _prepare_pipeline_context(
                 naver_client_id=naver_client_id,
                 naver_client_secret=naver_client_secret,
                 raw_event_n_jobs=int(context_raw_event_n_jobs or 4),
+                return_status=True,
             )
-        except Exception:
+            if isinstance(collected, tuple):
+                context_raw_df, raw_event_status = collected
+                investor_context_coverage["raw_events"] = raw_event_status
+            else:
+                context_raw_df = collected
+                investor_context_coverage["raw_events"]["collected"] = int(len(context_raw_df))
+                investor_context_coverage["raw_events"]["status"] = "no_events" if context_raw_df.empty else "success"
+        except Exception as exc:
             context_raw_df = pd.DataFrame(
                 columns=["Date", "Symbol", "source_type", "title", "published_at", "provider", "url", "raw_id"]
+            )
+            investor_context_coverage["raw_events"].update(
+                {
+                    "status": "collection_failed",
+                    "failed_symbols": context_symbols,
+                    "error_types": [type(exc).__name__],
+                    "details": [
+                        {
+                            "scope": "raw_events",
+                            "error_type": type(exc).__name__,
+                            "message": str(exc),
+                        }
+                    ],
+                }
             )
     return data, investor_context_coverage, context_raw_df
 
@@ -546,8 +574,7 @@ def _predict_pipeline_latest(
     issue_summary_symbols: list[str] | None,
     issue_summary_n_jobs: int,
     news_impact_report: str | None,
-    figure_dir_path: Path,
-) -> tuple[pd.DataFrame, pd.DataFrame, dict, dict]:
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
     lookback = int(getattr(cfg.training, "final_model_lookback_days", 0) or 0)
     if lookback > 0:
@@ -591,9 +618,8 @@ def _predict_pipeline_latest(
         pred_df = append_generated_news_impact_context(pred_df, context_raw_df)
     pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True))
     pred_df["권고"] = pred_df["recommendation"]
-    symbol_summary_artifacts = save_symbol_summary_artifacts(pred_df, scored_oof, str(figure_dir_path))
     oof_diagnostics = _compute_oof_diagnostics(scored_oof)
-    return pred_df, latest, symbol_summary_artifacts, oof_diagnostics
+    return pred_df, latest, oof_diagnostics
 
 
 def _write_pipeline_artifacts(
@@ -607,9 +633,6 @@ def _write_pipeline_artifacts(
     validation_result: dict[str, Any],
     external_coverage: dict,
     investor_context_coverage: dict,
-    figure_dir_path: Path,
-    figure_artifacts: dict[str, Any],
-    symbol_summary_artifacts: dict,
     oof_diagnostics: dict,
     report_json: str | None,
     diagnostics: PipelineDiagnostics,
@@ -742,15 +765,11 @@ def _write_pipeline_artifacts(
             "portfolio_action_counts": pred_df["portfolio_action"].value_counts(dropna=False).to_dict() if "portfolio_action" in pred_df.columns else {},
             "risk_flag_counts": pred_df["risk_flag"].value_counts(dropna=False).to_dict() if "risk_flag" in pred_df.columns else {},
         },
-        "visualization_note": "시각화는 전체 집계 + 종목별 + 종목별 최근1개월 비교 그래프(OOF 기준)를 제공합니다.",
         "artifacts": {
             "result_detail_csv": str(detail_path),
             "result_simple_csv": str(simple_path),
             "result_news_csv": str(news_path),
             "result_disclosure_csv": str(disclosure_path),
-            "figure_dir": str(figure_dir_path),
-            **figure_artifacts,
-            **symbol_summary_artifacts,
         },
     }
 
@@ -774,7 +793,6 @@ def run_pipeline(
     output_csv: str,
     universe_csv: str | None = None,
     report_json: str | None = None,
-    figure_dir: str = "reports/figures",
     use_external: bool = True,
     use_investor_context: bool = False,
     dart_api_key: str | None = None,
@@ -801,7 +819,6 @@ def run_pipeline(
     model_head_n_jobs: int | None = None,
     context_raw_event_n_jobs: int | None = None,
     issue_summary_n_jobs: int = 1,
-    symbol_figure_limit: int | None = 30,
 ):
     effective_openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
     effective_openai_model = openai_model or os.getenv("OPENAI_MODEL") or ("gpt-5-mini" if effective_openai_api_key else None)
@@ -811,7 +828,7 @@ def run_pipeline(
     naver_client_secret = naver_client_secret or os.getenv("NAVER_CLIENT_SECRET")
 
     diagnostics = PipelineDiagnostics()
-    total_steps = 13
+    total_steps = 12
 
     _print_progress(1, total_steps, "Loading app configuration")
     cfg_overrides = _build_pipeline_overrides(
@@ -911,7 +928,7 @@ def run_pipeline(
 
     _print_progress(12, total_steps, "Training final model and creating latest predictions")
     with diagnostics.time_stage("train_final_and_predict_latest"):
-        pred_df, latest, symbol_summary_artifacts, oof_diagnostics = _predict_pipeline_latest(
+        pred_df, latest, oof_diagnostics = _predict_pipeline_latest(
             feat=feat,
             feature_columns=feature_columns,
             cfg=cfg,
@@ -924,12 +941,11 @@ def run_pipeline(
             issue_summary_symbols=issue_summary_symbols,
             issue_summary_n_jobs=issue_summary_n_jobs,
             news_impact_report=news_impact_report,
-            figure_dir_path=figure_dir_path,
         )
     diagnostics.set_rows("latest_feature_rows", latest)
     diagnostics.set_rows("latest_predictions", pred_df)
 
-    _print_progress(13, total_steps, "Saving artifacts")
+    _print_progress(12, total_steps, "Saving artifacts")
     with diagnostics.time_stage("save_pipeline_artifacts"):
         report = _write_pipeline_artifacts(
             pred_df=pred_df,
@@ -942,9 +958,6 @@ def run_pipeline(
             validation_result=validation_result,
             external_coverage=external_coverage,
             investor_context_coverage=investor_context_coverage,
-            figure_dir_path=figure_dir_path,
-            figure_artifacts=figure_artifacts,
-            symbol_summary_artifacts=symbol_summary_artifacts,
             oof_diagnostics=oof_diagnostics,
             report_json=report_json,
             diagnostics=diagnostics,
@@ -966,7 +979,6 @@ def build_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--universe-csv", default=None, help="Optional universe CSV with Symbol column")
     parser.add_argument("--report-json", default="pipeline_report.json", help="Pipeline summary JSON")
     parser.add_argument("--news-impact-report", default=None, help="Optional stock-news-impact JSON report for display-only context")
-    parser.add_argument("--figure-dir", default="figures", help="Directory for generated charts")
     parser.add_argument("--fetch-real", action="store_true", help="Fetch real OHLCV from yfinance before running")
     parser.add_argument("--disable-external", action="store_true", help="Disable external market feature download")
     parser.add_argument("--fetch-investor-context", action="store_true", help="Fetch investor flow context features (foreign/institution flows)")
@@ -1024,12 +1036,6 @@ def build_cli_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--issue-summary-n-jobs", type=int, default=1, help="Worker count for issue summary generation")
     parser.add_argument(
-        "--symbol-figure-limit",
-        type=int,
-        default=30,
-        help="Maximum symbols for per-symbol comparison figures; use -1 for all symbols",
-    )
-    parser.add_argument(
         "--real-symbols",
         nargs="*",
         default=None,
@@ -1081,7 +1087,6 @@ def main():
         args.output,
         args.universe_csv,
         args.report_json,
-        args.figure_dir,
         use_external=not args.disable_external,
         use_investor_context=args.fetch_investor_context,
         dart_api_key=args.dart_api_key,
@@ -1108,7 +1113,6 @@ def main():
         model_head_n_jobs=args.model_head_n_jobs,
         context_raw_event_n_jobs=args.context_raw_event_n_jobs,
         issue_summary_n_jobs=args.issue_summary_n_jobs,
-        symbol_figure_limit=None if args.symbol_figure_limit is not None and args.symbol_figure_limit < 0 else args.symbol_figure_limit,
     )
 
 

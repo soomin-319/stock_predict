@@ -11,7 +11,7 @@
 7. Calibrate probabilities, split OOF rows for tuning/evaluation, and compute diagnostics with `src/validation/support.py`.
 8. Tune ranking weights, run top-k backtests, and train the final multi-head model.
 9. Build latest predictions with `src/inference/predict.py` and policy fields with `src/domain/signal_policy.py`.
-10. Save CSV, JSON, and figure artifacts through `src/reports/`.
+10. Save CSV and JSON artifacts through `src/reports/`.
 
 ## Stable Interfaces
 

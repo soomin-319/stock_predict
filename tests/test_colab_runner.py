@@ -39,11 +39,13 @@ def test_run_colab_pipeline_bootstraps_default_krx_symbols(monkeypatch, tmp_path
     monkeypatch.setattr(colab_runner, "save_real_ohlcv_csv", _fake_save)
     monkeypatch.setattr(colab_runner, "run_pipeline", _fake_run_pipeline)
 
-    out = colab_runner.run_colab_pipeline(input_csv="data/sample_ohlcv.csv", report_json="demo.json", figure_dir="figs")
+    out = colab_runner.run_colab_pipeline(input_csv="data/sample_ohlcv.csv", report_json="demo.json")
 
     assert captured["save"]["path"].endswith("data/real_ohlcv.csv")
     assert captured["save"]["symbols"] == ["000270.KS", "005930.KS", "000660.KS"]
     assert captured["run_pipeline"]["input_csv"] == "data/real_ohlcv.csv"
+    assert "figure_dir" not in captured["run_pipeline"]
+    assert "figure_dir" not in out
     assert out["result_simple_csv"].endswith("result/result_simple.csv")
 
 

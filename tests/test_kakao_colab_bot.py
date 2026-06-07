@@ -79,7 +79,6 @@ def make_bot(tmp_path: Path, runner=None) -> KakaoColabPredictionBot:
         python_executable="python",
         input_csv="data/real_ohlcv.csv",
         report_json="pipeline_report_with_context.json",
-        figure_dir="figures_with_context",
         dart_api_key="demo-key",
         dart_corp_map_csv="data/dart_corp_map.csv",
         naver_client_id="naver-id",
@@ -94,6 +93,17 @@ def make_bot(tmp_path: Path, runner=None) -> KakaoColabPredictionBot:
         session_path="result/chatbot_sessions.json",
         process_runner=runner,
     )
+
+
+def test_pipeline_runtime_config_removes_graph_options(tmp_path: Path):
+    runtime_config = PipelineRuntimeConfig(project_root=tmp_path, python_executable="python")
+
+    command = runtime_config.build_command("005930.KS")
+    signature = _runtime_cache_signature(runtime_config, tmp_path)
+
+    assert "--figure-dir" not in command
+    assert "figure_dir" not in signature
+    assert not hasattr(runtime_config, "figure_dir")
 
 
 def test_returns_cached_prediction_message_from_kakao_payload(tmp_path: Path):
@@ -359,7 +369,6 @@ def test_collect_live_events_uses_short_ttl_cache(tmp_path: Path, monkeypatch):
         python_executable="python",
         input_csv="data/real_ohlcv.csv",
         report_json="pipeline_report_with_context.json",
-        figure_dir="figures_with_context",
         naver_client_id="real_id",
         naver_client_secret="real_secret",
         bootstrap_default_symbols=False,
@@ -626,7 +635,6 @@ def test_request_during_bootstrap_returns_global_progress_and_queues_summary(tmp
         python_executable="python",
         input_csv="data/real_ohlcv.csv",
         report_json="pipeline_report_with_context.json",
-        figure_dir="figures_with_context",
         bootstrap_default_symbols=True,
     )
     bot = KakaoColabPredictionBot(
@@ -829,7 +837,6 @@ def test_start_job_skips_disable_external_flag_when_external_features_enabled(tm
         python_executable="python",
         input_csv="data/real_ohlcv.csv",
         report_json="pipeline_report_with_context.json",
-        figure_dir="figures_with_context",
         dart_api_key="demo-key",
         dart_corp_map_csv="data/dart_corp_map.csv",
         use_external=True,
@@ -1280,7 +1287,6 @@ def test_prewarm_prediction_cache_runs_colab_pipeline(monkeypatch, tmp_path: Pat
         project_root=tmp_path,
         input_csv="data/sample_ohlcv.csv",
         report_json="prewarm_report.json",
-        figure_dir="prewarm_figures",
         enable_investor_disclosure=False,
         openai_api_key="sk-prewarm",
         openai_model="gpt-test",
@@ -1295,7 +1301,7 @@ def test_prewarm_prediction_cache_runs_colab_pipeline(monkeypatch, tmp_path: Pat
 
     assert captured["input_csv"] == "data/sample_ohlcv.csv"
     assert captured["report_json"] == "prewarm_report.json"
-    assert captured["figure_dir"] == "prewarm_figures"
+    assert "figure_dir" not in captured
     assert captured["use_investor_context"] is True
     assert captured["enable_investor_disclosure"] is False
     assert captured["openai_api_key"] == "sk-prewarm"
@@ -1690,6 +1696,72 @@ def test_issue_summary_timeout_does_not_block_webhook_response(tmp_path: Path, m
     text = response["template"]["outputs"][0]["simpleText"]["text"]
     assert "공시/뉴스 요약 작업을 진행 중" in text
     assert elapsed < 0.12
+
+
+def test_keyed_timeout_work_is_single_flight(tmp_path: Path):
+    bot = make_bot(tmp_path)
+    started = threading.Event()
+    release = threading.Event()
+    calls = {"count": 0}
+    completed = []
+
+    def _slow_work():
+        calls["count"] += 1
+        started.set()
+        release.wait(timeout=1.0)
+        return "done"
+
+    assert bot._run_in_background_with_timeout(
+        _slow_work,
+        timeout=0.01,
+        key="same",
+        on_complete=completed.append,
+    ) is None
+    assert started.wait(timeout=0.2)
+    assert bot._run_in_background_with_timeout(_slow_work, timeout=0.01, key="same") is None
+    assert calls["count"] == 1
+
+    release.set()
+    deadline = time.time() + 1.0
+    while time.time() < deadline and bot._timed_futures:
+        time.sleep(0.01)
+    assert bot._timed_futures == {}
+    assert completed == ["done"]
+
+
+def test_timed_summary_completion_is_cached_without_duplicate_background_job(tmp_path: Path, monkeypatch):
+    bot = make_bot(tmp_path)
+    bot.ISSUE_SUMMARY_TIMEOUT_SEC = 0.01
+    monkeypatch.setattr(bot, "_prediction_date_for_symbol", lambda symbol: "2026-06-05")
+    monkeypatch.setattr(
+        bot,
+        "_load_result_news",
+        lambda: pd.DataFrame(
+            [{"Date": pd.Timestamp("2026-06-05"), "Symbol": "005930.KS", "source_type": "news", "title": "실적 개선"}]
+        ),
+    )
+    background_calls = []
+    monkeypatch.setattr(bot, "_start_issue_summary_background", lambda *args: background_calls.append(args))
+
+    def _slow_summary(base, **kwargs):
+        time.sleep(0.05)
+        out = base.copy()
+        out["공시 요약"] = "확인된 공시 없음"
+        out["뉴스 요약"] = "실적 개선"
+        return out
+
+    monkeypatch.setattr("src.chatbot.kakao_colab_bot.append_issue_summary_columns", _slow_summary)
+    row = pd.Series({"종목명": "삼성전자"})
+
+    returned = bot._attach_live_issue_summary(row, "005930.KS")
+    assert returned.equals(row)
+    assert background_calls == []
+
+    deadline = time.time() + 1.0
+    while time.time() < deadline and "005930.KS" not in bot._issue_summary_cache:
+        time.sleep(0.01)
+    assert bot._issue_summary_cache["005930.KS"]["뉴스 요약"] == "실적 개선"
+    assert bot._issue_summary_jobs["005930.KS"]["status"] == "completed"
 
 
 def test_cached_prediction_does_not_regenerate_issue_summary_when_summary_exists(tmp_path: Path, monkeypatch):

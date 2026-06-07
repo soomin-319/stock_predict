@@ -13,7 +13,6 @@ dependencies = [
   "pandas",
   "scikit-learn",
   "yfinance",
-  "matplotlib",
   "lightgbm",
   "openai",
   "flask",

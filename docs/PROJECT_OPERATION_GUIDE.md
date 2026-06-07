@@ -30,13 +30,13 @@ flowchart TD
     E --> F[Walk-forward 검증과 OOF 예측]
     F --> G[신호 가중치 조정과 Holdout 백테스트]
     G --> H[최종 모델 학습과 최신 예측]
-    H --> I[권고·요약·그래프 생성]
+    H --> I[권고·요약 생성]
     I --> J[result 폴더에 결과 저장]
 ```
 
 실행 후에는 두 가지 방법으로 결과를 사용한다.
 
-1. `result/` 아래의 CSV·JSON·그래프를 직접 확인한다.
+1. `result/` 아래의 CSV·JSON을 직접 확인한다.
 2. Kakao/Colab 챗봇에서 종목 조회, `결과`, `최신화`, `추천` 기능을 사용한다.
 
 ---
@@ -95,8 +95,7 @@ python -m pip install -e .
 python src/pipeline.py `
   --input data/sample_ohlcv.csv `
   --disable-external `
-  --report-json pipeline_report_smoke.json `
-  --figure-dir figures_smoke
+  --report-json pipeline_report_smoke.json
 ```
 
 이 명령은 번들 샘플 데이터를 사용하고 외부 수집을 끈다. 처음 설치를 확인할 때 사용한다.
@@ -245,16 +244,7 @@ signal_score =
 
 `signal_score`는 진단과 백테스트 후보 선택용이다. 최종 매수·매도·관망 권고를 결정하지 않는다.
 
-### 11단계: Holdout 백테스트와 그래프 생성
-
-콘솔 메시지: `Running backtest on holdout split and creating figures`
-
-- 평가용 OOF 구간에서 long-only top-k 전략을 실행한다.
-- 거래대금, 상승확률, 신호 점수, 회전율, 거래 비용, coverage gate 등을 반영한다.
-- 누적 수익률, Sharpe, 최대 낙폭, 회전율, 벤치마크 대비 성과와 그래프를 만든다.
-- 담당: `src/validation/backtest.py`, `src/reports/visualize.py`
-
-### 12단계: 최종 모델 학습과 최신 예측
+### 11단계: 최종 모델 학습과 최신 예측
 
 콘솔 메시지: `Training final model and creating latest predictions`
 
@@ -278,11 +268,11 @@ predicted_return <= -2.0% → 매도
 - 요청된 종목의 뉴스·공시 요약과 표시 문맥을 붙일 수 있지만 예측값과 권고는 변경하지 않는다.
 - 담당: `src/models/`, `src/inference/`, `src/domain/signal_policy.py`, `src/reports/`
 
-### 13단계: 결과 저장
+### 12단계: 결과 저장
 
 콘솔 메시지: `Saving artifacts`
 
-- CSV, JSON, 그래프를 `result/` 아래에 저장한다.
+- CSV와 JSON을 `result/` 아래에 저장한다.
 - CSV는 Windows Excel 호환을 위해 `utf-8-sig`로 저장한다.
 - 저장 경로와 coverage, 진단 정보는 파이프라인 보고서에 기록한다.
 
@@ -298,13 +288,12 @@ predicted_return <= -2.0% → 매도
 | `result/result_disclosure.csv` | 표시용 공시 요약 |
 | `result/pipeline_report.json` | 설정, 검증, 백테스트, coverage, 산출물 경로 |
 | `result/pm_report.json` | 포트폴리오 운영 관점 요약 |
-| `result/figures/` 또는 지정 폴더 | 백테스트와 예측 비교 그래프 |
 
 권장 확인 순서:
 
 1. `pipeline_report.json`에서 실행 성공 여부와 coverage를 확인한다.
 2. `result_simple.csv`에서 사용자용 최신 결과를 확인한다.
-3. 이상한 값이 있으면 `result_detail.csv`와 그래프를 확인한다.
+3. 이상한 값이 있으면 `result_detail.csv`의 피처와 진단 정보를 확인한다.
 4. 뉴스·공시는 참고 문맥으로만 확인한다.
 
 ---
@@ -513,7 +502,7 @@ uncertainty_width = quantile_high - quantile_low
 | `src/validation/` | Walk-forward, OOF, 보정, 튜닝, 백테스트 |
 | `src/inference/` | 예측 프레임과 신호 점수 생성 |
 | `src/domain/` | 메인 권고와 위험 정책 |
-| `src/reports/` | CSV, JSON, 그래프, 사용자용 요약 |
+| `src/reports/` | CSV, JSON, 사용자용 요약 |
 | `src/news_impact/` | 별도 뉴스 영향 수집·점수화 |
 | `src/chatbot/` | Kakao 웹훅, 캐시, 백그라운드 실행 |
 | `src/recommendation/` | 챗봇의 별도 실시간 추천 기능 |
