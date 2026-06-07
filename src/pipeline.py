@@ -51,6 +51,7 @@ from src.pipeline_support import (
     finalize_latest_prediction_frame,
 )
 from src.reports.pm_report import build_pm_report, save_pm_report
+from src.reports.report_metadata import build_report_metadata, generate_run_id
 from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.news_impact_context import append_generated_news_impact_context, append_news_impact_context
 from src.reports.result_formatter import (
@@ -91,6 +92,7 @@ from src.validation.support import (
     prediction_from_oof_df as validation_prediction_from_oof_df,
     split_oof_for_tuning_and_eval as validation_split_oof_for_tuning_and_eval,
 )
+from src.utils.atomic_files import atomic_write_text
 
 
 def _fallback_symbols_from_input_or_default(input_csv: str, limit: int = 0) -> list[str]:
@@ -609,6 +611,7 @@ def _write_pipeline_artifacts(
     oof_diagnostics: dict,
     report_json: str | None,
     diagnostics: PipelineDiagnostics,
+    report_metadata: dict[str, Any],
 ) -> None:
     scored_oof = validation_result["scored_oof"]
     backtest = validation_result["backtest"]
@@ -702,6 +705,7 @@ def _write_pipeline_artifacts(
         "coverage_gate_status": coverage_gate_status,
     }
     report = {
+        **report_metadata,
         "universe_name": cfg.universe.name,
         "universe_size_used": int(data["Symbol"].nunique()),
         "feature_count": len(feature_columns),
@@ -758,7 +762,11 @@ def _write_pipeline_artifacts(
 
     if report_json:
         report_path = resolve_output_path(report_json)
-        report_path.write_text(json.dumps(_round_floats(report, 3), indent=2, ensure_ascii=False))
+        atomic_write_text(
+            report_path,
+            json.dumps(_round_floats(report, 3), indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
 
 
 def run_pipeline(
@@ -846,6 +854,27 @@ def run_pipeline(
         )
     diagnostics.set_rows("context_input", data)
     diagnostics.set_rows("context_raw_events", context_raw_df)
+    input_as_of = pd.to_datetime(data.get("Date"), errors="coerce").max()
+    context_as_of = (
+        pd.to_datetime(context_raw_df.get("Date"), errors="coerce").max()
+        if not context_raw_df.empty and "Date" in context_raw_df.columns
+        else pd.NaT
+    )
+    input_as_of_date = None if pd.isna(input_as_of) else input_as_of.strftime("%Y-%m-%d")
+    prediction_for_date = (
+        None if pd.isna(input_as_of) else (input_as_of + pd.offsets.BDay(1)).strftime("%Y-%m-%d")
+    )
+    context_as_of_date = None if pd.isna(context_as_of) else context_as_of.strftime("%Y-%m-%d")
+    is_sample = Path(input_csv).name.lower().startswith("sample")
+    report_metadata = build_report_metadata(
+        run_id=generate_run_id(),
+        environment="smoke" if is_sample else "production",
+        data_mode="sample" if is_sample else "real",
+        input_as_of_date=input_as_of_date,
+        prediction_for_date=prediction_for_date,
+        context_as_of_date=context_as_of_date,
+        config_payload=app_config_to_dict(cfg),
+    )
 
     _print_progress(5, total_steps, "Building price features")
     _print_progress(6, total_steps, "Adding external market features")
@@ -917,6 +946,7 @@ def run_pipeline(
             oof_diagnostics=oof_diagnostics,
             report_json=report_json,
             diagnostics=diagnostics,
+            report_metadata=report_metadata,
         )
 
     _print_prediction_console_summary(pred_df)

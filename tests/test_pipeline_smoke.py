@@ -140,7 +140,13 @@ def test_run_pipeline_generates_report_and_figures(tmp_path):
     assert detail_path.exists()
     assert simple_path.exists()
     assert report_path.exists()
-    payload = json.loads(report_path.read_text())
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "1.0"
+    assert payload["run_id"]
+    assert payload["environment"] == "smoke"
+    assert payload["data_mode"] == "sample"
+    assert payload["input_as_of_date"]
+    assert payload["prediction_for_date"]
     assert "walk_forward" in payload
     assert "baselines" in payload
     assert "tuned_signal" in payload
