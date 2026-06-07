@@ -22,6 +22,8 @@ def detect_git_commit(project_root: Path) -> str | None:
             ["git", "rev-parse", "--short", "HEAD"],
             cwd=project_root,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stderr=subprocess.DEVNULL,
         ).strip()
     except Exception:
