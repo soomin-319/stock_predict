@@ -51,20 +51,29 @@ def classification_metrics(y_true, y_prob, threshold: float = 0.5):
     }
 
 
-def probability_calibration_metrics(y_true, y_prob, n_bins: int = 10):
+def probability_calibration_metrics(y_true, y_prob, n_bins: int = 10, min_samples: int = 1):
     y_true = np.asarray(y_true).astype(int)
     y_prob = np.asarray(y_prob, dtype=float)
-    if y_true.size == 0:
-        return {"brier": 0.0, "ece": 0.0}
+    sample_count = int(y_true.size)
+    if sample_count < min_samples:
+        return {
+            "valid": False,
+            "reason": "insufficient_samples",
+            "sample_count": sample_count,
+            "brier": None,
+            "ece": None,
+            "bins": [],
+        }
 
     y_prob = np.clip(y_prob, 0.0, 1.0)
     brier = float(np.mean((y_prob - y_true) ** 2))
 
-    bins = np.linspace(0.0, 1.0, max(2, n_bins) + 1)
+    edges = np.linspace(0.0, 1.0, max(2, n_bins) + 1)
     ece = 0.0
-    for i in range(len(bins) - 1):
-        lo, hi = bins[i], bins[i + 1]
-        if i == len(bins) - 2:
+    diagnostics = []
+    for i in range(len(edges) - 1):
+        lo, hi = edges[i], edges[i + 1]
+        if i == len(edges) - 2:
             m = (y_prob >= lo) & (y_prob <= hi)
         else:
             m = (y_prob >= lo) & (y_prob < hi)
@@ -73,5 +82,21 @@ def probability_calibration_metrics(y_true, y_prob, n_bins: int = 10):
         conf = float(np.mean(y_prob[m]))
         acc = float(np.mean(y_true[m]))
         ece += float(np.mean(m)) * abs(acc - conf)
+        diagnostics.append(
+            {
+                "lower": float(lo),
+                "upper": float(hi),
+                "count": int(np.sum(m)),
+                "confidence": conf,
+                "accuracy": acc,
+            }
+        )
 
-    return {"brier": brier, "ece": float(ece)}
+    return {
+        "valid": True,
+        "reason": None,
+        "sample_count": sample_count,
+        "brier": brier,
+        "ece": float(ece),
+        "bins": diagnostics,
+    }

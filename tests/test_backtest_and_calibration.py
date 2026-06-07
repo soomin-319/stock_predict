@@ -15,6 +15,21 @@ def test_probability_calibration_metrics_range():
     assert 0 <= m["ece"] <= 1
 
 
+def test_calibration_insufficient_sample_returns_null_ece():
+    result = probability_calibration_metrics([1], [0.8], min_samples=20)
+
+    assert result["ece"] is None
+    assert result["valid"] is False
+    assert result["reason"] == "insufficient_samples"
+
+
+def test_calibration_reports_non_empty_bins():
+    result = probability_calibration_metrics([0, 1] * 20, [0.1, 0.9] * 20)
+
+    assert result["valid"] is True
+    assert result["bins"]
+
+
 def test_backtest_turnover_limit_caps_new_entries():
     # Day1 picks A,B ; Day2 ranking would be C,D first but turnover_limit=0 keeps prior holdings.
     pred = pd.DataFrame(

@@ -78,6 +78,7 @@ from src.validation.baselines import evaluate_baselines
 from src.validation.signal_tuning import tune_signal_weights
 from src.validation.walk_forward import walk_forward_validate_with_oof
 from src.validation.metrics import probability_calibration_metrics
+from src.validation.result_validity import evaluate_backtest_validity
 from src.validation.support import (
     calibrate_up_probability as validation_calibrate_up_probability,
     compute_oof_diagnostics as validation_compute_oof_diagnostics,
@@ -749,6 +750,31 @@ def _write_pipeline_artifacts(
         "investor_coverage_ratio": investor_coverage_ratio,
         "coverage_gate_status": coverage_gate_status,
     }
+    tradable_prediction_count = (
+        int(
+            (
+                pd.to_numeric(pred_df.get("value_traded", 0), errors="coerce").fillna(0.0)
+                >= cfg.backtest.min_value_traded
+            ).sum()
+        )
+        if "value_traded" in pred_df.columns
+        else int(len(pred_df))
+    )
+    backtest_validity = evaluate_backtest_validity(backtest, tradable_prediction_count)
+    if not backtest_validity["backtest_valid"]:
+        report_metadata["status"] = "warning"
+        report_metadata["blocking_reasons"] = list(
+            dict.fromkeys(
+                [
+                    *report_metadata.get("blocking_reasons", []),
+                    *backtest_validity["blocking_reasons"],
+                ]
+            )
+        )
+        artifact_manager.metadata.update(
+            status=report_metadata["status"],
+            blocking_reasons=report_metadata["blocking_reasons"],
+        )
     report = {
         **report_metadata,
         "universe_name": cfg.universe.name,
@@ -761,6 +787,7 @@ def _write_pipeline_artifacts(
         "tuning_samples": int(len(tune_df)),
         "backtest_samples": int(len(backtest_input)),
         "backtest": {k: v for k, v in backtest.items() if k != "series"},
+        "backtest_validity": backtest_validity,
         "external_feature_coverage": external_coverage,
         "investor_context_coverage": investor_context_coverage,
         "coverage_gate": {
@@ -780,9 +807,7 @@ def _write_pipeline_artifacts(
             "predictions_row_count": int(len(pred_df)),
             "available_prediction_count": int(pred_df["predicted_return"].notna().sum()) if "predicted_return" in pred_df.columns else 0,
             "missing_prediction_count": int(pred_df["predicted_return"].isna().sum()) if "predicted_return" in pred_df.columns else 0,
-            "tradable_prediction_count": int((pd.to_numeric(pred_df.get("value_traded", 0), errors="coerce").fillna(0.0) >= cfg.backtest.min_value_traded).sum())
-            if "value_traded" in pred_df.columns
-            else int(len(pred_df)),
+            "tradable_prediction_count": tradable_prediction_count,
         },
         "pm_summary": {
             "portfolio_action_counts": pred_df["portfolio_action"].value_counts(dropna=False).to_dict() if "portfolio_action" in pred_df.columns else {},
