@@ -1516,7 +1516,7 @@ def test_finalize_process_logs_completion_without_inline_formatting(tmp_path: Pa
     log_path = result_dir / "dummy.log"
     log_handle = log_path.open("w", encoding="utf-8")
     bot._active_processes["005930.KS"] = {"log_handle": log_handle, "log_thread": None}
-    bot._job_registry["005930.KS"] = {"status": "running"}
+    bot._job_registry["005930.KS"] = {"status": "running", "command": ["python", "src/pipeline.py"]}
 
     logs: list[str] = []
     monkeypatch.setattr(bot, "_console_log", lambda message: logs.append(message))
@@ -1524,6 +1524,7 @@ def test_finalize_process_logs_completion_without_inline_formatting(tmp_path: Pa
     bot._finalize_process("005930.KS", 0)
 
     assert any("예측 작업 completed" in log for log in logs)
+    assert "command" not in bot._job_registry["005930.KS"]
 
 
 def test_handle_symbol_request_falls_back_when_cached_message_format_fails(tmp_path: Path, monkeypatch):

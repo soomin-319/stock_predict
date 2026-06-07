@@ -1,0 +1,154 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import shutil
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+from src.reports.output import safe_to_csv
+from src.utils.atomic_files import atomic_write_text
+
+REQUIRED_ARTIFACTS = (
+    "csv/result_simple.csv",
+    "csv/result_detail.csv",
+    "csv/result_news.csv",
+    "csv/result_disclosure.csv",
+    "pm_report.json",
+    "pipeline_report.json",
+)
+
+COMPATIBILITY_COPIES = {
+    "csv/result_simple.csv": "result_simple.csv",
+    "csv/result_detail.csv": "result_detail.csv",
+    "csv/result_news.csv": "result_news.csv",
+    "csv/result_disclosure.csv": "result_disclosure.csv",
+    "pm_report.json": "pm_report.json",
+}
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _csv_row_count(path: Path) -> int | None:
+    try:
+        return int(len(pd.read_csv(path, encoding="utf-8-sig")))
+    except Exception:
+        return None
+
+
+def _artifact_entries(run_dir: Path) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for path in sorted(item for item in run_dir.rglob("*") if item.is_file() and item.name != "manifest.json"):
+        stat = path.stat()
+        entry = {
+            "relative_path": path.relative_to(run_dir).as_posix(),
+            "sha256": _sha256(path),
+            "size_bytes": int(stat.st_size),
+            "generated_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+        }
+        if path.suffix.lower() == ".csv":
+            entry["row_count"] = _csv_row_count(path)
+        entries.append(entry)
+    return entries
+
+
+def _replace_directory(source: Path, target: Path) -> None:
+    temp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    backup = target.with_name(f".{target.name}.{uuid.uuid4().hex}.bak")
+    shutil.copytree(source, temp)
+    try:
+        if target.exists():
+            target.replace(backup)
+        temp.replace(target)
+        if backup.exists():
+            shutil.rmtree(backup)
+    except Exception:
+        if target.exists():
+            shutil.rmtree(target)
+        if backup.exists():
+            backup.replace(target)
+        raise
+    finally:
+        if temp.exists():
+            shutil.rmtree(temp)
+
+
+def _copy_compatibility_files(result_root: Path) -> None:
+    latest = result_root / "latest"
+    for source_name, target_name in COMPATIBILITY_COPIES.items():
+        source = latest / source_name
+        target = result_root / target_name
+        temp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+        shutil.copy2(source, temp)
+        temp.replace(target)
+
+
+class RunArtifactManager:
+    def __init__(self, result_root: Path, metadata: dict[str, Any]):
+        self.result_root = Path(result_root)
+        self.metadata = dict(metadata)
+        self.run_dir = self.result_root / "runs" / str(self.metadata["run_id"])
+        self.run_dir.mkdir(parents=True, exist_ok=False)
+
+    def path(self, relative_path: str) -> Path:
+        target = self.run_dir / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def write_json(self, relative_path: str, payload: dict[str, Any]) -> Path:
+        target = self.path(relative_path)
+        atomic_write_text(target, json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return target
+
+    def write_csv(self, relative_path: str, frame: pd.DataFrame) -> Path:
+        return safe_to_csv(frame, self.path(relative_path), allow_fallback=False)
+
+    def build_manifest(self) -> dict[str, Any]:
+        return {**self.metadata, "artifacts": _artifact_entries(self.run_dir)}
+
+    def validate(self, manifest: dict[str, Any] | None = None) -> tuple[str, list[str]]:
+        payload = manifest or self.build_manifest()
+        present = {item["relative_path"] for item in payload["artifacts"]}
+        reasons = [f"missing_artifact:{name}" for name in REQUIRED_ARTIFACTS if name not in present]
+        for report_name in ("pipeline_report.json", "pm_report.json"):
+            path = self.run_dir / report_name
+            if not path.exists():
+                continue
+            try:
+                report = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                reasons.append(f"invalid_json:{report_name}")
+                continue
+            if report.get("run_id") != self.metadata.get("run_id"):
+                reasons.append(f"run_id_mismatch:{report_name}")
+        return ("fail" if reasons else str(self.metadata.get("status", "pass"))), reasons
+
+    def finalize(self) -> dict[str, Any]:
+        manifest = self.build_manifest()
+        status, reasons = self.validate(manifest)
+        manifest["status"] = status
+        manifest["blocking_reasons"] = list(dict.fromkeys([*manifest.get("blocking_reasons", []), *reasons]))
+        promotable = (
+            status != "fail"
+            and self.metadata.get("environment") == "production"
+            and self.metadata.get("data_mode") == "real"
+        )
+        manifest["promoted"] = bool(promotable)
+        self.write_json("manifest.json", manifest)
+        if promotable:
+            _replace_directory(self.run_dir, self.result_root / "latest")
+            _copy_compatibility_files(self.result_root)
+        return manifest
+
+
+__all__ = ["COMPATIBILITY_COPIES", "REQUIRED_ARTIFACTS", "RunArtifactManager"]

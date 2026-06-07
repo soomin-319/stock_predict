@@ -136,17 +136,31 @@ def test_run_pipeline_generates_report_without_graph_artifacts(tmp_path):
     inp = Path("data/sample_ohlcv.csv")
     out = tmp_path / "predictions.csv"
     rep = tmp_path / "report.json"
-    run_pipeline(str(inp), str(out), universe_csv=None, report_json=str(rep), use_external=False)
+    fig = tmp_path / "figures"
+    payload = run_pipeline(str(inp), str(out), universe_csv=None, report_json=str(rep), figure_dir=str(fig), use_external=False)
 
     result_dir = Path("result")
     assert result_dir.exists()
-    detail_path = result_dir / "result_detail.csv"
-    simple_path = result_dir / "result_simple.csv"
-    report_path = resolve_output_path(str(rep))
+    detail_path = Path(payload["artifacts"]["result_detail_csv"])
+    simple_path = Path(payload["artifacts"]["result_simple_csv"])
+    report_path = Path(payload["artifacts"]["pipeline_report_json"])
     assert detail_path.exists()
     assert simple_path.exists()
     assert report_path.exists()
-    payload = json.loads(report_path.read_text())
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "1.0"
+    assert payload["run_id"]
+    assert payload["environment"] == "smoke"
+    assert payload["data_mode"] == "sample"
+    assert payload["input_as_of_date"]
+    assert payload["prediction_for_date"]
+    assert payload["run_id"] in report_path.as_posix()
+    manifest_path = report_path.parent / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["run_id"] == payload["run_id"]
+    assert manifest["promoted"] is False
+    pm_payload = json.loads(Path(payload["artifacts"]["pm_report_json"]).read_text(encoding="utf-8"))
+    assert pm_payload["run_id"] == payload["run_id"]
     assert "walk_forward" in payload
     assert "baselines" in payload
     assert "tuned_signal" in payload

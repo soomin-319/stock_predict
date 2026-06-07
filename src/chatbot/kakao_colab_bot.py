@@ -35,6 +35,7 @@ from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.news_impact_context import append_generated_news_impact_context
 from src.reports.result_formatter import validate_result_simple_schema
 from src.utils.atomic_files import atomic_write_text
+from src.utils.secrets import redact_argv, redact_text, redact_value
 from src.recommendation.close_betting import format_recommendation_message
 from src.recommendation.realtime_close_betting import RealTimeCloseBettingRecommendationService
 
@@ -144,6 +145,18 @@ class PipelineRuntimeConfig:
         env["PYTHONUTF8"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         return env
+
+    def secret_values(self) -> tuple[str, ...]:
+        return tuple(
+            str(value)
+            for value in (
+                self.dart_api_key,
+                self.openai_api_key,
+                self.naver_client_id,
+                self.naver_client_secret,
+            )
+            if value
+        )
 
 
 @dataclass(slots=True)
@@ -873,7 +886,8 @@ class KakaoColabPredictionBot:
 
     def _console_log(self, message: str):
         timestamp = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S KST")
-        print(f"[KAKAO BOT {timestamp}] {message}", flush=True)
+        safe_message = redact_text(message, self.runtime_config.secret_values())
+        print(f"[KAKAO BOT {timestamp}] {safe_message}", flush=True)
 
     def _stream_process_output(self, symbol: str, process: Any, log_handle):
         stdout = getattr(process, "stdout", None)
@@ -881,7 +895,7 @@ class KakaoColabPredictionBot:
             return
 
         for raw_line in stdout:
-            log_handle.write(raw_line)
+            log_handle.write(redact_text(raw_line, self.runtime_config.secret_values()))
             log_handle.flush()
 
     def _finalize_process(self, symbol: str, exit_code: int):
@@ -910,6 +924,8 @@ class KakaoColabPredictionBot:
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             }
         )
+        job_state.pop("command", None)
+        job_state.pop("pid", None)
         with self._state_lock:
             self._job_registry[symbol] = job_state
             self._save_registry(self.state_path, self._job_registry)
@@ -948,6 +964,8 @@ class KakaoColabPredictionBot:
                     "failure_note": str(note or ""),
                 }
             )
+            job_state.pop("command", None)
+            job_state.pop("pid", None)
             self._job_registry[symbol] = job_state
             self._save_registry(self.state_path, self._job_registry)
 
@@ -1033,7 +1051,8 @@ class KakaoColabPredictionBot:
         submitted_at = datetime.now(timezone.utc).isoformat()
         log_path = self.log_dir / f"{display_code}_{submitted_at.replace(':', '').replace('+00:00', 'Z')}.log"
         log_handle = log_path.open("w", encoding="utf-8")
-        self._console_log(f"{display_code} 예측 작업 시작: {' '.join(command)}")
+        safe_command = redact_argv(command, self.runtime_config.secret_values())
+        self._console_log(f"{display_code} 예측 작업 시작: {' '.join(safe_command)}")
         subprocess_env = self.runtime_config.build_subprocess_env()
         try:
             process = self.process_runner(
@@ -1054,11 +1073,11 @@ class KakaoColabPredictionBot:
             except Exception:
                 pass
             with self._state_lock:
-                self._job_registry[symbol] = asdict(
+                failed_state = asdict(
                     PredictionJobState(
                         symbol=symbol,
                         display_code=display_code,
-                        command=command,
+                        command=safe_command,
                         log_path=str(log_path.relative_to(self.project_root)),
                         submitted_at=submitted_at,
                         status="failed",
@@ -1067,6 +1086,9 @@ class KakaoColabPredictionBot:
                         completed_at=datetime.now(timezone.utc).isoformat(),
                     )
                 )
+                failed_state.pop("command", None)
+                failed_state.pop("pid", None)
+                self._job_registry[symbol] = failed_state
                 self._save_registry(self.state_path, self._job_registry)
             return False
         log_thread = None
@@ -1100,7 +1122,7 @@ class KakaoColabPredictionBot:
                 PredictionJobState(
                     symbol=symbol,
                     display_code=display_code,
-                    command=command,
+                    command=safe_command,
                     log_path=str(log_path.relative_to(self.project_root)),
                     submitted_at=submitted_at,
                     status="running",
@@ -1751,9 +1773,8 @@ class KakaoColabPredictionBot:
         return {str(k): v for k, v in data.items() if isinstance(v, dict)}
 
     def _save_registry(self, path: Path, data: dict[str, dict[str, Any]]):
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(path)
+        safe_data = redact_value(data, self.runtime_config.secret_values())
+        atomic_write_text(path, json.dumps(safe_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _build_response(self, text: str, quick_replies: list[tuple[str, str]] | None = None) -> dict[str, Any]:
         message_text = str(text or "")

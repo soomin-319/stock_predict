@@ -4,6 +4,22 @@ import json
 from pathlib import Path
 
 import pandas as pd
+from src.utils.atomic_files import atomic_write_text
+
+COMMON_METADATA_FIELDS = (
+    "schema_version",
+    "run_id",
+    "environment",
+    "data_mode",
+    "generated_at",
+    "input_as_of_date",
+    "prediction_for_date",
+    "context_as_of_date",
+    "git_commit",
+    "config_hash",
+    "status",
+    "blocking_reasons",
+)
 
 
 def build_pm_report(pred_df: pd.DataFrame, report: dict) -> dict:
@@ -44,6 +60,7 @@ def build_pm_report(pred_df: pd.DataFrame, report: dict) -> dict:
     risk_counts = work["risk_flag"].astype(str).value_counts(dropna=False).to_dict() if "risk_flag" in work.columns else {}
 
     return {
+        **{key: report.get(key) for key in COMMON_METADATA_FIELDS},
         "coverage_gate": coverage_gate,
         "pm_summary": report.get("pm_summary", {}),
         "risk_flag_counts": risk_counts,
@@ -53,7 +70,7 @@ def build_pm_report(pred_df: pd.DataFrame, report: dict) -> dict:
 
 
 def save_pm_report(pm_report: dict, out_path: Path) -> Path:
-    out_path.write_text(json.dumps(pm_report, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write_text(out_path, json.dumps(pm_report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return out_path
 
 
