@@ -90,7 +90,7 @@
 
 ## 챗봇 상태와 캐시
 
-### `result/chatbot_jobs.json`
+### `result/runtime/chatbot_jobs.json`
 
 챗봇 백그라운드 작업 상태를 기록한다.
 
@@ -101,7 +101,7 @@
 
 `__bootstrap__` 항목은 초기 전체 준비 작업이다.
 
-### `result/chatbot_sessions.json`
+### `result/runtime/chatbot_sessions.json`
 
 사용자별 챗봇 대화 상태를 저장한다.
 
@@ -112,7 +112,7 @@
 
 종목명이 생략된 후속 요청을 처리할 때 사용한다.
 
-### `result/prewarm_cache_meta.json`
+### `result/runtime/prewarm_cache_meta.json`
 
 챗봇 시작 시 전체 예측을 다시 실행할지 판단하는 캐시 메타데이터다.
 
@@ -124,13 +124,15 @@
 
 입력과 설정이 동일하면 불필요한 재실행을 건너뛸 수 있다.
 
-### `result/chatbot_logs/*.log`
+### `result/runtime/logs/*.log`
 
 챗봇이 실행한 subprocess와 bootstrap 작업의 표준 출력·오류 로그다.
 
 - `{종목}_{timestamp}.log`
 - `bootstrap_{timestamp}.log`
 - `recommendation_{timestamp}.log`
+
+기존 최상위 상태 파일과 `result/chatbot_logs/`는 읽기 마이그레이션용 legacy 경로다.
 
 ## 그래프 폴더
 
@@ -219,3 +221,20 @@ Codex/MCP 연결 테스트 설정이다. 주식 예측 파이프라인의 핵심
 `result/`는 생성 산출물 영역이다. 보존할 보고서를 먼저 백업한 후 정리한다.
 
 자세한 안전 정리 절차는 [`RESULT_CLEANUP.md`](RESULT_CLEANUP.md)를 참고한다.
+
+## 공식 실행 산출물 구조
+
+- `result/runs/<run_id>/`: 변경하지 않는 실행별 원본 산출물
+- `result/latest/`: 검증을 통과한 최신 `production`/`real` 실행
+- `result/runtime/`: 챗봇 상태와 로그
+- `result/.pytest_tmp/`: 폐기 가능한 테스트 임시 파일
+- 최상위 `result_simple.csv` 등: 기존 소비자를 위한 호환 복사본이며 점진적으로 폐기 예정
+
+샘플/smoke 실행은 `latest/`와 최상위 호환 복사본을 갱신하지 않는다.
+`manifest.json`의 `run_id`, 환경, 데이터 모드, 상태, blocking reason, 산출물 SHA-256을
+먼저 확인한다. `backtest_valid=false` 또는 calibration `valid=false`는 원시 수치가
+있더라도 유효한 성능 근거로 해석하지 않는다.
+
+뉴스·공시 CSV는 표시·검토 전용이다. `record_type`은 `event`, `summary`, `no_data` 중
+하나이며 `collection_status`, `no_data_reason`, `collection_error`가 수집 상태를 설명한다.
+이 필드는 `predicted_return`, 순위, 권고, 신호를 변경하지 않는다.

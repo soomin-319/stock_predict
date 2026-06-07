@@ -88,6 +88,39 @@ def _print_colab_preview(path: str | Path, rows: int = 5):
     print(shown.to_string(index=False))
 
 
+def _result_paths_from_report(report: dict | None) -> dict[str, str]:
+    result_dir = PROJECT_ROOT / "result"
+    report = report if isinstance(report, dict) else {}
+    manifest = report.get("manifest") if isinstance(report.get("manifest"), dict) else {}
+    declared = {
+        str(item.get("relative_path"))
+        for item in manifest.get("artifacts", [])
+        if isinstance(item, dict)
+    }
+    report_artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
+    if manifest.get("promoted") is True:
+        base = result_dir / "latest"
+    else:
+        canonical_report = report_artifacts.get("pipeline_report_json")
+        canonical_path = Path(canonical_report) if canonical_report else result_dir / "pipeline_report.json"
+        if not canonical_path.is_absolute():
+            canonical_path = PROJECT_ROOT / canonical_path
+        base = canonical_path.parent
+
+    def _artifact(relative_path: str, fallback_name: str) -> str:
+        if relative_path in declared:
+            return (base / relative_path).as_posix()
+        if manifest:
+            return ""
+        return (result_dir / fallback_name).as_posix()
+
+    return {
+        "result_detail_csv": _artifact("csv/result_detail.csv", "result_detail.csv"),
+        "result_simple_csv": _artifact("csv/result_simple.csv", "result_simple.csv"),
+        "report_json": _artifact("pipeline_report.json", "pipeline_report.json"),
+    }
+
+
 def run_colab_pipeline(
     input_csv: str = "data/sample_ohlcv.csv",
     universe_csv: str | None = None,
@@ -133,7 +166,7 @@ def run_colab_pipeline(
             append_real_ohlcv_csv(target.as_posix(), symbols=symbols, start=incremental_start)
             print(f"[Colab] real OHLCV incrementally refreshed from {incremental_start}: {target}")
 
-    run_pipeline(
+    report = run_pipeline(
         input_csv=pipeline_input,
         output_csv="result_detail.csv",
         universe_csv=universe_csv,
@@ -150,12 +183,7 @@ def run_colab_pipeline(
         naver_client_secret=naver_client_secret,
     )
 
-    result_dir = PROJECT_ROOT / "result"
-    return {
-        "result_detail_csv": (result_dir / "result_detail.csv").as_posix(),
-        "result_simple_csv": (result_dir / "result_simple.csv").as_posix(),
-        "report_json": (result_dir / Path(report_json).name).as_posix() if report_json else "",
-    }
+    return _result_paths_from_report(report)
 
 
 if __name__ == "__main__":

@@ -51,6 +51,7 @@ from src.pipeline_support import (
     finalize_latest_prediction_frame,
 )
 from src.reports.pm_report import build_pm_report, save_pm_report
+from src.reports.context_policy import evaluate_context_policy
 from src.reports.report_metadata import build_report_metadata, generate_run_id
 from src.reports.run_artifacts import RunArtifactManager
 from src.reports.issue_summary import append_issue_summary_columns
@@ -77,6 +78,7 @@ from src.validation.baselines import evaluate_baselines
 from src.validation.signal_tuning import tune_signal_weights
 from src.validation.walk_forward import walk_forward_validate_with_oof
 from src.validation.metrics import probability_calibration_metrics
+from src.validation.result_validity import evaluate_backtest_validity
 from src.validation.support import (
     calibrate_up_probability as validation_calibrate_up_probability,
     compute_oof_diagnostics as validation_compute_oof_diagnostics,
@@ -149,6 +151,63 @@ def _drop_empty_detail_columns(detail_df: pd.DataFrame) -> pd.DataFrame:
 
 def _build_issue_summary_snapshot(pred_df: pd.DataFrame) -> pd.DataFrame:
     return output_build_issue_summary_snapshot(pred_df)
+
+
+def _classify_context_export(
+    events: pd.DataFrame,
+    issue_snapshot: pd.DataFrame,
+    *,
+    source_type: str,
+    metadata: dict[str, Any],
+    no_data_reason: str = "no_accepted_context",
+    collection_error: str = "",
+) -> pd.DataFrame:
+    summary_column = "뉴스 요약" if source_type == "news" else "공시 요약"
+    if not events.empty:
+        result = events.copy()
+        if not issue_snapshot.empty:
+            result = result.merge(issue_snapshot, on="Symbol", how="left")
+        result["record_type"] = "event"
+        result["collection_status"] = "completed"
+        result["no_data_reason"] = ""
+        result["collection_error"] = ""
+    elif not issue_snapshot.empty:
+        result = issue_snapshot.copy()
+        result["Date"] = metadata.get("context_as_of_date") or metadata.get("input_as_of_date")
+        result["source_type"] = f"{source_type}_summary"
+        result["title"] = result.get(summary_column, pd.Series(index=result.index, dtype=object)).fillna("-")
+        result["published_at"] = ""
+        result["provider"] = "summary"
+        result["url"] = ""
+        result["raw_id"] = ""
+        result["record_type"] = "summary"
+        result["collection_status"] = "completed"
+        result["no_data_reason"] = ""
+        result["collection_error"] = ""
+    else:
+        result = pd.DataFrame(
+            [{
+                "Date": metadata.get("context_as_of_date") or metadata.get("input_as_of_date"),
+                "Symbol": "",
+                "source_type": source_type,
+                "title": "",
+                "record_type": "no_data",
+                "collection_status": "failed" if collection_error else (
+                    "excluded" if no_data_reason == "context_date_gap_exceeded" else "empty"
+                ),
+                "no_data_reason": no_data_reason,
+                "collection_error": collection_error,
+            }]
+        )
+    for key in (
+        "environment",
+        "data_mode",
+        "input_as_of_date",
+        "prediction_for_date",
+        "context_as_of_date",
+    ):
+        result[key] = metadata.get(key)
+    return result
 
 
 def _backtest_summary_fields(backtest: dict) -> dict[str, float]:
@@ -673,6 +732,19 @@ def _write_pipeline_artifacts(
     )
     detail_df = _drop_empty_detail_columns(detail_df)
     simple_df = _build_result_simple(detail_df)
+    csv_metadata = {
+        key: report_metadata.get(key)
+        for key in (
+            "environment",
+            "data_mode",
+            "input_as_of_date",
+            "prediction_for_date",
+            "context_as_of_date",
+        )
+    }
+    for key, value in csv_metadata.items():
+        detail_df[key] = value
+        simple_df[key] = value
 
     detail_path = artifact_manager.write_csv("csv/result_detail.csv", detail_df)
     simple_path = artifact_manager.write_csv("csv/result_simple.csv", simple_df)
@@ -681,44 +753,41 @@ def _write_pipeline_artifacts(
     export_context_df = context_raw_df.copy()
     if not export_context_df.empty and "Date" in export_context_df.columns:
         export_context_df["Date"] = pd.to_datetime(export_context_df["Date"], errors="coerce").dt.normalize()
-        today_kst = pd.Timestamp.now(tz="Asia/Seoul").normalize().tz_localize(None)
-        export_context_df = export_context_df[export_context_df["Date"] == today_kst].copy()
-    news_df = (
+        allowed = export_context_df["Date"].map(
+            lambda value: evaluate_context_policy(
+                report_metadata.get("input_as_of_date"),
+                value,
+            ).allowed
+        )
+        export_context_df = export_context_df[allowed].copy()
+    news_events = (
         export_context_df[export_context_df["source_type"].astype(str) == "news"].copy()
         if "source_type" in export_context_df.columns
         else pd.DataFrame()
     )
-    if not news_df.empty:
-        news_df = news_df.merge(issue_snapshot, on="Symbol", how="left")
-    elif not issue_snapshot.empty:
-        today_kst = pd.Timestamp.now(tz="Asia/Seoul").normalize().tz_localize(None)
-        news_df = issue_snapshot.copy()
-        news_df["Date"] = today_kst
-        news_df["source_type"] = "news_summary"
-        news_df["title"] = news_df["뉴스 요약"].fillna("-")
-        news_df["published_at"] = ""
-        news_df["provider"] = "summary"
-        news_df["url"] = ""
-        news_df["raw_id"] = ""
+    rejected_context = not context_raw_df.empty and export_context_df.empty
+    no_data_reason = "context_date_gap_exceeded" if rejected_context else "no_accepted_context"
+    news_df = _classify_context_export(
+        news_events,
+        pd.DataFrame() if rejected_context else issue_snapshot,
+        source_type="news",
+        metadata=report_metadata,
+        no_data_reason=no_data_reason,
+    )
     news_path = artifact_manager.write_csv("csv/result_news.csv", news_df)
 
-    disclosure_df = (
+    disclosure_events = (
         export_context_df[export_context_df["source_type"].astype(str) == "disclosure"].copy()
         if "source_type" in export_context_df.columns
         else pd.DataFrame()
     )
-    if not disclosure_df.empty:
-        disclosure_df = disclosure_df.merge(issue_snapshot, on="Symbol", how="left")
-    elif not issue_snapshot.empty:
-        today_kst = pd.Timestamp.now(tz="Asia/Seoul").normalize().tz_localize(None)
-        disclosure_df = issue_snapshot.copy()
-        disclosure_df["Date"] = today_kst
-        disclosure_df["source_type"] = "disclosure_summary"
-        disclosure_df["title"] = disclosure_df["공시 요약"].fillna("-")
-        disclosure_df["published_at"] = ""
-        disclosure_df["provider"] = "summary"
-        disclosure_df["url"] = ""
-        disclosure_df["raw_id"] = ""
+    disclosure_df = _classify_context_export(
+        disclosure_events,
+        pd.DataFrame() if rejected_context else issue_snapshot,
+        source_type="disclosure",
+        metadata=report_metadata,
+        no_data_reason=no_data_reason,
+    )
     disclosure_path = artifact_manager.write_csv("csv/result_disclosure.csv", disclosure_df)
 
     coverage_report_summary = {
@@ -726,6 +795,31 @@ def _write_pipeline_artifacts(
         "investor_coverage_ratio": investor_coverage_ratio,
         "coverage_gate_status": coverage_gate_status,
     }
+    tradable_prediction_count = (
+        int(
+            (
+                pd.to_numeric(pred_df.get("value_traded", 0), errors="coerce").fillna(0.0)
+                >= cfg.backtest.min_value_traded
+            ).sum()
+        )
+        if "value_traded" in pred_df.columns
+        else int(len(pred_df))
+    )
+    backtest_validity = evaluate_backtest_validity(backtest, tradable_prediction_count)
+    if not backtest_validity["backtest_valid"]:
+        report_metadata["status"] = "warning"
+        report_metadata["blocking_reasons"] = list(
+            dict.fromkeys(
+                [
+                    *report_metadata.get("blocking_reasons", []),
+                    *backtest_validity["blocking_reasons"],
+                ]
+            )
+        )
+        artifact_manager.metadata.update(
+            status=report_metadata["status"],
+            blocking_reasons=report_metadata["blocking_reasons"],
+        )
     report = {
         **report_metadata,
         "universe_name": cfg.universe.name,
@@ -738,6 +832,7 @@ def _write_pipeline_artifacts(
         "tuning_samples": int(len(tune_df)),
         "backtest_samples": int(len(backtest_input)),
         "backtest": {k: v for k, v in backtest.items() if k != "series"},
+        "backtest_validity": backtest_validity,
         "external_feature_coverage": external_coverage,
         "investor_context_coverage": investor_context_coverage,
         "coverage_gate": {
@@ -757,9 +852,7 @@ def _write_pipeline_artifacts(
             "predictions_row_count": int(len(pred_df)),
             "available_prediction_count": int(pred_df["predicted_return"].notna().sum()) if "predicted_return" in pred_df.columns else 0,
             "missing_prediction_count": int(pred_df["predicted_return"].isna().sum()) if "predicted_return" in pred_df.columns else 0,
-            "tradable_prediction_count": int((pd.to_numeric(pred_df.get("value_traded", 0), errors="coerce").fillna(0.0) >= cfg.backtest.min_value_traded).sum())
-            if "value_traded" in pred_df.columns
-            else int(len(pred_df)),
+            "tradable_prediction_count": tradable_prediction_count,
         },
         "pm_summary": {
             "portfolio_action_counts": pred_df["portfolio_action"].value_counts(dropna=False).to_dict() if "portfolio_action" in pred_df.columns else {},
@@ -872,15 +965,19 @@ def run_pipeline(
     diagnostics.set_rows("context_input", data)
     diagnostics.set_rows("context_raw_events", context_raw_df)
     input_as_of = pd.to_datetime(data.get("Date"), errors="coerce").max()
-    context_as_of = (
-        pd.to_datetime(context_raw_df.get("Date"), errors="coerce").max()
-        if not context_raw_df.empty and "Date" in context_raw_df.columns
-        else pd.NaT
-    )
     input_as_of_date = None if pd.isna(input_as_of) else input_as_of.strftime("%Y-%m-%d")
     prediction_for_date = (
         None if pd.isna(input_as_of) else (input_as_of + pd.offsets.BDay(1)).strftime("%Y-%m-%d")
     )
+    context_dates = (
+        pd.to_datetime(context_raw_df.get("Date"), errors="coerce")
+        if not context_raw_df.empty and "Date" in context_raw_df.columns
+        else pd.Series(dtype="datetime64[ns]")
+    )
+    accepted_context_dates = context_dates[
+        context_dates.map(lambda value: evaluate_context_policy(input_as_of_date, value).allowed)
+    ]
+    context_as_of = accepted_context_dates.max() if not accepted_context_dates.empty else pd.NaT
     context_as_of_date = None if pd.isna(context_as_of) else context_as_of.strftime("%Y-%m-%d")
     is_sample = Path(input_csv).name.lower().startswith("sample")
     report_metadata = build_report_metadata(

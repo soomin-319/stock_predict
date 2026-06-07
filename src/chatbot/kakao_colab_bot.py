@@ -184,24 +184,35 @@ class KakaoColabPredictionBot:
     ):
         self.runtime_config = runtime_config or PipelineRuntimeConfig()
         self.project_root = Path(self.runtime_config.project_root)
+        self.result_root = self.project_root / "result"
+        self._allow_unvalidated_result_paths = result_simple_path is not None
         self.result_simple_path = self.project_root / (result_simple_path or "result/result_simple.csv")
         self.result_detail_path = self.project_root / "result" / "result_detail.csv"
         self.result_news_path = self.project_root / "result" / "result_news.csv"
         self.result_disclosure_path = self.project_root / "result" / "result_disclosure.csv"
-        self.state_path = self.project_root / (state_path or "result/chatbot_jobs.json")
-        self.session_path = self.project_root / (session_path or "result/chatbot_sessions.json")
-        self.prewarm_meta_path = self.project_root / "result" / "prewarm_cache_meta.json"
-        self.log_dir = self.project_root / "result" / "chatbot_logs"
+        self.state_path = self.project_root / (state_path or "result/runtime/chatbot_jobs.json")
+        self.session_path = self.project_root / (session_path or "result/runtime/chatbot_sessions.json")
+        self.prewarm_meta_path = self.project_root / "result" / "runtime" / "prewarm_cache_meta.json"
+        self.log_dir = self.project_root / "result" / "runtime" / "logs"
+        legacy_state_path = self.project_root / "result" / "chatbot_jobs.json"
+        legacy_session_path = self.project_root / "result" / "chatbot_sessions.json"
+        state_load_path = legacy_state_path if state_path is None and not self.state_path.exists() and legacy_state_path.exists() else self.state_path
+        session_load_path = legacy_session_path if session_path is None and not self.session_path.exists() and legacy_session_path.exists() else self.session_path
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self.session_path.parent.mkdir(parents=True, exist_ok=True)
         self.process_runner = process_runner or subprocess.Popen
         self.recommendation_service = recommendation_service or RealTimeCloseBettingRecommendationService()
         self._active_processes: dict[str, Any] = {}
-        self._job_registry = self._load_registry(self.state_path)
-        self._session_registry = self._load_registry(self.session_path)
+        self._job_registry = self._load_registry(state_load_path)
+        self._session_registry = self._load_registry(session_load_path)
+        if state_load_path != self.state_path:
+            self._save_registry(self.state_path, self._job_registry)
+        if session_load_path != self.session_path:
+            self._save_registry(self.session_path, self._session_registry)
         self._result_simple_cache: pd.DataFrame | None = None
         self._result_simple_cache_mtime_ns: int | None = None
+        self._result_simple_cache_path: Path | None = None
         self._issue_summary_cache: dict[str, dict[str, Any]] = {}
         self._issue_summary_jobs: dict[str, dict[str, Any]] = {}
         self._issue_summary_timeout_symbols: set[str] = set()
@@ -215,6 +226,58 @@ class KakaoColabPredictionBot:
         self._legacy_formatter_patched = False
         self._bootstrap_all_symbols_done = False
         self._bootstrap_formatter_guard()
+
+    def _load_latest_manifest(self) -> dict[str, Any] | None:
+        path = self.result_root / "latest" / "manifest.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def _is_operational_manifest(manifest: dict[str, Any] | None) -> bool:
+        return bool(
+            manifest
+            and manifest.get("environment") == "production"
+            and manifest.get("data_mode") == "real"
+            and manifest.get("status") in {"pass", "warning"}
+            and manifest.get("promoted") is True
+        )
+
+    def _legacy_result_is_operational(self, path: Path) -> bool:
+        if self._allow_unvalidated_result_paths:
+            return True
+        if not path.exists() or path.suffix.lower() != ".csv":
+            return False
+        try:
+            metadata = pd.read_csv(
+                path,
+                usecols=["environment", "data_mode"],
+                encoding="utf-8-sig",
+            )
+        except (OSError, ValueError, pd.errors.ParserError):
+            return False
+        return bool(
+            not metadata.empty
+            and metadata["environment"].eq("production").all()
+            and metadata["data_mode"].eq("real").all()
+        )
+
+    def _resolve_result_path(self, relative_path: str, legacy_path: Path) -> Path:
+        manifest = self._load_latest_manifest()
+        if self._is_operational_manifest(manifest):
+            declared = {
+                str(item.get("relative_path"))
+                for item in manifest.get("artifacts", [])
+                if isinstance(item, dict)
+            }
+            latest_path = self.result_root / "latest" / relative_path
+            if relative_path in declared and latest_path.exists():
+                return latest_path
+        if manifest is None and self._legacy_result_is_operational(legacy_path):
+            return legacy_path
+        return self.result_root / ".unavailable" / Path(relative_path).name
 
     def _bootstrap_formatter_guard(self):
         formatter_code = getattr(self._format_prediction_message, "__code__", None)
@@ -268,6 +331,12 @@ class KakaoColabPredictionBot:
 
     def _handle_recommendation_request(self) -> dict[str, Any]:
         submitted_at = datetime.now(timezone.utc)
+        manifest = self._load_latest_manifest()
+        if manifest and not self._is_operational_manifest(manifest):
+            return self._build_response(
+                "샘플 또는 smoke 결과로는 운영 추천을 제공할 수 없습니다. 운영 데이터로 최신화해주세요.",
+                quick_replies=[("도움말", "도움말")],
+            )
         try:
             recommendations = self.recommendation_service.get_recommendations(top_n=None, min_final_score=200)
             message = format_recommendation_message(recommendations)
@@ -632,10 +701,11 @@ class KakaoColabPredictionBot:
         return self._apply_issue_summary_cache(row, symbol)
 
     def _latest_prediction_date_from_detail(self, symbol: str) -> str | None:
-        if not self.result_detail_path.exists():
+        detail_path = self._resolve_result_path("csv/result_detail.csv", self.result_detail_path)
+        if not detail_path.exists():
             return None
         try:
-            detail_df = pd.read_csv(self.result_detail_path, dtype={"Symbol": str}, encoding="utf-8-sig")
+            detail_df = pd.read_csv(detail_path, dtype={"Symbol": str}, encoding="utf-8-sig")
         except Exception:
             return None
         if detail_df.empty or "Symbol" not in detail_df.columns or "Date" not in detail_df.columns:
@@ -658,44 +728,50 @@ class KakaoColabPredictionBot:
         return matched["Date"].max().strftime("%Y-%m-%d")
 
     def _load_cached_result_simple(self) -> pd.DataFrame:
-        if not self.result_simple_path.exists():
+        result_simple_path = self._resolve_result_path("csv/result_simple.csv", self.result_simple_path)
+        if not result_simple_path.exists():
             with self._state_lock:
                 self._result_simple_cache = None
                 self._result_simple_cache_mtime_ns = None
+                self._result_simple_cache_path = None
                 self._issue_summary_cache = {}
             return pd.DataFrame()
         try:
-            stat_mtime_ns = self.result_simple_path.stat().st_mtime_ns
+            stat_mtime_ns = result_simple_path.stat().st_mtime_ns
         except OSError:
             return pd.DataFrame()
         with self._state_lock:
             if (
                 self._result_simple_cache is not None
                 and self._result_simple_cache_mtime_ns == stat_mtime_ns
+                and self._result_simple_cache_path == result_simple_path
             ):
                 return self._result_simple_cache.copy()
         try:
-            loaded = pd.read_csv(self.result_simple_path, dtype={"종목코드": str}, encoding="utf-8-sig")
+            loaded = pd.read_csv(result_simple_path, dtype={"종목코드": str}, encoding="utf-8-sig")
             ok, missing = validate_result_simple_schema(loaded)
             if not ok:
-                self._console_log(f"예측 캐시 CSV 스키마 불일치: 필수 컬럼 누락 {missing}. 파일={self.result_simple_path}")
+                self._console_log(f"예측 캐시 CSV 스키마 불일치: 필수 컬럼 누락 {missing}. 파일={result_simple_path}")
                 with self._state_lock:
                     self._result_simple_cache = None
                     self._result_simple_cache_mtime_ns = None
+                    self._result_simple_cache_path = None
                     self._issue_summary_cache = {}
                 return pd.DataFrame()
             with self._state_lock:
                 self._result_simple_cache = loaded
                 self._result_simple_cache_mtime_ns = stat_mtime_ns
+                self._result_simple_cache_path = result_simple_path
                 self._issue_summary_cache = {}
             return loaded.copy()
         except FileNotFoundError:
             return pd.DataFrame()
         except Exception as exc:
-            self._console_log(f"예측 캐시 CSV 로드 실패: {self.result_simple_path} ({exc})")
+            self._console_log(f"예측 캐시 CSV 로드 실패: {result_simple_path} ({exc})")
             with self._state_lock:
                 self._result_simple_cache = None
                 self._result_simple_cache_mtime_ns = None
+                self._result_simple_cache_path = None
                 self._issue_summary_cache = {}
             return pd.DataFrame()
 
@@ -1251,7 +1327,10 @@ class KakaoColabPredictionBot:
 
     def _load_result_news(self) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
-        for path in [self.result_news_path, self.result_disclosure_path]:
+        for path in [
+            self._resolve_result_path("csv/result_news.csv", self.result_news_path),
+            self._resolve_result_path("csv/result_disclosure.csv", self.result_disclosure_path),
+        ]:
             if not path.exists():
                 continue
             try:

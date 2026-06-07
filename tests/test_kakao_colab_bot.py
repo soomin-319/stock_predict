@@ -106,6 +106,140 @@ def test_pipeline_runtime_config_removes_graph_options(tmp_path: Path):
     assert not hasattr(runtime_config, "figure_dir")
 
 
+def _write_latest_result(
+    tmp_path: Path,
+    *,
+    environment: str = "production",
+    data_mode: str = "real",
+    status: str = "pass",
+    promoted: bool = True,
+    name: str = "최신",
+) -> None:
+    latest = tmp_path / "result" / "latest"
+    csv_dir = latest / "csv"
+    csv_dir.mkdir(parents=True)
+    pd.DataFrame([_simple_result_row(name, "매수")]).to_csv(
+        csv_dir / "result_simple.csv", index=False, encoding="utf-8-sig"
+    )
+    (latest / "manifest.json").write_text(
+        json.dumps(
+            {
+                "environment": environment,
+                "data_mode": data_mode,
+                "status": status,
+                "promoted": promoted,
+                "artifacts": [{"relative_path": "csv/result_simple.csv"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _simple_result_row(name: str, recommendation: str) -> dict[str, object]:
+    return {
+        "종목코드": "005930",
+        "종목명": name,
+        "권고": recommendation,
+        "내일 예상 종가": 70000,
+        "내일 예상 수익률(%)": "1.0%",
+        "상승확률(%)": "60.0%",
+        "예측 신뢰도": "70.0%",
+    }
+
+
+def test_latest_production_manifest_is_preferred_over_legacy_result(tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir()
+    pd.DataFrame([_simple_result_row("레거시", "관망")]).to_csv(
+        result_dir / "result_simple.csv", index=False, encoding="utf-8-sig"
+    )
+    _write_latest_result(tmp_path)
+
+    loaded = make_bot(tmp_path)._load_cached_result_simple()
+
+    assert loaded.iloc[0]["종목명"] == "최신"
+
+
+def test_legacy_result_is_used_without_latest_manifest(tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir()
+    pd.DataFrame([_simple_result_row("레거시", "관망")]).to_csv(
+        result_dir / "result_simple.csv", index=False, encoding="utf-8-sig"
+    )
+
+    loaded = make_bot(tmp_path)._load_cached_result_simple()
+
+    assert loaded.iloc[0]["종목명"] == "레거시"
+
+
+def test_sample_latest_blocks_production_recommendation(tmp_path: Path):
+    _write_latest_result(tmp_path, environment="smoke", data_mode="sample")
+    service = FakeRecommendationService()
+    bot = make_bot(tmp_path)
+    bot.recommendation_service = service
+
+    response = bot.handle_kakao_payload(
+        {"userRequest": {"utterance": "추천", "user": {"id": "u-sample"}}}
+    )
+
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+    assert "운영 데이터로 최신화" in text
+    assert service.calls == 0
+
+
+def test_failed_or_unpromoted_latest_blocks_production_recommendation(tmp_path: Path):
+    _write_latest_result(tmp_path, status="fail", promoted=False)
+    service = FakeRecommendationService()
+    bot = make_bot(tmp_path)
+    bot.recommendation_service = service
+
+    response = bot.handle_kakao_payload(
+        {"userRequest": {"utterance": "추천", "user": {"id": "u-failed-latest"}}}
+    )
+
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+    assert "운영 데이터로 최신화" in text
+    assert service.calls == 0
+
+
+def test_default_legacy_result_without_operational_metadata_is_blocked(tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir()
+    pd.DataFrame([_simple_result_row("미검증", "매수")]).to_csv(
+        result_dir / "result_simple.csv", index=False, encoding="utf-8-sig"
+    )
+    runtime_config = make_bot(tmp_path).runtime_config
+    bot = KakaoColabPredictionBot(runtime_config=runtime_config)
+
+    loaded = bot._load_cached_result_simple()
+
+    assert loaded.empty
+
+
+def test_default_runtime_paths_live_under_runtime_directory(tmp_path: Path):
+    runtime_config = make_bot(tmp_path).runtime_config
+
+    bot = KakaoColabPredictionBot(runtime_config=runtime_config)
+
+    assert bot.state_path == tmp_path / "result" / "runtime" / "chatbot_jobs.json"
+    assert bot.session_path == tmp_path / "result" / "runtime" / "chatbot_sessions.json"
+    assert bot.prewarm_meta_path == tmp_path / "result" / "runtime" / "prewarm_cache_meta.json"
+    assert bot.log_dir == tmp_path / "result" / "runtime" / "logs"
+
+
+def test_default_runtime_path_migrates_legacy_registry(tmp_path: Path):
+    legacy = tmp_path / "result" / "chatbot_jobs.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(json.dumps({"job": {"status": "completed"}}), encoding="utf-8")
+    runtime_config = make_bot(tmp_path).runtime_config
+
+    bot = KakaoColabPredictionBot(runtime_config=runtime_config)
+
+    assert bot._job_registry["job"]["status"] == "completed"
+    assert bot.state_path.exists()
+
+
 def test_returns_cached_prediction_message_from_kakao_payload(tmp_path: Path):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
@@ -1924,7 +2058,7 @@ def test_recommendation_keyword_returns_realtime_recommendations(tmp_path: Path)
     assert "[실시간 추천]" in text
     assert "1위 삼성전자(005930)" in text
     assert "점수: 200" in text
-    log_files = list((tmp_path / "result" / "chatbot_logs").glob("recommendation_*.log"))
+    log_files = list((tmp_path / "result" / "runtime" / "logs").glob("recommendation_*.log"))
     assert len(log_files) == 1
     log_text = log_files[0].read_text(encoding="utf-8")
     assert "status=completed" in log_text
@@ -1941,7 +2075,7 @@ def test_recommendation_keyword_returns_failure_message_when_service_raises(tmp_
 
     assert "실시간 추천 생성에 실패했습니다" in text
     assert "다시 '추천'" in text
-    log_files = list((tmp_path / "result" / "chatbot_logs").glob("recommendation_*.log"))
+    log_files = list((tmp_path / "result" / "runtime" / "logs").glob("recommendation_*.log"))
     assert len(log_files) == 1
     log_text = log_files[0].read_text(encoding="utf-8")
     assert "status=failed" in log_text

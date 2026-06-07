@@ -10,7 +10,7 @@
 
 ## 이번 작업 범위
 
-상세 구현 계획의 Task 1~3을 구현했다. Task 4~9는 다음 작업에서 이어서 구현한다.
+상세 구현 계획의 Task 1~9를 구현하고 검증했다.
 
 ## 완료된 작업
 
@@ -127,30 +127,35 @@ pytest tests/test_run_artifacts.py tests/test_pipeline_smoke.py tests/test_repor
 
 ```text
 pytest -q
-214 passed
+256 passed
 ```
 
-## 아직 구현하지 않은 작업
+## 후속 운영 작업
+
+코드 구현과 자동 검증은 완료했다. 운영자는 과거 로그·백업에 노출된 OpenAI, DART,
+Naver 자격증명을 직접 폐기하고 재발급해야 한다.
+
+## 구현 완료 작업
 
 ### Task 4. 날짜/context 정책 및 sample-safe 챗봇 읽기
 
-다음 구현:
+완료 항목:
 
 - `src/reports/context_policy.py` 추가
 - 가격 기준일과 context 기준일 허용 차이 검증
 - 오래된 context 결합 제외 및 제외 사유 기록
 - 핵심 CSV에 실행 환경과 기준일 필드 추가
-- 챗봇이 `result/latest/manifest.json`을 우선 읽고 기존 최상위 파일을 fallback으로 사용
+- 챗봇이 검증된 `result/latest/manifest.json`을 우선 읽고, 명시적으로 전달된 호환 경로 또는 운영 메타데이터가 있는 기존 최상위 CSV만 fallback으로 사용
 - sample/smoke 결과를 실제 운영 추천으로 제공하지 않도록 차단
 
 주의:
 
-- 현재 챗봇은 아직 기존 최상위 결과 파일을 직접 읽는다.
-- 운영 실행이 성공 승격되면 호환 복사본이 갱신되므로 기존 동작은 유지되지만, manifest 기반 검증 읽기는 아직 없다.
+- latest manifest는 `production`/`real`, `status=pass|warning`, `promoted=true` 조건을 모두 만족해야 한다.
+- 메타데이터 없는 오래된 최상위 CSV는 기본 챗봇 경로에서 운영 결과로 사용하지 않는다.
 
 ### Task 5. 백테스트 및 calibration 유효성
 
-다음 구현:
+완료 항목:
 
 - `src/validation/result_validity.py` 추가
 - 거래 가능 예측 0건, 전체 halt, 평균 선택 0건, 평가일 없음의 blocking reason 기록
@@ -160,7 +165,7 @@ pytest -q
 
 ### Task 6. 뉴스·공시 record type
 
-다음 구현:
+완료 항목:
 
 - 뉴스·공시 CSV에 `record_type=event|summary|no_data` 추가
 - `collection_status`, `no_data_reason`, `collection_error` 추가
@@ -168,7 +173,7 @@ pytest -q
 
 ### Task 7. runtime TTL, retention, 안전한 cleanup
 
-다음 구현:
+완료 항목:
 
 - `src/utils/result_cleanup.py` 추가
 - runtime 기본 경로를 `result/runtime/`으로 이동하고 기존 경로 fallback 제공
@@ -176,10 +181,18 @@ pytest -q
 - 성공 run, 실패 run, 로그, 테스트 임시 산출물 보존 정책 적용
 - `latest/`, runtime 상태 JSON, 프로젝트 외부 경로 삭제 방지
 - 성공 pytest 임시 산출물 자동 정리 및 `KEEP_TEST_ARTIFACTS=1` 보존 옵션
+- `result/test/`의 만료된 실행별 테스트 산출물 정리
+
+### 추가 표적 하드닝
+
+- `RunArtifactManager`의 unsafe `run_id`, 절대 경로, `..` 경로 탈출 차단
+- `pass|warning` 외 상태의 latest 승격 차단
+- failed/unpromoted latest manifest의 챗봇 사용 차단
+- Colab runner가 현재 실행의 run/latest artifact 경로를 반환하도록 수정
 
 ### Task 8. 사용자 문서 갱신
 
-다음 구현:
+완료 항목:
 
 - `RESULT_FILES_GUIDE.md`를 신규 run/latest/runtime/test 구조에 맞게 갱신
 - `RESULT_ANALYSIS_AND_IMPROVEMENTS.md`에 항목별 구현 상태 추가
@@ -188,7 +201,7 @@ pytest -q
 
 ### Task 9. 최종 검증 및 PR
 
-다음 구현:
+완료 항목:
 
 - Task 4~8 집중 테스트 및 전체 `pytest`
 - bundled sample smoke pipeline 실행 검증
@@ -213,18 +226,18 @@ git log --oneline -10
 pytest -q
 ```
 
-예상 기준선: `214 passed`
+예상 기준선: `256 passed`
 
-3. 상세 계획의 Task 4부터 TDD로 실행한다.
+3. 추가 변경 시 표적 하드닝 계획을 기준으로 TDD를 유지한다.
 
 ```text
-docs/superpowers/plans/2026-06-07-result-artifact-hardening.md
+docs/superpowers/plans/2026-06-07-result-targeted-hardening.md
 ```
 
-4. Task 4 구현 시 우선 확인할 호환 지점:
+4. 우선 확인할 호환 지점:
 
 - `src/chatbot/kakao_colab_bot.py`의 기존 최상위 CSV 경로
-- `colab/stock_predict_colab.py`의 최상위 호환 파일 반환
+- `colab/stock_predict_colab.py`의 현재 실행 artifact 반환
 - `src/pipeline.py`의 공통 report metadata와 `RunArtifactManager`
 
 5. 남은 작업이 완료되면 이 문서를 갱신하거나 완료 문서로 대체한다.

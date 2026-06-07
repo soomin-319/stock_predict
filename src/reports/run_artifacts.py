@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -29,6 +30,7 @@ COMPATIBILITY_COPIES = {
     "csv/result_disclosure.csv": "result_disclosure.csv",
     "pm_report.json": "pm_report.json",
 }
+SAFE_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def _sha256(path: Path) -> str:
@@ -97,11 +99,18 @@ class RunArtifactManager:
     def __init__(self, result_root: Path, metadata: dict[str, Any]):
         self.result_root = Path(result_root)
         self.metadata = dict(metadata)
-        self.run_dir = self.result_root / "runs" / str(self.metadata["run_id"])
+        run_id = str(self.metadata["run_id"])
+        if not SAFE_RUN_ID_PATTERN.fullmatch(run_id):
+            raise ValueError(f"unsafe run_id: {run_id}")
+        self.run_dir = self.result_root / "runs" / run_id
         self.run_dir.mkdir(parents=True, exist_ok=False)
 
     def path(self, relative_path: str) -> Path:
-        target = self.run_dir / relative_path
+        target = (self.run_dir / relative_path).resolve()
+        try:
+            target.relative_to(self.run_dir.resolve())
+        except ValueError as exc:
+            raise ValueError(f"artifact path outside run directory: {relative_path}") from exc
         target.parent.mkdir(parents=True, exist_ok=True)
         return target
 
@@ -139,7 +148,7 @@ class RunArtifactManager:
         manifest["status"] = status
         manifest["blocking_reasons"] = list(dict.fromkeys([*manifest.get("blocking_reasons", []), *reasons]))
         promotable = (
-            status != "fail"
+            status in {"pass", "warning"}
             and self.metadata.get("environment") == "production"
             and self.metadata.get("data_mode") == "real"
         )

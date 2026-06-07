@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from src.reports.run_artifacts import RunArtifactManager
 
@@ -68,3 +69,28 @@ def test_smoke_output_cannot_replace_production_latest_or_compatibility_copy(tmp
     assert json.loads((tmp_path / "latest" / "pipeline_report.json").read_text(encoding="utf-8"))["marker"] == "prod"
     legacy = pd.read_csv(tmp_path / "result_simple.csv", encoding="utf-8-sig")
     assert legacy.loc[0, "marker"] == "prod"
+
+
+@pytest.mark.parametrize("unsafe_path", ["../outside.json", "/absolute.json"])
+def test_artifact_path_cannot_escape_run_directory(tmp_path: Path, unsafe_path: str):
+    manager = RunArtifactManager(tmp_path, _metadata("run-safe"))
+
+    with pytest.raises(ValueError, match="outside run directory"):
+        manager.path(unsafe_path)
+
+
+def test_unknown_status_cannot_promote_latest(tmp_path: Path):
+    metadata = _metadata("run-unknown")
+    metadata["status"] = "unknown"
+    manager = RunArtifactManager(tmp_path, metadata)
+    _write_required(manager, "unknown")
+
+    manifest = manager.finalize()
+
+    assert manifest["promoted"] is False
+    assert not (tmp_path / "latest").exists()
+
+
+def test_run_id_cannot_escape_runs_directory(tmp_path: Path):
+    with pytest.raises(ValueError, match="unsafe run_id"):
+        RunArtifactManager(tmp_path, _metadata("../outside"))
