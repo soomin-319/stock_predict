@@ -35,7 +35,7 @@
 
 #### 확인 내용
 
-`result/chatbot_jobs.json`의 `command` 배열에 다음 민감정보가 평문으로 저장되어 있다.
+과거 legacy `result/chatbot_jobs.json`의 `command` 배열에 다음 민감정보가 평문으로 저장되어 있었다.
 
 - DART API 키
 - Naver Client ID와 Client Secret
@@ -362,4 +362,19 @@ result/
 - 모든 CSV, JSON, 그래프가 같은 실행에서 생성되었는가
 - 민감정보가 포함되지 않았는가
 
-현재는 이 조건을 충족하지 못한다. **보안 문제 해결 후 실행 단위 결과 구조를 도입하는 것이 최우선 개선 방향이다.**
+현재 구현은 위 조건을 코드와 회귀 테스트로 검증한다.
+
+## 구현 상태 (2026-06-07)
+
+| 우선순위 | 상태 | 구현·검증 |
+|---|---|---|
+| P0 비밀정보 마스킹 | 완료 | `src/utils/secrets.py`, `tests/test_secret_redaction.py` |
+| P0 실행별 산출물/latest 격리 | 완료 | `src/reports/run_artifacts.py`, `tests/test_run_artifacts.py` |
+| P0 sample/smoke 운영 추천 차단 | 완료 | `src/chatbot/kakao_colab_bot.py`, `tests/test_kakao_colab_bot.py` |
+| P1 날짜/context 정책 | 완료 | `src/reports/context_policy.py`, `tests/test_context_policy.py` |
+| P1 백테스트/calibration 유효성 | 완료 | `src/validation/result_validity.py`, `tests/test_backtest_and_calibration.py` |
+| P1 뉴스·공시 명시적 record type | 완료 | `src/pipeline.py`, `tests/test_news_impact_context.py` |
+| P2 runtime TTL/보존/안전 정리 | 완료 | `src/utils/result_cleanup.py`, `tests/test_result_cleanup.py` |
+
+이미 로그나 백업에 노출된 API 키는 코드 변경으로 폐기되지 않는다. 운영자가 OpenAI,
+DART, Naver 자격증명을 직접 폐기하고 재발급해야 한다.

@@ -143,6 +143,17 @@ stock-news-impact --help
 
 Do not commit API keys, credentials, or private market data.
 
+## Result Lifecycle
+
+공식 최신 운영 결과는 `result/latest/`, 실행별 원본은 `result/runs/<run_id>/`에 있다.
+샘플 smoke 실행은 운영 `latest/`를 승격하거나 기존 최상위 호환 CSV를 덮어쓰지 않는다.
+
+```powershell
+Get-Content -Encoding utf8 result/latest/manifest.json
+```
+
+뉴스와 공시는 표시 전용이며 예상수익률·순위·권고에 영향을 주지 않는다.
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
