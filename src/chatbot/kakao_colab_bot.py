@@ -189,18 +189,26 @@ class KakaoColabPredictionBot:
         self.result_detail_path = self.project_root / "result" / "result_detail.csv"
         self.result_news_path = self.project_root / "result" / "result_news.csv"
         self.result_disclosure_path = self.project_root / "result" / "result_disclosure.csv"
-        self.state_path = self.project_root / (state_path or "result/chatbot_jobs.json")
-        self.session_path = self.project_root / (session_path or "result/chatbot_sessions.json")
-        self.prewarm_meta_path = self.project_root / "result" / "prewarm_cache_meta.json"
-        self.log_dir = self.project_root / "result" / "chatbot_logs"
+        self.state_path = self.project_root / (state_path or "result/runtime/chatbot_jobs.json")
+        self.session_path = self.project_root / (session_path or "result/runtime/chatbot_sessions.json")
+        self.prewarm_meta_path = self.project_root / "result" / "runtime" / "prewarm_cache_meta.json"
+        self.log_dir = self.project_root / "result" / "runtime" / "logs"
+        legacy_state_path = self.project_root / "result" / "chatbot_jobs.json"
+        legacy_session_path = self.project_root / "result" / "chatbot_sessions.json"
+        state_load_path = legacy_state_path if state_path is None and not self.state_path.exists() and legacy_state_path.exists() else self.state_path
+        session_load_path = legacy_session_path if session_path is None and not self.session_path.exists() and legacy_session_path.exists() else self.session_path
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self.session_path.parent.mkdir(parents=True, exist_ok=True)
         self.process_runner = process_runner or subprocess.Popen
         self.recommendation_service = recommendation_service or RealTimeCloseBettingRecommendationService()
         self._active_processes: dict[str, Any] = {}
-        self._job_registry = self._load_registry(self.state_path)
-        self._session_registry = self._load_registry(self.session_path)
+        self._job_registry = self._load_registry(state_load_path)
+        self._session_registry = self._load_registry(session_load_path)
+        if state_load_path != self.state_path:
+            self._save_registry(self.state_path, self._job_registry)
+        if session_load_path != self.session_path:
+            self._save_registry(self.session_path, self._session_registry)
         self._result_simple_cache: pd.DataFrame | None = None
         self._result_simple_cache_mtime_ns: int | None = None
         self._result_simple_cache_path: Path | None = None

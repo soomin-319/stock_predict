@@ -184,6 +184,29 @@ def test_sample_latest_blocks_production_recommendation(tmp_path: Path):
     assert service.calls == 0
 
 
+def test_default_runtime_paths_live_under_runtime_directory(tmp_path: Path):
+    runtime_config = make_bot(tmp_path).runtime_config
+
+    bot = KakaoColabPredictionBot(runtime_config=runtime_config)
+
+    assert bot.state_path == tmp_path / "result" / "runtime" / "chatbot_jobs.json"
+    assert bot.session_path == tmp_path / "result" / "runtime" / "chatbot_sessions.json"
+    assert bot.prewarm_meta_path == tmp_path / "result" / "runtime" / "prewarm_cache_meta.json"
+    assert bot.log_dir == tmp_path / "result" / "runtime" / "logs"
+
+
+def test_default_runtime_path_migrates_legacy_registry(tmp_path: Path):
+    legacy = tmp_path / "result" / "chatbot_jobs.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(json.dumps({"job": {"status": "completed"}}), encoding="utf-8")
+    runtime_config = make_bot(tmp_path).runtime_config
+
+    bot = KakaoColabPredictionBot(runtime_config=runtime_config)
+
+    assert bot._job_registry["job"]["status"] == "completed"
+    assert bot.state_path.exists()
+
+
 def test_returns_cached_prediction_message_from_kakao_payload(tmp_path: Path):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
@@ -2002,7 +2025,7 @@ def test_recommendation_keyword_returns_realtime_recommendations(tmp_path: Path)
     assert "[실시간 추천]" in text
     assert "1위 삼성전자(005930)" in text
     assert "점수: 200" in text
-    log_files = list((tmp_path / "result" / "chatbot_logs").glob("recommendation_*.log"))
+    log_files = list((tmp_path / "result" / "runtime" / "logs").glob("recommendation_*.log"))
     assert len(log_files) == 1
     log_text = log_files[0].read_text(encoding="utf-8")
     assert "status=completed" in log_text
@@ -2019,7 +2042,7 @@ def test_recommendation_keyword_returns_failure_message_when_service_raises(tmp_
 
     assert "실시간 추천 생성에 실패했습니다" in text
     assert "다시 '추천'" in text
-    log_files = list((tmp_path / "result" / "chatbot_logs").glob("recommendation_*.log"))
+    log_files = list((tmp_path / "result" / "runtime" / "logs").glob("recommendation_*.log"))
     assert len(log_files) == 1
     log_text = log_files[0].read_text(encoding="utf-8")
     assert "status=failed" in log_text
