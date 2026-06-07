@@ -58,3 +58,21 @@ def test_prune_registry_removes_expired_entries():
     result = prune_registry(data, timestamp_field="updated_at", ttl=timedelta(days=1), now=now)
 
     assert set(result) == {"current"}
+
+
+def test_cleanup_removes_expired_test_artifacts_only_under_test_root(tmp_path: Path):
+    now = datetime(2026, 6, 7, tzinfo=timezone.utc)
+    result = tmp_path / "result"
+    old_test = result / "test" / "old-session"
+    current_test = result / "test" / "current-session"
+    outside = tmp_path / "outside-session"
+    _dated_file(old_test / "artifact.json", now, 40)
+    _dated_file(current_test / "artifact.json", now, 1)
+    _dated_file(outside / "artifact.json", now, 40)
+
+    report = cleanup_result_artifacts(result, RetentionPolicy(), now=now)
+
+    assert str(old_test) in report["removed"]
+    assert not old_test.exists()
+    assert current_test.exists()
+    assert outside.exists()

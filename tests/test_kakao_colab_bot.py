@@ -111,6 +111,8 @@ def _write_latest_result(
     *,
     environment: str = "production",
     data_mode: str = "real",
+    status: str = "pass",
+    promoted: bool = True,
     name: str = "최신",
 ) -> None:
     latest = tmp_path / "result" / "latest"
@@ -124,6 +126,8 @@ def _write_latest_result(
             {
                 "environment": environment,
                 "data_mode": data_mode,
+                "status": status,
+                "promoted": promoted,
                 "artifacts": [{"relative_path": "csv/result_simple.csv"}],
             },
             ensure_ascii=False,
@@ -182,6 +186,35 @@ def test_sample_latest_blocks_production_recommendation(tmp_path: Path):
     text = response["template"]["outputs"][0]["simpleText"]["text"]
     assert "운영 데이터로 최신화" in text
     assert service.calls == 0
+
+
+def test_failed_or_unpromoted_latest_blocks_production_recommendation(tmp_path: Path):
+    _write_latest_result(tmp_path, status="fail", promoted=False)
+    service = FakeRecommendationService()
+    bot = make_bot(tmp_path)
+    bot.recommendation_service = service
+
+    response = bot.handle_kakao_payload(
+        {"userRequest": {"utterance": "추천", "user": {"id": "u-failed-latest"}}}
+    )
+
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+    assert "운영 데이터로 최신화" in text
+    assert service.calls == 0
+
+
+def test_default_legacy_result_without_operational_metadata_is_blocked(tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir()
+    pd.DataFrame([_simple_result_row("미검증", "매수")]).to_csv(
+        result_dir / "result_simple.csv", index=False, encoding="utf-8-sig"
+    )
+    runtime_config = make_bot(tmp_path).runtime_config
+    bot = KakaoColabPredictionBot(runtime_config=runtime_config)
+
+    loaded = bot._load_cached_result_simple()
+
+    assert loaded.empty
 
 
 def test_default_runtime_paths_live_under_runtime_directory(tmp_path: Path):

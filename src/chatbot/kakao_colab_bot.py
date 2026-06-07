@@ -185,6 +185,7 @@ class KakaoColabPredictionBot:
         self.runtime_config = runtime_config or PipelineRuntimeConfig()
         self.project_root = Path(self.runtime_config.project_root)
         self.result_root = self.project_root / "result"
+        self._allow_unvalidated_result_paths = result_simple_path is not None
         self.result_simple_path = self.project_root / (result_simple_path or "result/result_simple.csv")
         self.result_detail_path = self.project_root / "result" / "result_detail.csv"
         self.result_news_path = self.project_root / "result" / "result_news.csv"
@@ -234,17 +235,49 @@ class KakaoColabPredictionBot:
             return None
         return payload if isinstance(payload, dict) else None
 
+    @staticmethod
+    def _is_operational_manifest(manifest: dict[str, Any] | None) -> bool:
+        return bool(
+            manifest
+            and manifest.get("environment") == "production"
+            and manifest.get("data_mode") == "real"
+            and manifest.get("status") in {"pass", "warning"}
+            and manifest.get("promoted") is True
+        )
+
+    def _legacy_result_is_operational(self, path: Path) -> bool:
+        if self._allow_unvalidated_result_paths:
+            return True
+        if not path.exists() or path.suffix.lower() != ".csv":
+            return False
+        try:
+            metadata = pd.read_csv(
+                path,
+                usecols=["environment", "data_mode"],
+                encoding="utf-8-sig",
+            )
+        except (OSError, ValueError, pd.errors.ParserError):
+            return False
+        return bool(
+            not metadata.empty
+            and metadata["environment"].eq("production").all()
+            and metadata["data_mode"].eq("real").all()
+        )
+
     def _resolve_result_path(self, relative_path: str, legacy_path: Path) -> Path:
         manifest = self._load_latest_manifest()
-        if not manifest or manifest.get("environment") != "production" or manifest.get("data_mode") != "real":
+        if self._is_operational_manifest(manifest):
+            declared = {
+                str(item.get("relative_path"))
+                for item in manifest.get("artifacts", [])
+                if isinstance(item, dict)
+            }
+            latest_path = self.result_root / "latest" / relative_path
+            if relative_path in declared and latest_path.exists():
+                return latest_path
+        if manifest is None and self._legacy_result_is_operational(legacy_path):
             return legacy_path
-        declared = {
-            str(item.get("relative_path"))
-            for item in manifest.get("artifacts", [])
-            if isinstance(item, dict)
-        }
-        latest_path = self.result_root / "latest" / relative_path
-        return latest_path if relative_path in declared and latest_path.exists() else legacy_path
+        return self.result_root / ".unavailable" / Path(relative_path).name
 
     def _bootstrap_formatter_guard(self):
         formatter_code = getattr(self._format_prediction_message, "__code__", None)
@@ -299,10 +332,7 @@ class KakaoColabPredictionBot:
     def _handle_recommendation_request(self) -> dict[str, Any]:
         submitted_at = datetime.now(timezone.utc)
         manifest = self._load_latest_manifest()
-        if manifest and (
-            manifest.get("environment") != "production"
-            or manifest.get("data_mode") != "real"
-        ):
+        if manifest and not self._is_operational_manifest(manifest):
             return self._build_response(
                 "샘플 또는 smoke 결과로는 운영 추천을 제공할 수 없습니다. 운영 데이터로 최신화해주세요.",
                 quick_replies=[("도움말", "도움말")],

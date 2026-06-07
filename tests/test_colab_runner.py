@@ -35,6 +35,16 @@ def test_run_colab_pipeline_bootstraps_default_krx_symbols(monkeypatch, tmp_path
 
     def _fake_run_pipeline(**kwargs):
         captured["run_pipeline"] = kwargs
+        return {
+            "manifest": {
+                "promoted": True,
+                "artifacts": [
+                    {"relative_path": "csv/result_detail.csv"},
+                    {"relative_path": "csv/result_simple.csv"},
+                    {"relative_path": "pipeline_report.json"},
+                ]
+            }
+        }
 
     monkeypatch.setattr(colab_runner, "save_real_ohlcv_csv", _fake_save)
     monkeypatch.setattr(colab_runner, "run_pipeline", _fake_run_pipeline)
@@ -46,7 +56,50 @@ def test_run_colab_pipeline_bootstraps_default_krx_symbols(monkeypatch, tmp_path
     assert captured["run_pipeline"]["input_csv"] == "data/real_ohlcv.csv"
     assert "figure_dir" not in captured["run_pipeline"]
     assert "figure_dir" not in out
-    assert out["result_simple_csv"].endswith("result/result_simple.csv")
+    assert out["result_simple_csv"].endswith("result/latest/csv/result_simple.csv")
+
+
+def test_run_colab_pipeline_returns_current_run_paths_when_not_promoted(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(colab_runner, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(colab_runner, "_should_bootstrap_default_symbols", lambda input_csv: False)
+    run_dir = tmp_path / "result" / "runs" / "run-smoke"
+    manifest = {
+        "promoted": False,
+        "artifacts": [
+            {"relative_path": "csv/result_detail.csv"},
+            {"relative_path": "csv/result_simple.csv"},
+            {"relative_path": "pipeline_report.json"},
+        ],
+    }
+    monkeypatch.setattr(
+        colab_runner,
+        "run_pipeline",
+        lambda **kwargs: {"manifest": manifest, "artifacts": {"pipeline_report_json": str(run_dir / "pipeline_report.json")}},
+    )
+
+    out = colab_runner.run_colab_pipeline(input_csv="data/sample_ohlcv.csv")
+
+    assert out["result_detail_csv"] == (run_dir / "csv" / "result_detail.csv").as_posix()
+    assert out["result_simple_csv"] == (run_dir / "csv" / "result_simple.csv").as_posix()
+    assert out["report_json"] == (run_dir / "pipeline_report.json").as_posix()
+
+
+def test_result_paths_do_not_fallback_to_stale_compatibility_file_when_manifest_omits_artifact(
+    monkeypatch, tmp_path: Path
+):
+    monkeypatch.setattr(colab_runner, "PROJECT_ROOT", tmp_path)
+    report = {
+        "manifest": {
+            "promoted": True,
+            "artifacts": [{"relative_path": "pipeline_report.json"}],
+        }
+    }
+
+    out = colab_runner._result_paths_from_report(report)
+
+    assert out["result_detail_csv"] == ""
+    assert out["result_simple_csv"] == ""
+    assert out["report_json"].endswith("result/latest/pipeline_report.json")
 
 
 def test_run_colab_pipeline_forwards_news_summary_and_scoring_credentials(monkeypatch, tmp_path: Path):

@@ -100,6 +100,18 @@ def cleanup_logs(log_root: Path, policy: RetentionPolicy, now: datetime) -> list
     return removed
 
 
+def cleanup_test_artifacts(test_root: Path, policy: RetentionPolicy, now: datetime) -> list[str]:
+    if not test_root.exists():
+        return []
+    removed = []
+    for artifact in test_root.iterdir():
+        file_times = [_modified_at(path) for path in artifact.rglob("*") if path.is_file()] if artifact.is_dir() else []
+        modified_at = max(file_times) if file_times else _modified_at(artifact)
+        if now - modified_at > timedelta(days=policy.failed_run_days):
+            removed.append(_remove(artifact, test_root))
+    return removed
+
+
 def cleanup_result_artifacts(
     result_root: Path,
     policy: RetentionPolicy,
@@ -109,6 +121,7 @@ def cleanup_result_artifacts(
     result_root = Path(result_root)
     removed = []
     removed.extend(cleanup_runs(result_root / "runs", policy, current))
+    removed.extend(cleanup_test_artifacts(result_root / "test", policy, current))
     removed.extend(cleanup_logs(result_root / "runtime" / "logs", policy, current))
     return {"removed": removed, "removed_count": len(removed)}
 
@@ -118,6 +131,7 @@ __all__ = [
     "cleanup_result_artifacts",
     "cleanup_logs",
     "cleanup_runs",
+    "cleanup_test_artifacts",
     "parse_utc",
     "prune_registry",
 ]
