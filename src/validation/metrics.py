@@ -51,7 +51,7 @@ def classification_metrics(y_true, y_prob, threshold: float = 0.5):
     }
 
 
-def probability_calibration_metrics(y_true, y_prob, n_bins: int = 10, min_samples: int = 1):
+def probability_calibration_metrics(y_true, y_prob, n_bins: int = 10, min_samples: int = 20):
     y_true = np.asarray(y_true).astype(int)
     y_prob = np.asarray(y_prob, dtype=float)
     sample_count = int(y_true.size)

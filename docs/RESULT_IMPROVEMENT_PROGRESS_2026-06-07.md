@@ -10,7 +10,7 @@
 
 ## 이번 작업 범위
 
-상세 구현 계획의 Task 1~3을 구현했다. Task 4~9는 다음 작업에서 이어서 구현한다.
+상세 구현 계획의 Task 1~9를 구현하고 검증했다.
 
 ## 완료된 작업
 
@@ -130,11 +130,16 @@ pytest -q
 214 passed
 ```
 
-## 아직 구현하지 않은 작업
+## 후속 운영 작업
+
+코드 구현과 자동 검증은 완료했다. 운영자는 과거 로그·백업에 노출된 OpenAI, DART,
+Naver 자격증명을 직접 폐기하고 재발급해야 한다.
+
+## 구현 완료 작업
 
 ### Task 4. 날짜/context 정책 및 sample-safe 챗봇 읽기
 
-다음 구현:
+완료 항목:
 
 - `src/reports/context_policy.py` 추가
 - 가격 기준일과 context 기준일 허용 차이 검증
@@ -150,7 +155,7 @@ pytest -q
 
 ### Task 5. 백테스트 및 calibration 유효성
 
-다음 구현:
+완료 항목:
 
 - `src/validation/result_validity.py` 추가
 - 거래 가능 예측 0건, 전체 halt, 평균 선택 0건, 평가일 없음의 blocking reason 기록
@@ -160,7 +165,7 @@ pytest -q
 
 ### Task 6. 뉴스·공시 record type
 
-다음 구현:
+완료 항목:
 
 - 뉴스·공시 CSV에 `record_type=event|summary|no_data` 추가
 - `collection_status`, `no_data_reason`, `collection_error` 추가
@@ -168,7 +173,7 @@ pytest -q
 
 ### Task 7. runtime TTL, retention, 안전한 cleanup
 
-다음 구현:
+완료 항목:
 
 - `src/utils/result_cleanup.py` 추가
 - runtime 기본 경로를 `result/runtime/`으로 이동하고 기존 경로 fallback 제공
@@ -179,7 +184,7 @@ pytest -q
 
 ### Task 8. 사용자 문서 갱신
 
-다음 구현:
+완료 항목:
 
 - `RESULT_FILES_GUIDE.md`를 신규 run/latest/runtime/test 구조에 맞게 갱신
 - `RESULT_ANALYSIS_AND_IMPROVEMENTS.md`에 항목별 구현 상태 추가
@@ -188,7 +193,7 @@ pytest -q
 
 ### Task 9. 최종 검증 및 PR
 
-다음 구현:
+완료 항목:
 
 - Task 4~8 집중 테스트 및 전체 `pytest`
 - bundled sample smoke pipeline 실행 검증

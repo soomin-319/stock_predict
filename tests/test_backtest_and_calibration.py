@@ -10,7 +10,7 @@ from src.validation.metrics import probability_calibration_metrics
 def test_probability_calibration_metrics_range():
     y_true = np.array([0, 1, 0, 1, 1])
     y_prob = np.array([0.1, 0.8, 0.4, 0.7, 0.9])
-    m = probability_calibration_metrics(y_true, y_prob, n_bins=5)
+    m = probability_calibration_metrics(y_true, y_prob, n_bins=5, min_samples=1)
     assert 0 <= m["brier"] <= 1
     assert 0 <= m["ece"] <= 1
 
