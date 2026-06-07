@@ -924,6 +924,8 @@ class KakaoColabPredictionBot:
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             }
         )
+        job_state.pop("command", None)
+        job_state.pop("pid", None)
         with self._state_lock:
             self._job_registry[symbol] = job_state
             self._save_registry(self.state_path, self._job_registry)
@@ -962,6 +964,8 @@ class KakaoColabPredictionBot:
                     "failure_note": str(note or ""),
                 }
             )
+            job_state.pop("command", None)
+            job_state.pop("pid", None)
             self._job_registry[symbol] = job_state
             self._save_registry(self.state_path, self._job_registry)
 
@@ -1069,7 +1073,7 @@ class KakaoColabPredictionBot:
             except Exception:
                 pass
             with self._state_lock:
-                self._job_registry[symbol] = asdict(
+                failed_state = asdict(
                     PredictionJobState(
                         symbol=symbol,
                         display_code=display_code,
@@ -1082,6 +1086,9 @@ class KakaoColabPredictionBot:
                         completed_at=datetime.now(timezone.utc).isoformat(),
                     )
                 )
+                failed_state.pop("command", None)
+                failed_state.pop("pid", None)
+                self._job_registry[symbol] = failed_state
                 self._save_registry(self.state_path, self._job_registry)
             return False
         log_thread = None
