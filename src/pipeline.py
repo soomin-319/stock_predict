@@ -51,6 +51,7 @@ from src.pipeline_support import (
     finalize_latest_prediction_frame,
 )
 from src.reports.pm_report import build_pm_report, save_pm_report
+from src.reports.context_policy import evaluate_context_policy
 from src.reports.report_metadata import build_report_metadata, generate_run_id
 from src.reports.run_artifacts import RunArtifactManager
 from src.reports.issue_summary import append_issue_summary_columns
@@ -673,6 +674,19 @@ def _write_pipeline_artifacts(
     )
     detail_df = _drop_empty_detail_columns(detail_df)
     simple_df = _build_result_simple(detail_df)
+    csv_metadata = {
+        key: report_metadata.get(key)
+        for key in (
+            "environment",
+            "data_mode",
+            "input_as_of_date",
+            "prediction_for_date",
+            "context_as_of_date",
+        )
+    }
+    for key, value in csv_metadata.items():
+        detail_df[key] = value
+        simple_df[key] = value
 
     detail_path = artifact_manager.write_csv("csv/result_detail.csv", detail_df)
     simple_path = artifact_manager.write_csv("csv/result_simple.csv", simple_df)
@@ -681,8 +695,13 @@ def _write_pipeline_artifacts(
     export_context_df = context_raw_df.copy()
     if not export_context_df.empty and "Date" in export_context_df.columns:
         export_context_df["Date"] = pd.to_datetime(export_context_df["Date"], errors="coerce").dt.normalize()
-        today_kst = pd.Timestamp.now(tz="Asia/Seoul").normalize().tz_localize(None)
-        export_context_df = export_context_df[export_context_df["Date"] == today_kst].copy()
+        allowed = export_context_df["Date"].map(
+            lambda value: evaluate_context_policy(
+                report_metadata.get("input_as_of_date"),
+                value,
+            ).allowed
+        )
+        export_context_df = export_context_df[allowed].copy()
     news_df = (
         export_context_df[export_context_df["source_type"].astype(str) == "news"].copy()
         if "source_type" in export_context_df.columns
@@ -700,6 +719,8 @@ def _write_pipeline_artifacts(
         news_df["provider"] = "summary"
         news_df["url"] = ""
         news_df["raw_id"] = ""
+    for key, value in csv_metadata.items():
+        news_df[key] = value
     news_path = artifact_manager.write_csv("csv/result_news.csv", news_df)
 
     disclosure_df = (
@@ -719,6 +740,8 @@ def _write_pipeline_artifacts(
         disclosure_df["provider"] = "summary"
         disclosure_df["url"] = ""
         disclosure_df["raw_id"] = ""
+    for key, value in csv_metadata.items():
+        disclosure_df[key] = value
     disclosure_path = artifact_manager.write_csv("csv/result_disclosure.csv", disclosure_df)
 
     coverage_report_summary = {
@@ -872,15 +895,19 @@ def run_pipeline(
     diagnostics.set_rows("context_input", data)
     diagnostics.set_rows("context_raw_events", context_raw_df)
     input_as_of = pd.to_datetime(data.get("Date"), errors="coerce").max()
-    context_as_of = (
-        pd.to_datetime(context_raw_df.get("Date"), errors="coerce").max()
-        if not context_raw_df.empty and "Date" in context_raw_df.columns
-        else pd.NaT
-    )
     input_as_of_date = None if pd.isna(input_as_of) else input_as_of.strftime("%Y-%m-%d")
     prediction_for_date = (
         None if pd.isna(input_as_of) else (input_as_of + pd.offsets.BDay(1)).strftime("%Y-%m-%d")
     )
+    context_dates = (
+        pd.to_datetime(context_raw_df.get("Date"), errors="coerce")
+        if not context_raw_df.empty and "Date" in context_raw_df.columns
+        else pd.Series(dtype="datetime64[ns]")
+    )
+    accepted_context_dates = context_dates[
+        context_dates.map(lambda value: evaluate_context_policy(input_as_of_date, value).allowed)
+    ]
+    context_as_of = accepted_context_dates.max() if not accepted_context_dates.empty else pd.NaT
     context_as_of_date = None if pd.isna(context_as_of) else context_as_of.strftime("%Y-%m-%d")
     is_sample = Path(input_csv).name.lower().startswith("sample")
     report_metadata = build_report_metadata(

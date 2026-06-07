@@ -184,6 +184,7 @@ class KakaoColabPredictionBot:
     ):
         self.runtime_config = runtime_config or PipelineRuntimeConfig()
         self.project_root = Path(self.runtime_config.project_root)
+        self.result_root = self.project_root / "result"
         self.result_simple_path = self.project_root / (result_simple_path or "result/result_simple.csv")
         self.result_detail_path = self.project_root / "result" / "result_detail.csv"
         self.result_news_path = self.project_root / "result" / "result_news.csv"
@@ -202,6 +203,7 @@ class KakaoColabPredictionBot:
         self._session_registry = self._load_registry(self.session_path)
         self._result_simple_cache: pd.DataFrame | None = None
         self._result_simple_cache_mtime_ns: int | None = None
+        self._result_simple_cache_path: Path | None = None
         self._issue_summary_cache: dict[str, dict[str, Any]] = {}
         self._issue_summary_jobs: dict[str, dict[str, Any]] = {}
         self._issue_summary_timeout_symbols: set[str] = set()
@@ -215,6 +217,26 @@ class KakaoColabPredictionBot:
         self._legacy_formatter_patched = False
         self._bootstrap_all_symbols_done = False
         self._bootstrap_formatter_guard()
+
+    def _load_latest_manifest(self) -> dict[str, Any] | None:
+        path = self.result_root / "latest" / "manifest.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _resolve_result_path(self, relative_path: str, legacy_path: Path) -> Path:
+        manifest = self._load_latest_manifest()
+        if not manifest or manifest.get("environment") != "production" or manifest.get("data_mode") != "real":
+            return legacy_path
+        declared = {
+            str(item.get("relative_path"))
+            for item in manifest.get("artifacts", [])
+            if isinstance(item, dict)
+        }
+        latest_path = self.result_root / "latest" / relative_path
+        return latest_path if relative_path in declared and latest_path.exists() else legacy_path
 
     def _bootstrap_formatter_guard(self):
         formatter_code = getattr(self._format_prediction_message, "__code__", None)
@@ -268,6 +290,15 @@ class KakaoColabPredictionBot:
 
     def _handle_recommendation_request(self) -> dict[str, Any]:
         submitted_at = datetime.now(timezone.utc)
+        manifest = self._load_latest_manifest()
+        if manifest and (
+            manifest.get("environment") != "production"
+            or manifest.get("data_mode") != "real"
+        ):
+            return self._build_response(
+                "샘플 또는 smoke 결과로는 운영 추천을 제공할 수 없습니다. 운영 데이터로 최신화해주세요.",
+                quick_replies=[("도움말", "도움말")],
+            )
         try:
             recommendations = self.recommendation_service.get_recommendations(top_n=None, min_final_score=200)
             message = format_recommendation_message(recommendations)
@@ -632,10 +663,11 @@ class KakaoColabPredictionBot:
         return self._apply_issue_summary_cache(row, symbol)
 
     def _latest_prediction_date_from_detail(self, symbol: str) -> str | None:
-        if not self.result_detail_path.exists():
+        detail_path = self._resolve_result_path("csv/result_detail.csv", self.result_detail_path)
+        if not detail_path.exists():
             return None
         try:
-            detail_df = pd.read_csv(self.result_detail_path, dtype={"Symbol": str}, encoding="utf-8-sig")
+            detail_df = pd.read_csv(detail_path, dtype={"Symbol": str}, encoding="utf-8-sig")
         except Exception:
             return None
         if detail_df.empty or "Symbol" not in detail_df.columns or "Date" not in detail_df.columns:
@@ -658,44 +690,50 @@ class KakaoColabPredictionBot:
         return matched["Date"].max().strftime("%Y-%m-%d")
 
     def _load_cached_result_simple(self) -> pd.DataFrame:
-        if not self.result_simple_path.exists():
+        result_simple_path = self._resolve_result_path("csv/result_simple.csv", self.result_simple_path)
+        if not result_simple_path.exists():
             with self._state_lock:
                 self._result_simple_cache = None
                 self._result_simple_cache_mtime_ns = None
+                self._result_simple_cache_path = None
                 self._issue_summary_cache = {}
             return pd.DataFrame()
         try:
-            stat_mtime_ns = self.result_simple_path.stat().st_mtime_ns
+            stat_mtime_ns = result_simple_path.stat().st_mtime_ns
         except OSError:
             return pd.DataFrame()
         with self._state_lock:
             if (
                 self._result_simple_cache is not None
                 and self._result_simple_cache_mtime_ns == stat_mtime_ns
+                and self._result_simple_cache_path == result_simple_path
             ):
                 return self._result_simple_cache.copy()
         try:
-            loaded = pd.read_csv(self.result_simple_path, dtype={"종목코드": str}, encoding="utf-8-sig")
+            loaded = pd.read_csv(result_simple_path, dtype={"종목코드": str}, encoding="utf-8-sig")
             ok, missing = validate_result_simple_schema(loaded)
             if not ok:
-                self._console_log(f"예측 캐시 CSV 스키마 불일치: 필수 컬럼 누락 {missing}. 파일={self.result_simple_path}")
+                self._console_log(f"예측 캐시 CSV 스키마 불일치: 필수 컬럼 누락 {missing}. 파일={result_simple_path}")
                 with self._state_lock:
                     self._result_simple_cache = None
                     self._result_simple_cache_mtime_ns = None
+                    self._result_simple_cache_path = None
                     self._issue_summary_cache = {}
                 return pd.DataFrame()
             with self._state_lock:
                 self._result_simple_cache = loaded
                 self._result_simple_cache_mtime_ns = stat_mtime_ns
+                self._result_simple_cache_path = result_simple_path
                 self._issue_summary_cache = {}
             return loaded.copy()
         except FileNotFoundError:
             return pd.DataFrame()
         except Exception as exc:
-            self._console_log(f"예측 캐시 CSV 로드 실패: {self.result_simple_path} ({exc})")
+            self._console_log(f"예측 캐시 CSV 로드 실패: {result_simple_path} ({exc})")
             with self._state_lock:
                 self._result_simple_cache = None
                 self._result_simple_cache_mtime_ns = None
+                self._result_simple_cache_path = None
                 self._issue_summary_cache = {}
             return pd.DataFrame()
 
@@ -1251,7 +1289,10 @@ class KakaoColabPredictionBot:
 
     def _load_result_news(self) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
-        for path in [self.result_news_path, self.result_disclosure_path]:
+        for path in [
+            self._resolve_result_path("csv/result_news.csv", self.result_news_path),
+            self._resolve_result_path("csv/result_disclosure.csv", self.result_disclosure_path),
+        ]:
             if not path.exists():
                 continue
             try:

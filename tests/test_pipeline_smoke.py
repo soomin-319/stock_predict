@@ -147,6 +147,17 @@ def test_run_pipeline_generates_report_without_graph_artifacts(tmp_path):
     assert detail_path.exists()
     assert simple_path.exists()
     assert report_path.exists()
+    for frame in (
+        pd.read_csv(detail_path, encoding="utf-8-sig"),
+        pd.read_csv(simple_path, encoding="utf-8-sig"),
+    ):
+        assert {
+            "environment",
+            "data_mode",
+            "input_as_of_date",
+            "prediction_for_date",
+            "context_as_of_date",
+        }.issubset(frame.columns)
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert payload["schema_version"] == "1.0"
     assert payload["run_id"]

@@ -106,6 +106,84 @@ def test_pipeline_runtime_config_removes_graph_options(tmp_path: Path):
     assert not hasattr(runtime_config, "figure_dir")
 
 
+def _write_latest_result(
+    tmp_path: Path,
+    *,
+    environment: str = "production",
+    data_mode: str = "real",
+    name: str = "최신",
+) -> None:
+    latest = tmp_path / "result" / "latest"
+    csv_dir = latest / "csv"
+    csv_dir.mkdir(parents=True)
+    pd.DataFrame([_simple_result_row(name, "매수")]).to_csv(
+        csv_dir / "result_simple.csv", index=False, encoding="utf-8-sig"
+    )
+    (latest / "manifest.json").write_text(
+        json.dumps(
+            {
+                "environment": environment,
+                "data_mode": data_mode,
+                "artifacts": [{"relative_path": "csv/result_simple.csv"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _simple_result_row(name: str, recommendation: str) -> dict[str, object]:
+    return {
+        "종목코드": "005930",
+        "종목명": name,
+        "권고": recommendation,
+        "내일 예상 종가": 70000,
+        "내일 예상 수익률(%)": "1.0%",
+        "상승확률(%)": "60.0%",
+        "예측 신뢰도": "70.0%",
+    }
+
+
+def test_latest_production_manifest_is_preferred_over_legacy_result(tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir()
+    pd.DataFrame([_simple_result_row("레거시", "관망")]).to_csv(
+        result_dir / "result_simple.csv", index=False, encoding="utf-8-sig"
+    )
+    _write_latest_result(tmp_path)
+
+    loaded = make_bot(tmp_path)._load_cached_result_simple()
+
+    assert loaded.iloc[0]["종목명"] == "최신"
+
+
+def test_legacy_result_is_used_without_latest_manifest(tmp_path: Path):
+    result_dir = tmp_path / "result"
+    result_dir.mkdir()
+    pd.DataFrame([_simple_result_row("레거시", "관망")]).to_csv(
+        result_dir / "result_simple.csv", index=False, encoding="utf-8-sig"
+    )
+
+    loaded = make_bot(tmp_path)._load_cached_result_simple()
+
+    assert loaded.iloc[0]["종목명"] == "레거시"
+
+
+def test_sample_latest_blocks_production_recommendation(tmp_path: Path):
+    _write_latest_result(tmp_path, environment="smoke", data_mode="sample")
+    service = FakeRecommendationService()
+    bot = make_bot(tmp_path)
+    bot.recommendation_service = service
+
+    response = bot.handle_kakao_payload(
+        {"userRequest": {"utterance": "추천", "user": {"id": "u-sample"}}}
+    )
+
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+    assert "운영 데이터로 최신화" in text
+    assert service.calls == 0
+
+
 def test_returns_cached_prediction_message_from_kakao_payload(tmp_path: Path):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
