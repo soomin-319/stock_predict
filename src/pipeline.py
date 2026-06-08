@@ -942,6 +942,8 @@ def run_pipeline(
     output_csv: str,
     universe_csv: str | None = None,
     report_json: str | None = None,
+    figure_dir: str | None = None,
+    symbol_figure_limit: int | None = None,
     use_external: bool = True,
     use_investor_context: bool = False,
     dart_api_key: str | None = None,
@@ -1069,15 +1071,7 @@ def run_pipeline(
     scored_oof = validation_result["scored_oof"]
     diagnostics.set_rows("oof_predictions", scored_oof)
 
-    _print_progress(11, total_steps, "Running backtest on holdout split and creating figures")
-    with diagnostics.time_stage("create_figures"):
-        figure_dir_path, figure_artifacts = _save_pipeline_figures(
-            validation_result["backtest_series"],
-            scored_oof,
-            figure_dir,
-            symbol_figure_limit,
-            figure_dir_path=artifact_manager.path("figures"),
-        )
+    _print_progress(11, total_steps, "Running backtest on holdout split")
 
     _print_progress(12, total_steps, "Training final model and creating latest predictions")
     with diagnostics.time_stage("train_final_and_predict_latest"):
