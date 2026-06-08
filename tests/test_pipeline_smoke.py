@@ -187,8 +187,13 @@ def test_run_pipeline_generates_report_without_graph_artifacts(tmp_path):
     assert "artifacts" in payload
     assert "external_feature_coverage" in payload
     assert "probability_calibration" in payload
-    assert "ece" in payload["probability_calibration"]
-    assert "brier" in payload["probability_calibration"]
+    assert set(payload["probability_calibration"]) == {"fit", "tune", "eval"}
+    assert "ece" in payload["probability_calibration"]["eval"]
+    assert "brier" in payload["probability_calibration"]["eval"]
+    assert payload["probability_calibration"]["eval"]["sample_count"] == payload["backtest_samples"]
+    assert payload["oof_policy"]["duplicate_policy"] == "date_symbol_mean"
+    assert payload["oof_policy"]["diagnostics"]["unique_row_count"] > 0
+    assert payload["validation_split"]["status"] == "ok"
     assert "tuning_samples" in payload
     assert "backtest_samples" in payload
     diagnostics = payload["diagnostics"]
