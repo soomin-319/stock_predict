@@ -5,7 +5,7 @@ import pytest
 
 from src.config.settings import TrainingConfig
 import src.validation.walk_forward as wf
-from src.validation.walk_forward import FoldResult, _execute_folds, _iter_folds, aggregate_oof_predictions
+from src.validation.walk_forward import FoldResult, _execute_folds, _iter_folds, _run_fold, aggregate_oof_predictions
 
 
 @pytest.fixture
@@ -230,3 +230,46 @@ def test_aggregate_oof_predictions_rejects_conflicting_targets():
 
     with pytest.raises(ValueError, match="Conflicting OOF target values"):
         aggregate_oof_predictions(raw)
+
+
+def test_run_fold_adds_fold_provenance_to_oof(monkeypatch):
+    class _FakeModel:
+        def __init__(self, **_kwargs):
+            pass
+
+        def fit(self, *_args, **_kwargs):
+            return None
+
+        def predict(self, valid_df):
+            count = len(valid_df)
+            return SimpleNamespace(
+                predicted_return=[0.01] * count,
+                up_probability=[0.6] * count,
+                quantile_low=[-0.01] * count,
+                quantile_mid=[0.01] * count,
+                quantile_high=[0.03] * count,
+            )
+
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(wf, "MultiHeadStockModel", _FakeModel)
+    train_df = pd.DataFrame({"Date": pd.bdate_range("2023-01-01", periods=3), "feature": [1.0, 2.0, 3.0]})
+    valid_df = pd.DataFrame(
+        {
+            "Date": pd.bdate_range("2024-01-01", periods=2),
+            "Symbol": ["A", "A"],
+            "Close": [100.0, 101.0],
+            "market_regime": ["normal", "normal"],
+            "target_log_return": [0.01, -0.01],
+            "target_up": [1, 0],
+            "feature": [4.0, 5.0],
+        }
+    )
+    fold = (7, train_df["Date"].max(), valid_df["Date"].min(), valid_df["Date"].max(), train_df, valid_df)
+
+    result, oof = _run_fold(fold, ["feature"], _small_cfg())
+
+    assert result.fold_id == 7
+    assert result.train_start == train_df["Date"].min()
+    assert {"fold_id", "train_start", "train_end", "valid_start", "valid_end"}.issubset(oof.columns)
+    assert oof["fold_id"].eq(7).all()
