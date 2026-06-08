@@ -5,7 +5,7 @@ import pytest
 
 from src.config.settings import TrainingConfig
 import src.validation.walk_forward as wf
-from src.validation.walk_forward import FoldResult, _execute_folds, _iter_folds
+from src.validation.walk_forward import FoldResult, _execute_folds, _iter_folds, aggregate_oof_predictions
 
 
 @pytest.fixture
@@ -144,7 +144,7 @@ def test_execute_folds_keeps_oof_shape_consistent_between_sequential_and_paralle
             return [fn(fold) for fold in folds]
 
     def _fake_run_fold(fold, feature_columns, cfg):
-        _train_end, valid_start, valid_end, _train_df, valid_df = fold
+        _fold_id, _train_end, valid_start, valid_end, _train_df, valid_df = fold
         result = FoldResult(
             train_end=pd.Timestamp("2020-01-01"),
             valid_start=valid_start,
@@ -183,3 +183,50 @@ def test_execute_folds_keeps_oof_shape_consistent_between_sequential_and_paralle
     assert len(seq_oof) == len(par_oof)
     assert list(seq_oof.columns) == list(par_oof.columns)
     assert {"predicted_return", "up_probability"}.issubset(par_oof.columns)
+
+
+def test_aggregate_oof_predictions_averages_duplicate_predictions():
+    raw = pd.DataFrame(
+        {
+            "Date": [pd.Timestamp("2024-01-02")] * 2,
+            "Symbol": ["A", "A"],
+            "target_log_return": [0.02, 0.02],
+            "target_up": [1, 1],
+            "predicted_return": [0.01, 0.03],
+            "up_probability": [0.6, 0.8],
+            "quantile_low": [-0.01, 0.00],
+            "quantile_mid": [0.01, 0.03],
+            "quantile_high": [0.04, 0.06],
+            "fold_id": [0, 1],
+            "train_start": [pd.Timestamp("2023-01-02"), pd.Timestamp("2023-02-01")],
+            "train_end": [pd.Timestamp("2023-12-20"), pd.Timestamp("2023-12-27")],
+            "valid_start": [pd.Timestamp("2024-01-02")] * 2,
+            "valid_end": [pd.Timestamp("2024-02-01"), pd.Timestamp("2024-03-01")],
+        }
+    )
+
+    aggregated, diagnostics = aggregate_oof_predictions(raw)
+
+    assert len(aggregated) == 1
+    assert aggregated.loc[0, "predicted_return"] == pytest.approx(0.02)
+    assert aggregated.loc[0, "up_probability"] == pytest.approx(0.7)
+    assert aggregated.loc[0, "oof_prediction_count"] == 2
+    assert aggregated.loc[0, "fold_ids"] == [0, 1]
+    assert diagnostics["duplicate_row_count"] == 1
+    assert diagnostics["duplicate_ratio"] == pytest.approx(0.5)
+
+
+def test_aggregate_oof_predictions_rejects_conflicting_targets():
+    raw = pd.DataFrame(
+        {
+            "Date": [pd.Timestamp("2024-01-02")] * 2,
+            "Symbol": ["A", "A"],
+            "target_log_return": [0.01, 0.02],
+            "target_up": [1, 1],
+            "predicted_return": [0.01, 0.02],
+            "up_probability": [0.6, 0.7],
+        }
+    )
+
+    with pytest.raises(ValueError, match="Conflicting OOF target values"):
+        aggregate_oof_predictions(raw)
