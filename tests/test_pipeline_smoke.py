@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -9,7 +10,14 @@ from src.config.settings import AppConfig
 from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
 from src.models.lgbm_heads import MultiHeadStockModel
-from src.pipeline import _drop_empty_detail_columns, _split_oof_for_tuning_and_eval, build_cli_parser, resolve_output_path, run_pipeline
+from src.pipeline import (
+    _drop_empty_detail_columns,
+    _run_pipeline_validation,
+    _split_oof_for_tuning_and_eval,
+    build_cli_parser,
+    resolve_output_path,
+    run_pipeline,
+)
 from src.pipeline_support import PredictionFrameContext, build_scored_prediction_frame
 
 
@@ -187,8 +195,13 @@ def test_run_pipeline_generates_report_without_graph_artifacts(tmp_path):
     assert "artifacts" in payload
     assert "external_feature_coverage" in payload
     assert "probability_calibration" in payload
-    assert "ece" in payload["probability_calibration"]
-    assert "brier" in payload["probability_calibration"]
+    assert set(payload["probability_calibration"]) == {"fit", "tune", "eval"}
+    assert "ece" in payload["probability_calibration"]["eval"]
+    assert "brier" in payload["probability_calibration"]["eval"]
+    assert payload["probability_calibration"]["eval"]["sample_count"] == payload["backtest_samples"]
+    assert payload["oof_policy"]["duplicate_policy"] == "date_symbol_mean"
+    assert payload["oof_policy"]["diagnostics"]["unique_row_count"] > 0
+    assert payload["validation_split"]["status"] == "ok"
     assert "tuning_samples" in payload
     assert "backtest_samples" in payload
     diagnostics = payload["diagnostics"]
@@ -394,11 +407,69 @@ def test_split_oof_for_tuning_and_eval():
     df["signal_score"] = 0.1
     df["target_log_return"] = 0.0
 
-    tune_df, eval_df = _split_oof_for_tuning_and_eval(df, tune_ratio=0.7)
+    result = _split_oof_for_tuning_and_eval(df, tune_ratio=0.7)
 
-    assert not tune_df.empty
-    assert not eval_df.empty
-    assert tune_df["Date"].max() < eval_df["Date"].min()
+    assert result.status == "ok"
+    assert not result.tune.empty
+    assert not result.eval.empty
+    assert result.tune["Date"].max() < result.eval["Date"].min()
+    assert set(result.tune["Date"]).isdisjoint(set(result.eval["Date"]))
+
+
+def test_split_oof_reports_insufficient_data_without_reusing_dates():
+    df = pd.DataFrame(
+        {
+            "Date": pd.bdate_range("2024-01-01", periods=6),
+            "Symbol": ["A"] * 6,
+            "target_log_return": [0.0] * 6,
+        }
+    )
+
+    result = _split_oof_for_tuning_and_eval(df, tune_ratio=0.7, min_tune_dates=5, min_eval_dates=3)
+
+    assert result.status == "insufficient_data"
+    assert set(result.tune["Date"]).isdisjoint(set(result.eval["Date"]))
+    assert result.eval.empty
+
+
+def test_pipeline_validation_does_not_backtest_when_eval_dates_are_insufficient(monkeypatch):
+    dates = pd.bdate_range("2024-01-01", periods=6)
+    oof = pd.DataFrame(
+        {
+            "Date": dates,
+            "Symbol": ["A"] * 6,
+            "Close": [100.0] * 6,
+            "market_regime": ["normal"] * 6,
+            "target_log_return": [-0.01, 0.01] * 3,
+            "target_up": [0, 1] * 3,
+            "log_return": [0.0] * 6,
+            "predicted_return": [-0.005, 0.005] * 3,
+            "up_probability": [0.4, 0.6] * 3,
+            "quantile_low": [-0.02] * 6,
+            "quantile_mid": [0.0] * 6,
+            "quantile_high": [0.02] * 6,
+        }
+    )
+    result = SimpleNamespace(
+        folds=[SimpleNamespace(metrics={"mae": 0.01})],
+        oof=oof,
+        oof_diagnostics={"raw_row_count": 6, "unique_row_count": 6},
+    )
+    monkeypatch.setattr("src.pipeline.walk_forward_validate_result", lambda *_args, **_kwargs: result)
+
+    validation = _run_pipeline_validation(
+        feat=oof,
+        feature_columns=[],
+        cfg=AppConfig(),
+        use_external=False,
+        external_coverage={},
+        investor_context_coverage={},
+    )
+
+    assert validation["validation_split"]["status"] == "insufficient_data"
+    assert validation["eval_df"].empty
+    assert validation["backtest_input"].empty
+    assert validation["backtest_status"] == "insufficient_data"
 
 
 def test_external_feature_coverage_fields(monkeypatch):

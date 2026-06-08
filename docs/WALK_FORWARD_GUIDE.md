@@ -273,7 +273,10 @@ oof   = 워크포워드 OOF 예측
 
 ### 11.1 상승 확률 보정
 
-OOF의 예측 상승 확률과 실제 상승 여부를 비교하여 `IsotonicRegression`으로 상승 확률을 보정한다.
+고유 OOF를 먼저 시간순 tune/eval로 분리한다. `IsotonicRegression` 보정기는 앞쪽 tune OOF만 사용해 학습한다.
+학습된 보정기의 변환만 tune, eval, 최신 예측에 적용한다. 따라서 eval 실제 결과는 보정기 학습에 사용되지 않는다.
+
+보고서의 `probability_calibration.tune`과 `probability_calibration.eval`에서 구간별 Brier score와 ECE를 확인할 수 있다.
 
 ### 11.2 신호 점수 생성
 
@@ -295,6 +298,9 @@ OOF 날짜를 시간순으로 나눈다.
 ```
 
 무작위 분리가 아니므로 뒤쪽 평가 구간은 앞쪽 튜닝 구간보다 미래에 있다.
+
+tune/eval 최소 고유 날짜 수가 부족하면 같은 OOF를 양쪽에 재사용하지 않는다. 이 경우 평가와 백테스트를 중단하고
+`validation_split.status = "insufficient_data"`로 기록한다.
 
 ### 11.4 신호 가중치 튜닝
 
@@ -380,8 +386,20 @@ Fold 2 검증:         [────────────────]
                     겹치는 기간 존재
 ```
 
-따라서 같은 `Date + Symbol`이 OOF에 여러 번 포함될 수 있다.
-이는 확률 보정, 튜닝, 백테스트에서 겹치는 기간에 더 큰 가중치를 줄 수 있다.
+따라서 원본 fold OOF에는 같은 `Date + Symbol`이 여러 번 포함될 수 있다.
+현재 구현은 모든 fold 실행 후 같은 `Date + Symbol`의 예측값을 평균하여 고유 평가 행 하나로 집계한다.
+실제 목표값이나 안정 컨텍스트 값이 서로 다르면 데이터 무결성 오류로 중단한다.
+
+집계 OOF에는 다음 감사 정보가 남는다.
+
+```text
+oof_prediction_count
+fold_ids
+train_start_values / train_end_values
+valid_start_values / valid_end_values
+```
+
+보고서의 `oof_policy.diagnostics`에는 원본 행 수, 고유 행 수, 중복 행 수, 중복 비율이 기록된다.
 
 비중복 검증 구간이 필요하면 다음과 같은 정책을 고려할 수 있다.
 
@@ -391,19 +409,10 @@ step_size >= test_size
 
 또는 OOF 결합 후 중복 예측 처리 정책이 필요하다.
 
-### 14.2 확률 보정이 전체 OOF를 사용한다
+### 14.2 확률 보정과 평가 분리
 
-현재 파이프라인은 전체 OOF로 상승 확률을 보정한 뒤 OOF를 튜닝·평가 구간으로 나눈다.
-
-엄격한 최종 평가 관점에서는 평가 구간의 실제 결과가 확률 보정 과정에 간접 반영될 수 있다.
-
-더 엄격한 방식은 다음과 같다.
-
-```text
-앞쪽 OOF로 보정기 학습
-→ 뒤쪽 OOF 확률 보정
-→ 뒤쪽 OOF에서 최종 평가
-```
+현재 파이프라인은 고유 OOF를 먼저 시간순으로 분리한 뒤 앞쪽 tune OOF만으로 보정기를 학습한다.
+뒤쪽 eval OOF는 학습된 보정기의 변환만 적용받고 최종 평가와 백테스트에 사용된다.
 
 ### 14.3 워크포워드 요약은 fold 단순 평균이다
 

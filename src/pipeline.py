@@ -76,12 +76,13 @@ from src.validation.backtest import (
 )
 from src.validation.baselines import evaluate_baselines
 from src.validation.signal_tuning import tune_signal_weights
-from src.validation.walk_forward import walk_forward_validate_with_oof
-from src.validation.metrics import probability_calibration_metrics
+from src.validation.walk_forward import walk_forward_validate_result
 from src.validation.result_validity import evaluate_backtest_validity
 from src.validation.support import (
+    calibration_split_metrics as validation_calibration_split_metrics,
     calibrate_up_probability as validation_calibrate_up_probability,
     compute_oof_diagnostics as validation_compute_oof_diagnostics,
+    fit_up_probability_calibrator as validation_fit_up_probability_calibrator,
     prediction_from_oof_df as validation_prediction_from_oof_df,
     split_oof_for_tuning_and_eval as validation_split_oof_for_tuning_and_eval,
 )
@@ -247,8 +248,19 @@ def _coverage_gate_status(cfg, external_coverage_ratio: float, investor_coverage
     return validation_coverage_gate_status(cfg.backtest, external_coverage_ratio, investor_coverage_ratio)
 
 
-def _split_oof_for_tuning_and_eval(scored_oof: pd.DataFrame, tune_ratio: float = 0.7) -> tuple[pd.DataFrame, pd.DataFrame]:
-    return validation_split_oof_for_tuning_and_eval(scored_oof, tune_ratio=tune_ratio)
+def _split_oof_for_tuning_and_eval(
+    scored_oof: pd.DataFrame,
+    tune_ratio: float = 0.7,
+    *,
+    min_tune_dates: int = 5,
+    min_eval_dates: int = 5,
+):
+    return validation_split_oof_for_tuning_and_eval(
+        scored_oof,
+        tune_ratio=tune_ratio,
+        min_tune_dates=min_tune_dates,
+        min_eval_dates=min_eval_dates,
+    )
 
 
 def _prediction_from_oof_df(oof: pd.DataFrame) -> MultiHeadPrediction:
@@ -523,10 +535,12 @@ def _run_pipeline_validation(
     external_coverage: dict,
     investor_context_coverage: dict,
 ) -> dict[str, Any]:
-    folds, oof = walk_forward_validate_with_oof(feat, feature_columns, cfg.training)
-    if not folds:
+    walk_forward_result = walk_forward_validate_result(feat, feature_columns, cfg.training)
+    if not walk_forward_result.folds:
         effective_cfg = _adaptive_training_cfg(cfg, feat)
-        folds, oof = walk_forward_validate_with_oof(feat, feature_columns, effective_cfg)
+        walk_forward_result = walk_forward_validate_result(feat, feature_columns, effective_cfg)
+    folds = walk_forward_result.folds
+    oof = walk_forward_result.oof
     wf_summary = pd.DataFrame([f.metrics for f in folds]).mean().to_dict() if folds else {}
     baseline_summary = evaluate_baselines(feat)
     if oof.empty:
@@ -541,35 +555,65 @@ def _run_pipeline_validation(
         min_liquidity_threshold=cfg.backtest.min_value_traded,
     )
 
-    oof_pred = _prediction_from_oof_df(oof)
-    oof_pred.up_probability = _calibrate_up_probability(oof, oof_pred.up_probability).values
-    scored_oof = build_scored_prediction_frame(
-        oof,
-        oof_pred,
-        cfg.signal,
-        prediction_context,
-        investment_criteria=cfg.investment_criteria,
-    )
-    scored_oof["coverage_gate_status"] = coverage_gate_status
-    tune_df, eval_df = _split_oof_for_tuning_and_eval(scored_oof, tune_ratio=0.7)
+    split = _split_oof_for_tuning_and_eval(oof, tune_ratio=0.7)
+    calibrator = validation_fit_up_probability_calibrator(split.tune)
+    probability_calibration = validation_calibration_split_metrics(split.tune, split.eval, calibrator)
+
+    def score_oof(frame: pd.DataFrame) -> pd.DataFrame:
+        if frame.empty:
+            return pd.DataFrame()
+        prediction = _prediction_from_oof_df(frame)
+        prediction.up_probability = calibrator.transform(prediction.up_probability).values
+        scored = build_scored_prediction_frame(
+            frame,
+            prediction,
+            cfg.signal,
+            prediction_context,
+            investment_criteria=cfg.investment_criteria,
+        )
+        scored["coverage_gate_status"] = coverage_gate_status
+        return scored
+
+    tune_df = score_oof(split.tune)
+    eval_df = score_oof(split.eval)
 
     tuned = tune_signal_weights(tune_df)
     cfg.signal.return_weight = tuned["return_weight"]
     cfg.signal.up_prob_weight = tuned["up_prob_weight"]
     cfg.signal.rel_strength_weight = tuned["rel_strength_weight"]
     cfg.signal.uncertainty_penalty = tuned["uncertainty_penalty"]
-    scored_oof["signal_score"] = (
-        cfg.signal.return_weight * scored_oof["norm_return"]
-        + cfg.signal.up_prob_weight * scored_oof["up_probability"]
-        + cfg.signal.rel_strength_weight * scored_oof["rel_strength"]
-        - cfg.signal.uncertainty_penalty * scored_oof["uncertainty_score"]
-        + scored_oof["event_boost_score"].fillna(0.0)
-    )
-    scored_oof["signal_label"] = signal_label_series(scored_oof["signal_score"])
-    scored_oof["coverage_gate_status"] = coverage_gate_status
-    tune_df, eval_df = _split_oof_for_tuning_and_eval(scored_oof, tune_ratio=0.7)
-    backtest_input = eval_df if not eval_df.empty else scored_oof
-    backtest = run_long_only_topk_backtest(backtest_input, cfg.backtest)
+
+    def apply_tuned_signal(frame: pd.DataFrame) -> pd.DataFrame:
+        if frame.empty:
+            return frame.copy()
+        out = frame.copy()
+        out["signal_score"] = (
+            cfg.signal.return_weight * out["norm_return"]
+            + cfg.signal.up_prob_weight * out["up_probability"]
+            + cfg.signal.rel_strength_weight * out["rel_strength"]
+            - cfg.signal.uncertainty_penalty * out["uncertainty_score"]
+            + out["event_boost_score"].fillna(0.0)
+        )
+        out["signal_label"] = signal_label_series(out["signal_score"])
+        out["coverage_gate_status"] = coverage_gate_status
+        return out
+
+    tune_df = apply_tuned_signal(tune_df)
+    eval_df = apply_tuned_signal(eval_df)
+    scored_oof = pd.concat([tune_df, eval_df], axis=0, ignore_index=True)
+    backtest_input = eval_df
+    if backtest_input.empty:
+        backtest_status = "insufficient_data"
+        backtest = {
+            "series": [],
+            "sample_count": 0,
+            "status": backtest_status,
+            "reason": split.reason,
+        }
+    else:
+        backtest_status = "ok"
+        backtest = run_long_only_topk_backtest(backtest_input, cfg.backtest)
+        backtest["status"] = backtest_status
     backtest_series = pd.DataFrame(backtest.get("series", []))
     return {
         "folds": folds,
@@ -581,8 +625,17 @@ def _run_pipeline_validation(
         "tune_df": tune_df,
         "eval_df": eval_df,
         "tuned": tuned,
+        "calibrator": calibrator,
+        "probability_calibration": probability_calibration,
+        "oof_diagnostics": walk_forward_result.oof_diagnostics,
+        "validation_split": {
+            "status": split.status,
+            "reason": split.reason,
+            **split.diagnostics,
+        },
         "backtest_input": backtest_input,
         "backtest": backtest,
+        "backtest_status": backtest_status,
         "backtest_series": backtest_series,
         "external_coverage_ratio": external_coverage_ratio,
         "investor_coverage_ratio": investor_coverage_ratio,
@@ -625,6 +678,7 @@ def _predict_pipeline_latest(
     feature_columns: list[str],
     cfg: Any,
     scored_oof: pd.DataFrame,
+    probability_calibrator: Any,
     prediction_context: PredictionFrameContext,
     coverage_gate_status: str,
     context_raw_df: pd.DataFrame,
@@ -649,7 +703,7 @@ def _predict_pipeline_latest(
 
     latest = feat.sort_values("Date").groupby("Symbol", as_index=False).tail(1)
     latest_pred = model.predict(latest)
-    latest_pred.up_probability = _calibrate_up_probability(scored_oof, latest_pred.up_probability).values
+    latest_pred.up_probability = probability_calibrator.transform(latest_pred.up_probability).values
     pred_df = build_scored_prediction_frame(
         latest,
         latest_pred,
@@ -827,6 +881,11 @@ def _write_pipeline_artifacts(
         "feature_count": len(feature_columns),
         "config": app_config_to_dict(cfg),
         "walk_forward": validation_result["wf_summary"],
+        "oof_policy": {
+            "duplicate_policy": "date_symbol_mean",
+            "diagnostics": validation_result["oof_diagnostics"],
+        },
+        "validation_split": validation_result["validation_split"],
         "baselines": validation_result["baseline_summary"],
         "tuned_signal": tuned,
         "tuning_samples": int(len(tune_df)),
@@ -843,10 +902,7 @@ def _write_pipeline_artifacts(
         },
         "diagnostics": diagnostics.to_report(coverage_report_summary),
         "oof_diagnostics": oof_diagnostics,
-        "probability_calibration": probability_calibration_metrics(
-            (scored_oof["target_log_return"] > 0).astype(int).values,
-            scored_oof["up_probability"].astype(float).values,
-        ),
+        "probability_calibration": validation_result["probability_calibration"],
         "prediction_coverage": {
             "requested_universe_size": int(len(set(requested_universe_symbols))) if requested_universe_symbols else None,
             "predictions_row_count": int(len(pred_df)),
@@ -886,6 +942,8 @@ def run_pipeline(
     output_csv: str,
     universe_csv: str | None = None,
     report_json: str | None = None,
+    figure_dir: str | None = None,
+    symbol_figure_limit: int | None = None,
     use_external: bool = True,
     use_investor_context: bool = False,
     dart_api_key: str | None = None,
@@ -1013,15 +1071,7 @@ def run_pipeline(
     scored_oof = validation_result["scored_oof"]
     diagnostics.set_rows("oof_predictions", scored_oof)
 
-    _print_progress(11, total_steps, "Running backtest on holdout split and creating figures")
-    with diagnostics.time_stage("create_figures"):
-        figure_dir_path, figure_artifacts = _save_pipeline_figures(
-            validation_result["backtest_series"],
-            scored_oof,
-            figure_dir,
-            symbol_figure_limit,
-            figure_dir_path=artifact_manager.path("figures"),
-        )
+    _print_progress(11, total_steps, "Running backtest on holdout split")
 
     _print_progress(12, total_steps, "Training final model and creating latest predictions")
     with diagnostics.time_stage("train_final_and_predict_latest"):
@@ -1030,6 +1080,7 @@ def run_pipeline(
             feature_columns=feature_columns,
             cfg=cfg,
             scored_oof=scored_oof,
+            probability_calibrator=validation_result["calibrator"],
             prediction_context=validation_result["prediction_context"],
             coverage_gate_status=validation_result["coverage_gate_status"],
             context_raw_df=context_raw_df,

@@ -19,9 +19,19 @@ class FoldResult:
     valid_start: pd.Timestamp
     valid_end: pd.Timestamp
     metrics: Dict[str, float]
+    train_start: pd.Timestamp | None = None
+    fold_id: int | None = None
 
 
 FoldInput = Tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp, pd.DataFrame, pd.DataFrame]
+NumberedFoldInput = Tuple[int, pd.Timestamp, pd.Timestamp, pd.Timestamp, pd.DataFrame, pd.DataFrame]
+
+
+@dataclass
+class WalkForwardResult:
+    folds: list[FoldResult]
+    oof: pd.DataFrame
+    oof_diagnostics: dict
 
 
 def _iter_folds(df: pd.DataFrame, cfg: TrainingConfig):
@@ -50,8 +60,9 @@ def _iter_folds(df: pd.DataFrame, cfg: TrainingConfig):
 
 
 
-def _run_fold(fold: FoldInput, feature_columns: List[str], cfg: TrainingConfig) -> tuple[FoldResult, pd.DataFrame]:
-    train_end_date, valid_start_date, valid_end_date, train_df, valid_df = fold
+def _run_fold(fold: NumberedFoldInput, feature_columns: List[str], cfg: TrainingConfig) -> tuple[FoldResult, pd.DataFrame]:
+    fold_id, train_end_date, valid_start_date, valid_end_date, train_df, valid_df = fold
+    train_start_date = pd.to_datetime(train_df["Date"]).min()
     model = MultiHeadStockModel(
         random_state=cfg.random_state,
         n_jobs=cfg.model_n_jobs,
@@ -68,6 +79,8 @@ def _run_fold(fold: FoldInput, feature_columns: List[str], cfg: TrainingConfig) 
         valid_start=valid_start_date,
         valid_end=valid_end_date,
         metrics={**reg, **cls},
+        train_start=train_start_date,
+        fold_id=fold_id,
     )
 
     optional_cols = [
@@ -93,6 +106,11 @@ def _run_fold(fold: FoldInput, feature_columns: List[str], cfg: TrainingConfig) 
     oof["quantile_low"] = pred.quantile_low
     oof["quantile_mid"] = pred.quantile_mid
     oof["quantile_high"] = pred.quantile_high
+    oof["fold_id"] = fold_id
+    oof["train_start"] = train_start_date
+    oof["train_end"] = train_end_date
+    oof["valid_start"] = valid_start_date
+    oof["valid_end"] = valid_end_date
     return result, oof
 
 
@@ -105,15 +123,73 @@ def _execute_folds(folds: List[FoldInput], feature_columns: List[str], cfg: Trai
     cpu_count = os.cpu_count() or 1
     worker_count = min(cpu_count if n_jobs == -1 else max(1, n_jobs), len(folds))
 
+    numbered_folds = [(fold_id, *fold) for fold_id, fold in enumerate(folds)]
     if worker_count == 1:
-        return [_run_fold(fold, feature_columns, cfg) for fold in folds]
+        return [_run_fold(fold, feature_columns, cfg) for fold in numbered_folds]
 
     # 여러 프로세스가 동시에 실행될 때 모델 내부 스레드 수를 1로 제한해
     # CPU 과점유(worker_count × model_n_jobs)를 방지한다.
     parallel_cfg = replace(cfg, model_n_jobs=1, model_head_n_jobs=1)
     run_fold = partial(_run_fold, feature_columns=feature_columns, cfg=parallel_cfg)
     with ProcessPoolExecutor(max_workers=worker_count) as executor:
-        return list(executor.map(run_fold, folds))
+        return list(executor.map(run_fold, numbered_folds))
+
+
+def aggregate_oof_predictions(raw_oof: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    diagnostics = {
+        "policy_version": "date_symbol_mean_v1",
+        "raw_row_count": int(len(raw_oof)),
+        "unique_row_count": 0,
+        "duplicate_row_count": 0,
+        "duplicate_ratio": 0.0,
+    }
+    if raw_oof.empty:
+        return raw_oof.copy(), diagnostics
+
+    key = ["Date", "Symbol"]
+    target_cols = [c for c in ("target_log_return", "target_up") if c in raw_oof.columns]
+    for column in target_cols:
+        if raw_oof.groupby(key, dropna=False)[column].nunique(dropna=False).gt(1).any():
+            raise ValueError(f"Conflicting OOF target values for Date + Symbol: {column}")
+
+    prediction_cols = [
+        c
+        for c in ("predicted_return", "up_probability", "quantile_low", "quantile_mid", "quantile_high")
+        if c in raw_oof.columns
+    ]
+    provenance_cols = [c for c in ("fold_id", "train_start", "train_end", "valid_start", "valid_end") if c in raw_oof.columns]
+    stable_cols = [c for c in raw_oof.columns if c not in {*key, *prediction_cols, *provenance_cols}]
+    for column in stable_cols:
+        if raw_oof.groupby(key, dropna=False)[column].nunique(dropna=False).gt(1).any():
+            raise ValueError(f"Conflicting OOF stable values for Date + Symbol: {column}")
+
+    rows = []
+    for values, group in raw_oof.groupby(key, sort=True, dropna=False):
+        row = dict(zip(key, values))
+        row.update({column: group[column].iloc[0] for column in stable_cols})
+        row.update({column: float(pd.to_numeric(group[column], errors="coerce").mean()) for column in prediction_cols})
+        row["oof_prediction_count"] = int(len(group))
+        row["fold_ids"] = (
+            sorted(pd.to_numeric(group["fold_id"], errors="coerce").dropna().astype(int).unique().tolist())
+            if "fold_id" in group
+            else []
+        )
+        for column in ("train_start", "train_end", "valid_start", "valid_end"):
+            if column in group:
+                row[f"{column}_values"] = sorted(pd.to_datetime(group[column]).dropna().unique().tolist())
+        rows.append(row)
+
+    aggregated = pd.DataFrame(rows)
+    raw_count = int(len(raw_oof))
+    unique_count = int(len(aggregated))
+    diagnostics.update(
+        {
+            "unique_row_count": unique_count,
+            "duplicate_row_count": raw_count - unique_count,
+            "duplicate_ratio": float((raw_count - unique_count) / raw_count),
+        }
+    )
+    return aggregated, diagnostics
 
 
 
@@ -130,10 +206,17 @@ def walk_forward_oof_predictions(df: pd.DataFrame, feature_columns: List[str], c
 
 
 def walk_forward_validate_with_oof(df: pd.DataFrame, feature_columns: List[str], cfg: TrainingConfig) -> tuple[List[FoldResult], pd.DataFrame]:
+    result = walk_forward_validate_result(df, feature_columns, cfg)
+    return result.folds, result.oof
+
+
+def walk_forward_validate_result(df: pd.DataFrame, feature_columns: List[str], cfg: TrainingConfig) -> WalkForwardResult:
     executed = _execute_folds(list(_iter_folds(df, cfg)), feature_columns, cfg)
     if not executed:
-        return [], pd.DataFrame()
+        empty, diagnostics = aggregate_oof_predictions(pd.DataFrame())
+        return WalkForwardResult([], empty, diagnostics)
 
     results = [result for result, _ in executed]
-    oof = pd.concat([fold for _, fold in executed], axis=0, ignore_index=True)
-    return results, oof
+    raw_oof = pd.concat([fold for _, fold in executed], axis=0, ignore_index=True)
+    oof, diagnostics = aggregate_oof_predictions(raw_oof)
+    return WalkForwardResult(results, oof, diagnostics)
