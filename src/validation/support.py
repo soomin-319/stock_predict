@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from src.models.lgbm_heads import MultiHeadPrediction
+from src.validation.metrics import probability_calibration_metrics
 
 
 @dataclass
@@ -113,26 +114,63 @@ def compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
     }
 
 
-def calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Index | list | tuple) -> pd.Series:
-    raw_probs = pd.Series(up_probs, dtype=float).clip(0.0, 1.0)
-    if oof_df.empty or "up_probability" not in oof_df.columns or "target_log_return" not in oof_df.columns:
-        return raw_probs
+@dataclass
+class UpProbabilityCalibrator:
+    model: object | None
+    status: str
+    reason: str | None
 
-    cal = oof_df[["up_probability", "target_log_return"]].copy().dropna()
+    def transform(self, probabilities: pd.Series | pd.Index | list | tuple) -> pd.Series:
+        raw = pd.Series(probabilities, dtype=float).clip(0.0, 1.0)
+        if self.model is None:
+            return raw
+        calibrated = pd.Series(self.model.predict(raw.values), dtype=float).clip(0.0, 1.0)
+        if raw.round(6).nunique() >= 4 and calibrated.round(6).nunique() <= 2:
+            return (0.3 * calibrated + 0.7 * raw).clip(0.0, 1.0)
+        return calibrated
+
+
+def fit_up_probability_calibrator(tune_oof: pd.DataFrame) -> UpProbabilityCalibrator:
+    required = {"up_probability", "target_log_return"}
+    if tune_oof.empty or not required.issubset(tune_oof.columns):
+        return UpProbabilityCalibrator(None, "identity", "missing_or_empty_tune_oof")
+    cal = tune_oof[["up_probability", "target_log_return"]].copy().dropna()
     if cal.empty or cal["up_probability"].nunique() < 3:
-        return raw_probs
-
+        return UpProbabilityCalibrator(None, "identity", "insufficient_probability_diversity")
     y = (cal["target_log_return"] > 0).astype(int)
+    if y.nunique() < 2:
+        return UpProbabilityCalibrator(None, "identity", "insufficient_label_diversity")
     try:
         from sklearn.isotonic import IsotonicRegression
 
-        iso = IsotonicRegression(out_of_bounds="clip")
-        iso.fit(cal["up_probability"].astype(float).values, y.values)
-        calibrated = pd.Series(iso.predict(raw_probs.values), dtype=float).clip(0.0, 1.0)
-        raw_unique = raw_probs.round(6).nunique()
-        calibrated_unique = calibrated.round(6).nunique()
-        if raw_unique >= 4 and calibrated_unique <= 2:
-            return (0.3 * calibrated + 0.7 * raw_probs).clip(0.0, 1.0)
-        return calibrated
-    except Exception:
-        return raw_probs
+        model = IsotonicRegression(out_of_bounds="clip")
+        model.fit(cal["up_probability"].astype(float).values, y.values)
+        return UpProbabilityCalibrator(model, "fitted", None)
+    except Exception as exc:
+        return UpProbabilityCalibrator(None, "identity", f"fit_failed:{type(exc).__name__}")
+
+
+def calibration_split_metrics(
+    tune_df: pd.DataFrame,
+    eval_df: pd.DataFrame,
+    calibrator: UpProbabilityCalibrator,
+) -> dict:
+    def metrics(frame: pd.DataFrame) -> dict:
+        if frame.empty:
+            return {**probability_calibration_metrics([], []), "sample_count": 0}
+        probabilities = calibrator.transform(frame["up_probability"])
+        labels = (frame["target_log_return"] > 0).astype(int)
+        return {
+            **probability_calibration_metrics(labels.values, probabilities.values),
+            "sample_count": int(len(frame)),
+        }
+
+    return {
+        "fit": {"status": calibrator.status, "reason": calibrator.reason},
+        "tune": metrics(tune_df),
+        "eval": metrics(eval_df),
+    }
+
+
+def calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Index | list | tuple) -> pd.Series:
+    return fit_up_probability_calibrator(oof_df).transform(up_probs)
