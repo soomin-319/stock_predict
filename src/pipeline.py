@@ -247,8 +247,19 @@ def _coverage_gate_status(cfg, external_coverage_ratio: float, investor_coverage
     return validation_coverage_gate_status(cfg.backtest, external_coverage_ratio, investor_coverage_ratio)
 
 
-def _split_oof_for_tuning_and_eval(scored_oof: pd.DataFrame, tune_ratio: float = 0.7) -> tuple[pd.DataFrame, pd.DataFrame]:
-    return validation_split_oof_for_tuning_and_eval(scored_oof, tune_ratio=tune_ratio)
+def _split_oof_for_tuning_and_eval(
+    scored_oof: pd.DataFrame,
+    tune_ratio: float = 0.7,
+    *,
+    min_tune_dates: int = 5,
+    min_eval_dates: int = 5,
+):
+    return validation_split_oof_for_tuning_and_eval(
+        scored_oof,
+        tune_ratio=tune_ratio,
+        min_tune_dates=min_tune_dates,
+        min_eval_dates=min_eval_dates,
+    )
 
 
 def _prediction_from_oof_df(oof: pd.DataFrame) -> MultiHeadPrediction:

@@ -1,24 +1,71 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pandas as pd
 
 from src.models.lgbm_heads import MultiHeadPrediction
 
 
-def split_oof_for_tuning_and_eval(scored_oof: pd.DataFrame, tune_ratio: float = 0.7) -> tuple[pd.DataFrame, pd.DataFrame]:
-    dates = sorted(pd.to_datetime(scored_oof["Date"]).dropna().unique())
-    if len(dates) < 10:
-        return scored_oof.copy(), scored_oof.copy()
+@dataclass
+class TemporalOOFSplit:
+    tune: pd.DataFrame
+    eval: pd.DataFrame
+    status: str
+    reason: str | None
+    diagnostics: dict
 
-    split_idx = max(1, min(len(dates) - 1, int(len(dates) * tune_ratio)))
+    def __iter__(self):
+        yield self.tune
+        yield self.eval
+
+
+def split_oof_for_tuning_and_eval(
+    scored_oof: pd.DataFrame,
+    tune_ratio: float = 0.7,
+    *,
+    min_tune_dates: int = 5,
+    min_eval_dates: int = 5,
+) -> TemporalOOFSplit:
+    normalized = pd.to_datetime(scored_oof["Date"], errors="coerce").dt.normalize()
+    dates = sorted(normalized.dropna().unique())
+    if len(dates) < min_tune_dates + min_eval_dates:
+        tune_dates = set(dates[: min(len(dates), min_tune_dates)])
+        tune_df = scored_oof[normalized.isin(tune_dates)].copy()
+        eval_df = scored_oof.iloc[0:0].copy()
+        return TemporalOOFSplit(
+            tune=tune_df,
+            eval=eval_df,
+            status="insufficient_data",
+            reason="insufficient_unique_oof_dates",
+            diagnostics={
+                "unique_date_count": len(dates),
+                "tune_date_count": len(tune_dates),
+                "eval_date_count": 0,
+                "tune_row_count": int(len(tune_df)),
+                "eval_row_count": 0,
+            },
+        )
+
+    split_idx = max(min_tune_dates, min(len(dates) - min_eval_dates, int(len(dates) * tune_ratio)))
     tune_dates = set(dates[:split_idx])
     eval_dates = set(dates[split_idx:])
 
-    tune_df = scored_oof[scored_oof["Date"].isin(tune_dates)].copy()
-    eval_df = scored_oof[scored_oof["Date"].isin(eval_dates)].copy()
-    if tune_df.empty or eval_df.empty:
-        return scored_oof.copy(), scored_oof.copy()
-    return tune_df, eval_df
+    tune_df = scored_oof[normalized.isin(tune_dates)].copy()
+    eval_df = scored_oof[normalized.isin(eval_dates)].copy()
+    return TemporalOOFSplit(
+        tune=tune_df,
+        eval=eval_df,
+        status="ok",
+        reason=None,
+        diagnostics={
+            "unique_date_count": len(dates),
+            "tune_date_count": len(tune_dates),
+            "eval_date_count": len(eval_dates),
+            "tune_row_count": int(len(tune_df)),
+            "eval_row_count": int(len(eval_df)),
+        },
+    )
 
 
 def prediction_from_oof_df(oof: pd.DataFrame) -> MultiHeadPrediction:

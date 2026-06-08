@@ -394,11 +394,29 @@ def test_split_oof_for_tuning_and_eval():
     df["signal_score"] = 0.1
     df["target_log_return"] = 0.0
 
-    tune_df, eval_df = _split_oof_for_tuning_and_eval(df, tune_ratio=0.7)
+    result = _split_oof_for_tuning_and_eval(df, tune_ratio=0.7)
 
-    assert not tune_df.empty
-    assert not eval_df.empty
-    assert tune_df["Date"].max() < eval_df["Date"].min()
+    assert result.status == "ok"
+    assert not result.tune.empty
+    assert not result.eval.empty
+    assert result.tune["Date"].max() < result.eval["Date"].min()
+    assert set(result.tune["Date"]).isdisjoint(set(result.eval["Date"]))
+
+
+def test_split_oof_reports_insufficient_data_without_reusing_dates():
+    df = pd.DataFrame(
+        {
+            "Date": pd.bdate_range("2024-01-01", periods=6),
+            "Symbol": ["A"] * 6,
+            "target_log_return": [0.0] * 6,
+        }
+    )
+
+    result = _split_oof_for_tuning_and_eval(df, tune_ratio=0.7, min_tune_dates=5, min_eval_dates=3)
+
+    assert result.status == "insufficient_data"
+    assert set(result.tune["Date"]).isdisjoint(set(result.eval["Date"]))
+    assert result.eval.empty
 
 
 def test_external_feature_coverage_fields(monkeypatch):
