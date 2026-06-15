@@ -101,6 +101,53 @@ def test_main_add_symbols_skips_incremental_auto_refresh(monkeypatch):
     assert calls["save"] == 0
     assert calls["run"] == 1
 
+
+def test_main_passes_refresh_coverage_to_pipeline(monkeypatch):
+    captured: dict = {}
+
+    monkeypatch.setattr(pipeline, "save_real_ohlcv_csv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        pipeline,
+        "get_last_fetch_coverage",
+        lambda: {"enabled": True, "requested": 1, "successful": 1},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "run_pipeline",
+        lambda *args, **kwargs: captured.update(kwargs),
+    )
+
+    parser = pipeline.build_cli_parser()
+    args = parser.parse_args(["--fetch-real", "--real-symbols", "005930.KS"])
+    monkeypatch.setattr(parser, "parse_args", lambda: args)
+    monkeypatch.setattr(pipeline, "build_cli_parser", lambda: parser)
+
+    pipeline.main()
+
+    assert captured["data_fetch_coverage"]["successful"] == 1
+
+
+def test_main_normalizes_explicit_real_symbols_before_full_refresh(monkeypatch):
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        pipeline,
+        "save_real_ohlcv_csv",
+        lambda *args, **kwargs: captured.update(kwargs),
+    )
+    monkeypatch.setattr(pipeline, "get_last_fetch_coverage", lambda: {})
+    monkeypatch.setattr(pipeline, "run_pipeline", lambda *args, **kwargs: None)
+
+    parser = pipeline.build_cli_parser()
+    args = parser.parse_args(["--fetch-real", "--real-symbols", "247540"])
+    monkeypatch.setattr(parser, "parse_args", lambda: args)
+    monkeypatch.setattr(pipeline, "build_cli_parser", lambda: parser)
+
+    pipeline.main()
+
+    assert captured["symbols"] == ["247540.KQ"]
+
 def test_save_real_ohlcv_csv_preserves_existing_optional_columns(tmp_path, monkeypatch):
     target = tmp_path / "real.csv"
     base = pd.DataFrame(

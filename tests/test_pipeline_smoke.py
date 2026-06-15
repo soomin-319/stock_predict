@@ -145,7 +145,15 @@ def test_run_pipeline_generates_report_without_graph_artifacts(tmp_path):
     out = tmp_path / "predictions.csv"
     rep = tmp_path / "report.json"
     fig = tmp_path / "figures"
-    payload = run_pipeline(str(inp), str(out), universe_csv=None, report_json=str(rep), figure_dir=str(fig), use_external=False)
+    payload = run_pipeline(
+        str(inp),
+        str(out),
+        universe_csv=None,
+        report_json=str(rep),
+        figure_dir=str(fig),
+        use_external=False,
+        data_fetch_coverage={"enabled": True, "requested": 2, "successful": 1},
+    )
 
     result_dir = Path("result")
     assert result_dir.exists()
@@ -194,6 +202,7 @@ def test_run_pipeline_generates_report_without_graph_artifacts(tmp_path):
     assert "backtest" in payload
     assert "artifacts" in payload
     assert "external_feature_coverage" in payload
+    assert payload["data_fetch_coverage"]["requested"] == 2
     assert "probability_calibration" in payload
     assert set(payload["probability_calibration"]) == {"fit", "tune", "eval"}
     assert "ece" in payload["probability_calibration"]["eval"]
