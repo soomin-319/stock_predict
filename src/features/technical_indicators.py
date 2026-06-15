@@ -53,6 +53,43 @@ def compute_obv(close: pd.Series, volume: pd.Series) -> pd.Series:
     return (direction * volume.fillna(0)).cumsum()
 
 
+def finite_or_nan(series: pd.Series) -> pd.Series:
+    return series.replace([np.inf, -np.inf], np.nan)
+
+
+def compute_technical_indicator_block(
+    frame: pd.DataFrame,
+    *,
+    rsi_period: int,
+    stochastic_period: int,
+    cci_period: int,
+) -> pd.DataFrame:
+    macd, macd_signal, macd_hist = compute_macd(frame["Close"])
+    stoch_k, stoch_d = compute_stochastic(
+        frame["High"],
+        frame["Low"],
+        frame["Close"],
+        stochastic_period,
+    )
+    obv = compute_obv(frame["Close"], frame["Volume"])
+    block = pd.DataFrame(
+        {
+            "rsi_14": compute_rsi(frame["Close"], rsi_period),
+            "macd": macd,
+            "macd_signal": macd_signal,
+            "macd_hist": macd_hist,
+            "atr_14": compute_atr(frame["High"], frame["Low"], frame["Close"]),
+            "stoch_k": stoch_k,
+            "stoch_d": stoch_d,
+            "cci_20": compute_cci(frame["High"], frame["Low"], frame["Close"], cci_period),
+            "obv": obv,
+            "obv_change_5d": finite_or_nan(obv.pct_change(5)),
+        },
+        index=frame.index,
+    )
+    return block.replace([np.inf, -np.inf], np.nan)
+
+
 def rolling_zscore(series: pd.Series, window: int) -> pd.Series:
     mean = series.rolling(window).mean()
     std = series.rolling(window).std().replace(0, np.nan)
