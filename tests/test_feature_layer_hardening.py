@@ -5,6 +5,8 @@ import pandas as pd
 import pytest
 
 from src.config.settings import FeatureConfig
+from src.config.settings import InvestmentCriteriaConfig
+from src.features.investment_signals import add_investment_signal_features
 from src.features.price_features import build_features
 from src.features.technical_indicators import compute_technical_indicator_block
 
@@ -79,3 +81,26 @@ def test_vol_ratio_20_is_current_volume_over_twenty_day_average():
     assert out["vol_ratio_20"].iloc[-1] == pytest.approx(
         frame["Volume"].iloc[-1] / frame["Volume"].rolling(20).mean().iloc[-1]
     )
+
+
+def test_build_features_leaves_near_52w_threshold_to_investment_signals():
+    out = build_features(_price_frame(30), FeatureConfig())
+
+    assert "close_to_52w_high" in out.columns
+    assert "near_52w_high_flag" not in out.columns
+
+
+def test_near_52w_high_flag_obeys_investment_criteria_config():
+    frame = pd.DataFrame({"close_to_52w_high": [0.96]})
+
+    strict = add_investment_signal_features(
+        frame,
+        InvestmentCriteriaConfig(near_52w_distance_threshold=0.03),
+    )
+    loose = add_investment_signal_features(
+        frame,
+        InvestmentCriteriaConfig(near_52w_distance_threshold=0.05),
+    )
+
+    assert strict["near_52w_high_flag"].iloc[0] == 0
+    assert loose["near_52w_high_flag"].iloc[0] == 1

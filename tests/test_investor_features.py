@@ -32,7 +32,6 @@ EXPECTED_CORE_CONTEXT_COLUMNS = [
     "news_positive_signal",
     "news_negative_signal",
     "close_to_52w_high",
-    "near_52w_high_flag",
     "breakout_52w_flag",
     "leader_confirmation_flag",
     "rsi_pullback_buy_flag",
