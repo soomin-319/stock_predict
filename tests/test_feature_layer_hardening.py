@@ -104,3 +104,30 @@ def test_near_52w_high_flag_obeys_investment_criteria_config():
 
     assert strict["near_52w_high_flag"].iloc[0] == 0
     assert loose["near_52w_high_flag"].iloc[0] == 1
+
+
+def test_price_limit_flags_use_historical_krx_thresholds():
+    frame = pd.DataFrame(
+        [
+            {"Date": "2015-06-11", "Symbol": "OLD", "Open": 100, "High": 100, "Low": 100, "Close": 100, "Volume": 1_000},
+            {"Date": "2015-06-12", "Symbol": "OLD", "Open": 120, "High": 120, "Low": 120, "Close": 120, "Volume": 1_000},
+            {"Date": "2015-06-15", "Symbol": "NEW", "Open": 100, "High": 100, "Low": 100, "Close": 100, "Volume": 1_000},
+            {"Date": "2015-06-16", "Symbol": "NEW", "Open": 120, "High": 120, "Low": 120, "Close": 120, "Volume": 1_000},
+        ]
+    )
+    frame["Date"] = pd.to_datetime(frame["Date"])
+
+    out = build_features(frame, FeatureConfig())
+
+    assert out.loc[(out["Symbol"] == "OLD") & out["Date"].eq("2015-06-12"), "limit_hit_up_flag"].iloc[0] == 1
+    assert out.loc[(out["Symbol"] == "NEW") & out["Date"].eq("2015-06-16"), "limit_hit_up_flag"].iloc[0] == 0
+
+
+def test_price_limit_flags_use_explicit_row_override():
+    frame = _price_frame(2)
+    frame.loc[1, ["Open", "High", "Low", "Close"]] = 110.0
+    frame["price_limit_pct"] = 0.10
+
+    out = build_features(frame, FeatureConfig())
+
+    assert out["limit_hit_up_flag"].iloc[1] == 1

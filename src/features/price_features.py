@@ -31,6 +31,7 @@ WARNING_LEVEL_MAP = {
     "위험": 3.0,
     "investment_risk": 3.0,
 }
+KRX_PRICE_LIMIT_CHANGE_DATE = pd.Timestamp("2015-06-15")
 
 
 def _coerce_numeric_series(df: pd.DataFrame, aliases: list[str], default: float = 0.0) -> pd.Series:
@@ -77,6 +78,18 @@ def _warning_level_series(df: pd.DataFrame) -> pd.Series:
     return mapped.fillna(0.0).astype(float)
 
 
+def _price_limit_pct(df: pd.DataFrame) -> pd.Series:
+    explicit = next((column for column in ("price_limit_pct", "PriceLimitPct") if column in df.columns), None)
+    default = pd.Series(
+        np.where(pd.to_datetime(df["Date"]) < KRX_PRICE_LIMIT_CHANGE_DATE, 0.15, 0.30),
+        index=df.index,
+        dtype=float,
+    )
+    if explicit is None:
+        return default
+    return pd.to_numeric(df[explicit], errors="coerce").fillna(default)
+
+
 def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out = df.copy()
     out["_feature_input_order"] = np.arange(len(out))
@@ -115,9 +128,6 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
         "short_sell_overheat_flag": 0.0,
         "individual_buy_signal": 0.0,
         "retail_chase_signal": 0.0,
-        "limit_hit_up_flag": 0.0,
-        "limit_hit_down_flag": 0.0,
-        "limit_event_flag": 0.0,
         "vi_after_return": 0.0,
         "vi_after_volume_spike": 0.0,
         "pbr": 0.0,
@@ -255,8 +265,9 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
         + 0.20 * feature_cols["news_positive_signal"]
         + 0.25 * feature_cols["smart_money_buy_signal"]
     )
-    limit_hit_up_flag = (out["daily_return"] >= 0.295).astype(float)
-    limit_hit_down_flag = (out["daily_return"] <= -0.295).astype(float)
+    price_limit_threshold = _price_limit_pct(out) - 0.005
+    limit_hit_up_flag = out["daily_return"].ge(price_limit_threshold).astype(float)
+    limit_hit_down_flag = out["daily_return"].le(-price_limit_threshold).astype(float)
     feature_cols["limit_hit_up_flag"] = limit_hit_up_flag
     feature_cols["limit_hit_down_flag"] = limit_hit_down_flag
     feature_cols["limit_event_flag"] = ((limit_hit_up_flag + limit_hit_down_flag) > 0).astype(float)
