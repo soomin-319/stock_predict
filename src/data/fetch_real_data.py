@@ -1,19 +1,27 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from pathlib import Path
 from typing import Iterable
 import logging
 import sys
+import time
 import warnings
 from functools import partial
 
 import pandas as pd
 
+from src.data.krx_universe import get_provider_symbol_for_ticker
+
 warnings.filterwarnings("ignore", module=r"yfinance(\..*)?")
 
 _LOGGER = logging.getLogger(__name__)
 _YF = None
+DEFAULT_REAL_START_DATE = "2020-01-01"
+MAX_DOWNLOAD_ATTEMPTS = 3
+_LAST_FETCH_COVERAGE: dict = {}
+_sleep = time.sleep
 
 
 def _get_yfinance():
@@ -41,7 +49,7 @@ def _to_yfinance_symbol(user_input: str) -> str:
         return s
 
     if s.isdigit() and len(s) == 6:
-        return f"{s}.KS"
+        return get_provider_symbol_for_ticker(s) or f"{s}.KS"
     return s
 
 
@@ -88,25 +96,68 @@ def _normalize_yf_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _safe_download_ohlcv(symbol: str, start: str, end: str | None = None) -> pd.DataFrame:
-    try:
-        yf = _get_yfinance()
-        ticker = yf.Ticker(symbol)
-        df = ticker.history(start=start, end=end, auto_adjust=False)
-        if df.empty:
-            return pd.DataFrame()
-        if df.index.tz is not None:
-            df.index = df.index.tz_localize(None)
-        return df
-    except Exception as exc:
-        _LOGGER.warning("yfinance download failed for %s: %s: %s", symbol, type(exc).__name__, exc)
-        return pd.DataFrame()
+    last_exc: Exception | None = None
+    for attempt in range(1, MAX_DOWNLOAD_ATTEMPTS + 1):
+        try:
+            yf = _get_yfinance()
+            ticker = yf.Ticker(symbol)
+            df = ticker.history(start=start, end=end, auto_adjust=True)
+            if df is not None and not df.empty:
+                if df.index.tz is not None:
+                    df.index = df.index.tz_localize(None)
+                df.attrs["download_attempts"] = attempt
+                df.attrs["retry_count"] = attempt - 1
+                return df
+        except Exception as exc:
+            last_exc = exc
+        if attempt < MAX_DOWNLOAD_ATTEMPTS:
+            _sleep(2 ** (attempt - 1))
+
+    if last_exc is not None:
+        _LOGGER.warning(
+            "yfinance download failed for %s after %d attempts: %s: %s",
+            symbol,
+            MAX_DOWNLOAD_ATTEMPTS,
+            type(last_exc).__name__,
+            last_exc,
+        )
+    empty = pd.DataFrame()
+    empty.attrs["download_attempts"] = MAX_DOWNLOAD_ATTEMPTS
+    empty.attrs["retry_count"] = MAX_DOWNLOAD_ATTEMPTS - 1
+    return empty
+
+
+def _provider_symbol_candidates(symbol: str) -> list[str]:
+    if symbol.endswith(".KS"):
+        return [symbol, f"{symbol[:-3]}.KQ"]
+    if symbol.endswith(".KQ"):
+        return [symbol, f"{symbol[:-3]}.KS"]
+    return [symbol]
 
 
 
 def _fetch_single_symbol(symbol: str, start: str, end: str | None = None) -> pd.DataFrame:
-    df = _safe_download_ohlcv(symbol, start=start, end=end)
+    used_symbol = symbol
+    df = pd.DataFrame()
+    total_attempts = 0
+    retry_count = 0
+    for candidate in _provider_symbol_candidates(symbol):
+        df = _safe_download_ohlcv(candidate, start=start, end=end)
+        total_attempts += int(df.attrs.get("download_attempts", 1))
+        retry_count += int(df.attrs.get("retry_count", 0))
+        if df is not None and not df.empty:
+            used_symbol = candidate
+            break
     if df is None or df.empty:
-        return pd.DataFrame()
+        empty = pd.DataFrame()
+        empty.attrs.update(
+            requested_symbol=symbol,
+            resolved_symbol=None,
+            total_attempts=total_attempts,
+            retry_count=retry_count,
+            fallback_used=False,
+        )
+        return empty
 
     df = _normalize_yf_columns(df).reset_index()
     required = ["Date", "Open", "High", "Low", "Close", "Volume"]
@@ -114,12 +165,24 @@ def _fetch_single_symbol(symbol: str, start: str, end: str | None = None) -> pd.
         return pd.DataFrame()
 
     out = df[required].copy()
-    out["Symbol"] = symbol
+    out["Symbol"] = used_symbol
+    out.attrs.update(
+        requested_symbol=symbol,
+        resolved_symbol=used_symbol,
+        total_attempts=total_attempts,
+        retry_count=retry_count,
+        fallback_used=used_symbol != symbol,
+    )
     return out
 
 
 
-def fetch_real_ohlcv(symbols: Iterable[str], start: str = "2020-01-01", end: str | None = None) -> pd.DataFrame:
+def get_last_fetch_coverage() -> dict:
+    return deepcopy(_LAST_FETCH_COVERAGE)
+
+
+def fetch_real_ohlcv(symbols: Iterable[str], start: str = DEFAULT_REAL_START_DATE, end: str | None = None) -> pd.DataFrame:
+    global _LAST_FETCH_COVERAGE
     normalized_symbols = list(dict.fromkeys(str(symbol) for symbol in symbols if str(symbol).strip()))
     if not normalized_symbols:
         raise RuntimeError("No symbols provided")
@@ -137,6 +200,34 @@ def fetch_real_ohlcv(symbols: Iterable[str], start: str = "2020-01-01", end: str
         sys.stdout = _saved_stdout
 
     empty_symbols = [sym for sym, frame in zip(normalized_symbols, frames) if frame is None or frame.empty]
+    details = []
+    for sym, frame in zip(normalized_symbols, frames):
+        attrs = {} if frame is None else frame.attrs
+        details.append(
+            {
+                "symbol": sym,
+                "status": "failed" if frame is None or frame.empty else "ok",
+                "resolved_symbol": attrs.get("resolved_symbol"),
+                "attempts": int(attrs.get("total_attempts", 1)),
+                "retry_count": int(attrs.get("retry_count", 0)),
+                "fallback_used": bool(attrs.get("fallback_used", False)),
+            }
+        )
+    successful = len(normalized_symbols) - len(empty_symbols)
+    _LAST_FETCH_COVERAGE = {
+        "enabled": True,
+        "requested": len(normalized_symbols),
+        "successful": successful,
+        "failed": len(empty_symbols),
+        "success_ratio": successful / len(normalized_symbols),
+        "failed_symbols": empty_symbols,
+        "fallback_used": sum(1 for detail in details if detail["fallback_used"]),
+        "retried_symbols": [
+            detail["symbol"] for detail in details if detail["retry_count"] > 0
+        ],
+        "total_retry_count": sum(detail["retry_count"] for detail in details),
+        "details": details,
+    }
     frames = [frame for frame in frames if frame is not None and not frame.empty]
     if not frames:
         raise RuntimeError(
@@ -177,19 +268,29 @@ def _preserve_existing_optional_columns(fetched_df: pd.DataFrame, existing_df: p
 
 
 
-def save_real_ohlcv_csv(path: str | Path, symbols: Iterable[str], start: str = "2020-01-01", end: str | None = None) -> Path:
+def save_real_ohlcv_csv(
+    path: str | Path,
+    symbols: Iterable[str],
+    start: str = DEFAULT_REAL_START_DATE,
+    end: str | None = None,
+) -> Path:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     df = fetch_real_ohlcv(symbols=symbols, start=start, end=end)
     if p.exists():
-        base = pd.read_csv(p)
+        base = pd.read_csv(p, encoding="utf-8-sig")
         df = _preserve_existing_optional_columns(df, base)
-    df.to_csv(p, index=False)
+    df.to_csv(p, index=False, encoding="utf-8-sig")
     return p
 
 
 
-def append_real_ohlcv_csv(path: str | Path, symbols: Iterable[str], start: str = "2020-01-01", end: str | None = None) -> Path:
+def append_real_ohlcv_csv(
+    path: str | Path,
+    symbols: Iterable[str],
+    start: str = DEFAULT_REAL_START_DATE,
+    end: str | None = None,
+) -> Path:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
 
@@ -199,7 +300,7 @@ def append_real_ohlcv_csv(path: str | Path, symbols: Iterable[str], start: str =
         print("[경고] 추가 요청한 심볼 데이터를 가져오지 못해 기존 CSV를 유지합니다.")
         return p
     if p.exists():
-        base = pd.read_csv(p)
+        base = pd.read_csv(p, encoding="utf-8-sig")
         if "Date" in base.columns:
             base["Date"] = pd.to_datetime(base["Date"])
         new_df = _preserve_existing_optional_columns(new_df, base)
@@ -209,5 +310,5 @@ def append_real_ohlcv_csv(path: str | Path, symbols: Iterable[str], start: str =
 
     merged = merged.drop_duplicates(subset=["Date", "Symbol"], keep="last")
     merged = merged.sort_values(["Symbol", "Date"]).reset_index(drop=True)
-    merged.to_csv(p, index=False)
+    merged.to_csv(p, index=False, encoding="utf-8-sig")
     return p

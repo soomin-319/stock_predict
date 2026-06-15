@@ -25,3 +25,26 @@ def test_add_external_market_features_handles_multi_column_reset_index_shape(mon
     assert coverage["successful"] == 1
     assert "gspc_close" in out.columns
     assert out["gspc_close"].notna().all()
+
+
+def test_external_download_uses_adjusted_prices_and_retries(monkeypatch):
+    calls: list[bool] = []
+
+    class FakeYFinance:
+        @staticmethod
+        def download(*args, **kwargs):
+            calls.append(kwargs["auto_adjust"])
+            if len(calls) == 1:
+                return pd.DataFrame()
+            return pd.DataFrame(
+                {"Close": [100.0]},
+                index=pd.DatetimeIndex(["2024-01-02"], name="Date"),
+            )
+
+    monkeypatch.setattr(external_features, "_get_yfinance", lambda: FakeYFinance())
+    monkeypatch.setattr(external_features, "_sleep", lambda _seconds: None, raising=False)
+
+    out = external_features._safe_download("^GSPC", "2024-01-01", "2024-01-03")
+
+    assert calls == [True, True]
+    assert out.tolist() == [100.0]

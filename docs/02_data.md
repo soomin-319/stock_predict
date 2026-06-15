@@ -20,12 +20,14 @@
 
 ```python
 # src/data/loaders.py
-def load_ohlcv_csv(path: str) -> pd.DataFrame
+def load_ohlcv_csv(path: str, symbol: str | None = None) -> pd.DataFrame
 ```
 
 - 필수 컬럼: `Date`, `Open`, `High`, `Low`, `Close`, `Volume`
 - 선택 컬럼: `Symbol`, `foreign_net_buy`, `institution_net_buy`, `market_type` 등
-- 인코딩: UTF-8 / UTF-8-BOM 자동 감지
+- 인코딩: `utf-8-sig`로 읽어 UTF-8 / UTF-8-BOM 모두 지원
+- `Symbol` 컬럼이 없는 파일은 `symbol=` 값 또는 `"UNKNOWN"`을 사용
+- 중복 행은 로더에서 제거하지 않고 `clean_ohlcv()`의 결정적 정책으로 전달
 
 ---
 
@@ -39,8 +41,11 @@ def clean_ohlcv(df: pd.DataFrame) -> pd.DataFrame
 - `Date` → datetime 변환
 - `Symbol` 없으면 `"UNKNOWN"` 채움
 - 0/음수 Close 제거
-- 중복 `(Date, Symbol)` 행 제거
+- 중복 `(Date, Symbol)`은 `Volume` 최대 행 선택, 동률이면 마지막 입력 행 선택
 - 숫자 컬럼 강제 변환
+- `Volume=0` 행은 유지하고 `is_zero_volume=True`로 표시
+- 종목별 일간 수익률 절댓값이 40%를 초과하면 `is_extreme_return=True`로 표시
+- 품질 플래그 행은 정제 이력에는 유지하지만 모델 입력에서는 제외
 
 ---
 
@@ -54,9 +59,18 @@ def normalize_user_symbols(symbols: list[str]) -> list[str]
 ```
 
 - yfinance API를 사용하여 KOSPI/KOSDAQ 종목 데이터 수집
-- `normalize_user_symbols()`: `005930` → `005930.KS` 자동 변환
+- `normalize_user_symbols()`: KRX 매핑을 우선 사용하여 `005930` → `.KS`, `247540` → `.KQ` 변환
+- 미등록 6자리 코드는 `.KS` 우선이며, 다운로드 실패 시 `.KQ`를 재시도
+- 수정주가(`auto_adjust=True`) 사용
+- 각 시장 후보를 최대 3회, 1초 기준 지수 백오프로 재시도
 - `save_real_ohlcv_csv()`: 전체 재다운로드
 - `append_real_ohlcv_csv()`: 증분 추가 (기존 최신 날짜 이후만)
+- 저장 인코딩: `utf-8-sig`
+- 기본 시작일: `DEFAULT_REAL_START_DATE = "2020-01-01"` (`--real-start`로 변경 가능)
+
+마지막 수집 결과는 `get_last_fetch_coverage()`로 조회한다. 요청/성공/실패
+수, 성공률, 실패 심볼, 시장 폴백, 재시도 횟수, 실제 사용 심볼을 포함하며
+CLI 갱신 실행 시 `pipeline_report.json`의 `data_fetch_coverage`에 기록된다.
 
 ---
 
@@ -92,6 +106,8 @@ def find_symbol_candidates_by_name(name: str) -> list[tuple[str, str]]
 - 전체 KRX: `data/krx_symbol_name_map.csv`
 - `--universe-csv` 옵션으로 커스텀 유니버스 지정 가능
 - `find_symbol_candidates_by_name()`: 챗봇에서 한글 종목명 → 심볼 검색에 사용
+- 종목명 검색은 공백 제거·소문자 정규화 후 정확 일치, 부분 일치, 유사도
+  순으로 점수를 계산하며 동명 종목은 티커별 후보로 유지
 
 ---
 
@@ -154,7 +170,19 @@ data/real_ohlcv.csv
 
 ---
 
-## 개선 및 수정 제안
+## 개선 및 수정 이력
+
+아래 제안은 모두 구현되었다.
+
+- **P0**: KRX 시장 매핑 및 `.KS`/`.KQ` 교차 폴백 적용
+- **P0**: 입력·실데이터 저장을 `utf-8-sig`로 통일
+- **P1**: 실시간·외부시장 다운로드 수정주가 적용
+- **P1**: 극단 수익률·거래정지 품질 플래그와 모델 입력 제외 적용
+- **P1**: 중복 시 최대 거래량 행 선택
+- **P1**: yfinance 3회 지수 백오프와 수집 커버리지 리포트 적용
+- **P2**: 기본 시작일 상수화, `symbol=` 및 종목명 검색 계약 문서화
+
+다음 내용은 문제 발견 당시의 배경과 결정 근거를 보존한 기록이다.
 
 > 우선순위: **P0(정확성/버그) > P1(견고성/누수) > P2(성능/품질/문서)**.
 

@@ -29,7 +29,13 @@ from src.data.cli_refresh import (
     resolve_fetch_symbols as data_resolve_fetch_symbols,
     resolve_incremental_fetch_start as data_resolve_incremental_fetch_start,
 )
-from src.data.fetch_real_data import append_real_ohlcv_csv, normalize_user_symbols, save_real_ohlcv_csv
+from src.data.fetch_real_data import (
+    DEFAULT_REAL_START_DATE,
+    append_real_ohlcv_csv,
+    get_last_fetch_coverage,
+    normalize_user_symbols,
+    save_real_ohlcv_csv,
+)
 from src.data.krx_universe import get_symbol_name_map
 from src.data.loaders import load_ohlcv_csv
 from src.data.investor_context import InvestorContextConfig, add_investor_context_with_coverage, collect_context_raw_events
@@ -393,13 +399,17 @@ def _load_pipeline_config_and_data(
     seed_everything(cfg.training.random_state)
     raw = load_ohlcv_csv(input_csv)
     cleaned = clean_ohlcv(raw)
+    quality_columns = ["is_zero_volume", "is_extreme_return"]
+    quality_excluded = cleaned[
+        ~cleaned[quality_columns].fillna(False).any(axis=1)
+    ].copy()
     if universe_csv:
         universe = load_universe_symbols(universe_csv)
         requested_universe_symbols = list(universe)
-        data = filter_by_universe(cleaned, universe)
+        data = filter_by_universe(quality_excluded, universe)
     else:
-        requested_universe_symbols = sorted(cleaned["Symbol"].astype(str).unique().tolist())
-        data = cleaned.copy()
+        requested_universe_symbols = sorted(quality_excluded["Symbol"].astype(str).unique().tolist())
+        data = quality_excluded
     return cfg, raw, cleaned, data, requested_universe_symbols
 
 
@@ -746,6 +756,7 @@ def _write_pipeline_artifacts(
     validation_result: dict[str, Any],
     external_coverage: dict,
     investor_context_coverage: dict,
+    data_fetch_coverage: dict,
     oof_diagnostics: dict,
     report_json: str | None,
     diagnostics: PipelineDiagnostics,
@@ -894,6 +905,7 @@ def _write_pipeline_artifacts(
         "backtest_validity": backtest_validity,
         "external_feature_coverage": external_coverage,
         "investor_context_coverage": investor_context_coverage,
+        "data_fetch_coverage": data_fetch_coverage,
         "coverage_gate": {
             "external_coverage_ratio": external_coverage_ratio,
             "investor_coverage_ratio": investor_coverage_ratio,
@@ -970,6 +982,7 @@ def run_pipeline(
     model_head_n_jobs: int | None = None,
     context_raw_event_n_jobs: int | None = None,
     issue_summary_n_jobs: int = 1,
+    data_fetch_coverage: dict | None = None,
 ):
     effective_openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
     effective_openai_model = openai_model or os.getenv("OPENAI_MODEL") or ("gpt-5-mini" if effective_openai_api_key else None)
@@ -980,6 +993,18 @@ def run_pipeline(
 
     diagnostics = PipelineDiagnostics()
     total_steps = 12
+    effective_data_fetch_coverage = data_fetch_coverage or {
+        "enabled": False,
+        "requested": 0,
+        "successful": 0,
+        "failed": 0,
+        "success_ratio": 0.0,
+        "failed_symbols": [],
+        "fallback_used": 0,
+        "retried_symbols": [],
+        "total_retry_count": 0,
+        "details": [],
+    }
 
     _print_progress(1, total_steps, "Loading app configuration")
     cfg_overrides = _build_pipeline_overrides(
@@ -1106,6 +1131,7 @@ def run_pipeline(
             validation_result=validation_result,
             external_coverage=external_coverage,
             investor_context_coverage=investor_context_coverage,
+            data_fetch_coverage=effective_data_fetch_coverage,
             oof_diagnostics=oof_diagnostics,
             report_json=report_json,
             diagnostics=diagnostics,
@@ -1189,7 +1215,7 @@ def build_cli_parser() -> argparse.ArgumentParser:
         default=None,
         help="Symbols used when --fetch-real is enabled (no auto KRX universe)",
     )
-    parser.add_argument("--real-start", default="2020-01-01", help="Start date for real data fetch")
+    parser.add_argument("--real-start", default=DEFAULT_REAL_START_DATE, help="Start date for real data fetch")
     parser.add_argument(
         "--auto-refresh-real",
         action="store_true",
@@ -1213,21 +1239,29 @@ def main():
     seed_everything(seed_cfg)
 
     input_csv = args.input
+    data_fetch_coverage = None
     if args.add_symbols:
         symbols_to_add = normalize_user_symbols(args.add_symbols)
         if symbols_to_add:
             append_real_ohlcv_csv(input_csv, symbols=symbols_to_add, start=args.real_start)
+            data_fetch_coverage = get_last_fetch_coverage()
             print(f"Added symbols to {input_csv}: {len(symbols_to_add)}")
     should_full_refresh = args.fetch_real
     should_incremental_refresh = args.auto_refresh_real and not should_full_refresh and not args.add_symbols
 
     if should_full_refresh:
-        symbols = _resolve_fetch_symbols(args.real_symbols, args.universe_csv, input_csv)
+        symbols = normalize_user_symbols(
+            _resolve_fetch_symbols(args.real_symbols, args.universe_csv, input_csv)
+        )
         save_real_ohlcv_csv(input_csv, symbols=symbols, start=args.real_start)
+        data_fetch_coverage = get_last_fetch_coverage()
     elif should_incremental_refresh:
-        symbols = _resolve_fetch_symbols(args.real_symbols, args.universe_csv, input_csv)
+        symbols = normalize_user_symbols(
+            _resolve_fetch_symbols(args.real_symbols, args.universe_csv, input_csv)
+        )
         incremental_start = _resolve_incremental_fetch_start(input_csv, args.real_start)
         append_real_ohlcv_csv(input_csv, symbols=symbols, start=incremental_start)
+        data_fetch_coverage = get_last_fetch_coverage()
         print(f"Auto-refreshed latest real OHLCV data incrementally: {input_csv} (start={incremental_start})")
 
     run_pipeline(
@@ -1261,6 +1295,7 @@ def main():
         model_head_n_jobs=args.model_head_n_jobs,
         context_raw_event_n_jobs=args.context_raw_event_n_jobs,
         issue_summary_n_jobs=args.issue_summary_n_jobs,
+        data_fetch_coverage=data_fetch_coverage,
     )
 
 

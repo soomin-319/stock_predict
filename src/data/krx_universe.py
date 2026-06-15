@@ -87,6 +87,14 @@ def get_symbol_name_map(symbols: list[str]) -> dict[str, str]:
     return out
 
 
+def get_provider_symbol_for_ticker(ticker: str) -> str | None:
+    """Return the repository-mapped provider symbol for a six-digit KRX ticker."""
+    normalized = str(ticker).strip().zfill(6)
+    df = _load_krx_symbol_name_df()
+    matches = df.loc[df["Ticker"].eq(normalized), "Symbol"]
+    return None if matches.empty else str(matches.iloc[0])
+
+
 
 def _score_name_match(normalized_query: str, normalized_name: str) -> float:
     if normalized_query == normalized_name:

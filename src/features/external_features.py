@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -11,6 +12,8 @@ warnings.filterwarnings("ignore", module=r"yfinance(\..*)?")
 
 _LOGGER = logging.getLogger(__name__)
 _YF = None
+MAX_DOWNLOAD_ATTEMPTS = 3
+_sleep = time.sleep
 
 
 def _get_yfinance():
@@ -31,38 +34,49 @@ def _get_yfinance():
 
 def _safe_download(symbol: str, start: str, end: str | None) -> pd.Series:
     """Download close series without leaking provider noise to console."""
-    try:
-        yf = _get_yfinance()
-        df = yf.download(
+    last_exc: Exception | None = None
+    for attempt in range(1, MAX_DOWNLOAD_ATTEMPTS + 1):
+        try:
+            yf = _get_yfinance()
+            df = yf.download(
+                symbol,
+                start=start,
+                end=end,
+                auto_adjust=True,
+                progress=False,
+                threads=False,
+            )
+            if df is not None and not df.empty:
+                if isinstance(df.columns, pd.MultiIndex):
+                    # Find the MultiIndex level that contains price-type names rather
+                    # than blindly taking level 0, which may be the ticker level in
+                    # newer yfinance versions and would produce duplicate labels.
+                    _price_cols = frozenset({"Open", "High", "Low", "Close", "Adj Close", "Volume"})
+                    extracted = None
+                    for _lvl in range(df.columns.nlevels):
+                        _vals = df.columns.get_level_values(_lvl)
+                        if _price_cols.intersection(_vals):
+                            extracted = _vals
+                            break
+                    df.columns = extracted if extracted is not None else df.columns.get_level_values(0)
+                if "Close" in df.columns:
+                    s = df["Close"].copy()
+                    s.index = pd.to_datetime(s.index)
+                    return s
+        except Exception as exc:
+            last_exc = exc
+        if attempt < MAX_DOWNLOAD_ATTEMPTS:
+            _sleep(2 ** (attempt - 1))
+
+    if last_exc is not None:
+        _LOGGER.warning(
+            "yfinance external download failed for %s after %d attempts: %s: %s",
             symbol,
-            start=start,
-            end=end,
-            auto_adjust=False,
-            progress=False,
-            threads=False,
+            MAX_DOWNLOAD_ATTEMPTS,
+            type(last_exc).__name__,
+            last_exc,
         )
-        if df is None or df.empty:
-            return pd.Series(dtype=float)
-        if isinstance(df.columns, pd.MultiIndex):
-            # Find the MultiIndex level that contains price-type names rather
-            # than blindly taking level 0, which may be the ticker level in
-            # newer yfinance versions and would produce duplicate labels.
-            _price_cols = frozenset({"Open", "High", "Low", "Close", "Adj Close", "Volume"})
-            extracted = None
-            for _lvl in range(df.columns.nlevels):
-                _vals = df.columns.get_level_values(_lvl)
-                if _price_cols.intersection(_vals):
-                    extracted = _vals
-                    break
-            df.columns = extracted if extracted is not None else df.columns.get_level_values(0)
-        if "Close" not in df.columns:
-            return pd.Series(dtype=float)
-        s = df["Close"].copy()
-        s.index = pd.to_datetime(s.index)
-        return s
-    except Exception as exc:
-        _LOGGER.warning("yfinance external download failed for %s: %s: %s", symbol, type(exc).__name__, exc)
-        return pd.Series(dtype=float)
+    return pd.Series(dtype=float)
 
 
 
