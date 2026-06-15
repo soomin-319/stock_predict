@@ -13,8 +13,7 @@ from src.features.feature_selection import (
     select_feature_columns,
 )
 from src.features.technical_indicators import (
-    compute_macd as _compute_macd,
-    compute_rsi as _compute_rsi,
+    compute_technical_indicator_block,
     rolling_zscore as _rolling_zscore,
 )
 
@@ -80,6 +79,8 @@ def _warning_level_series(df: pd.DataFrame) -> pd.Series:
 
 def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out = df.copy()
+    out["_feature_input_order"] = np.arange(len(out))
+    out = out.sort_values(["Symbol", "Date", "_feature_input_order"], kind="stable")
     grouped = out.groupby("Symbol", group_keys=False)
 
     # Backward-compatible defaults for legacy low-priority fields that may
@@ -191,46 +192,24 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
 
     tech_cols["vol_ratio_20"] = out["Volume"] / volume_group.transform(lambda x: x.rolling(20).mean())
 
-    rsi_14_s = grouped["Close"].transform(lambda x: _compute_rsi(x, cfg.rsi_period))
-    tech_cols["rsi_14"] = rsi_14_s
+    technical_blocks = [
+        compute_technical_indicator_block(
+            group,
+            rsi_period=cfg.rsi_period,
+            stochastic_period=cfg.stochastic_period,
+            cci_period=cfg.cci_period,
+        )
+        for _, group in out.groupby("Symbol", sort=False)
+    ]
+    if technical_blocks:
+        technical = pd.concat(technical_blocks).sort_index()
+        tech_cols.update({column: technical[column] for column in technical.columns})
+    rsi_14_s = tech_cols["rsi_14"]
     tech_cols["rsi_pullback_buy_flag"] = rsi_14_s.between(30.0, 35.0, inclusive="both").astype(float)
     tech_cols["rsi_overbought_sell_flag"] = (rsi_14_s >= 70.0).astype(float)
 
-    def _macd_group(g: pd.DataFrame) -> pd.DataFrame:
-        m, s, h = _compute_macd(g["Close"])
-        return pd.DataFrame({"macd": m.values, "macd_signal": s.values, "macd_hist": h.values}, index=g.index)
-
-    macd_df = out.groupby("Symbol", group_keys=False)[["Close"]].apply(_macd_group)
-    tech_cols["macd"] = macd_df["macd"]
-    tech_cols["macd_signal"] = macd_df["macd_signal"]
-    tech_cols["macd_hist"] = macd_df["macd_hist"]
-
-    tr1 = out["High"] - out["Low"]
-    tr2 = (out["High"] - close_group.shift(1)).abs()
-    tr3 = (out["Low"] - close_group.shift(1)).abs()
-    tech_cols["atr_14"] = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1).groupby(out["Symbol"]).transform(
-        lambda x: x.rolling(14).mean()
-    )
-
-    low_min = low_group.transform(lambda x: x.rolling(cfg.stochastic_period).min())
-    high_max = high_group.transform(lambda x: x.rolling(cfg.stochastic_period).max())
-    stoch_k_s = 100 * (out["Close"] - low_min) / (high_max - low_min + 1e-9)
-    tech_cols["stoch_k"] = stoch_k_s
-    tech_cols["stoch_d"] = stoch_k_s.groupby(out["Symbol"]).transform(lambda x: x.rolling(3).mean())
-
-    typical_price = (out["High"] + out["Low"] + out["Close"]) / 3
-    tp_ma = typical_price.groupby(out["Symbol"]).transform(lambda x: x.rolling(cfg.cci_period).mean())
-    tp_mad = typical_price.groupby(out["Symbol"]).transform(
-        lambda x: x.rolling(cfg.cci_period).apply(lambda y: np.mean(np.abs(y - np.mean(y))), raw=True)
-    )
-    tech_cols["cci_20"] = (typical_price - tp_ma) / (0.015 * tp_mad.replace(0, np.nan))
-
-    price_direction = np.sign(close_group.diff().fillna(0))
-    obv_s = (price_direction * out["Volume"].fillna(0)).groupby(out["Symbol"]).cumsum()
-    tech_cols["obv"] = obv_s
-    tech_cols["obv_change_5d"] = obv_s.groupby(out["Symbol"]).transform(lambda x: x.pct_change(5))
-
     out = pd.concat([out, pd.DataFrame(tech_cols, index=out.index)], axis=1)
+    grouped = out.groupby("Symbol", group_keys=False)
 
     # Investor-context engineered features
     feature_cols: dict[str, pd.Series | np.ndarray] = {}
@@ -353,4 +332,5 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out["target_log_return"] = grouped["Close"].transform(lambda x: np.log(x.shift(-1) / x))
     out["target_up"] = (out["target_log_return"] > 0).astype(int)
     out["target_close"] = out["Close"] * np.exp(out["target_log_return"])
-    return out
+    out = out.replace([np.inf, -np.inf], np.nan)
+    return out.sort_values("_feature_input_order", kind="stable").drop(columns="_feature_input_order")
