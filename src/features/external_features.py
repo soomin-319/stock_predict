@@ -200,7 +200,7 @@ def add_external_market_features_with_coverage(df: pd.DataFrame, symbols: list[s
         if detail["used"] != sym:
             coverage["fallback_used"] += 1
         coverage["details"].append(detail)
-        ext = ext.merge(_apply_availability_lag(frame, sym), on="Date", how="left")
+        ext = ext.merge(_apply_availability_lag(frame, detail["used"]), on="Date", how="left")
 
     if coverage["successful"] == 0:
         return out, coverage
