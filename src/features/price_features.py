@@ -238,9 +238,7 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     rolling_high_252 = grouped["Close"].transform(lambda x: x.rolling(252, min_periods=20).max())
     prev_rolling_high_252 = grouped["Close"].transform(lambda x: x.shift(1).rolling(252, min_periods=20).max())
     close_to_52w_high = out["Close"] / rolling_high_252.replace(0, np.nan)
-    near_52w_high_flag = (close_to_52w_high >= 0.95).astype(float)
     feature_cols["close_to_52w_high"] = close_to_52w_high
-    feature_cols["near_52w_high_flag"] = near_52w_high_flag
     feature_cols["breakout_52w_flag"] = (out["Close"] >= prev_rolling_high_252.fillna(np.inf)).astype(float)
     top3_positive_count = (
         ((out["turnover_rank_daily"] <= 3) & (out["daily_return"] > 0)).astype(float).groupby(out["Date"]).transform("sum")
@@ -255,8 +253,7 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
         0.35 * out["is_top_turnover_10"]
         + 0.20 * out["disclosure_score"]
         + 0.20 * feature_cols["news_positive_signal"]
-        + 0.15 * feature_cols["smart_money_buy_signal"]
-        + 0.10 * near_52w_high_flag
+        + 0.25 * feature_cols["smart_money_buy_signal"]
     )
     limit_hit_up_flag = (out["daily_return"] >= 0.295).astype(float)
     limit_hit_down_flag = (out["daily_return"] <= -0.295).astype(float)
