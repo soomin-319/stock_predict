@@ -24,7 +24,8 @@ def test_add_external_market_features_handles_multi_column_reset_index_shape(mon
 
     assert coverage["successful"] == 1
     assert "gspc_close" in out.columns
-    assert out["gspc_close"].notna().all()
+    assert pd.isna(out["gspc_close"].iloc[0])
+    assert out["gspc_close"].iloc[1] == 100.0
 
 
 def test_external_download_uses_adjusted_prices_and_retries(monkeypatch):
@@ -48,3 +49,48 @@ def test_external_download_uses_adjusted_prices_and_retries(monkeypatch):
 
     assert calls == [True, True]
     assert out.tolist() == [100.0]
+
+
+def _external_series() -> pd.Series:
+    return pd.Series(
+        [100.0, 101.0],
+        index=pd.DatetimeIndex(["2024-01-02", "2024-01-03"], name="Date"),
+    )
+
+
+def _base_external_dates() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04"]),
+            "Symbol": ["AAA"] * 3,
+        }
+    )
+
+
+def test_overseas_external_features_are_delayed_one_observation(monkeypatch):
+    monkeypatch.setattr(external_features, "_safe_download", lambda symbol, start, end: _external_series())
+
+    out, _ = external_features.add_external_market_features_with_coverage(_base_external_dates(), ["^GSPC"])
+
+    assert pd.isna(out.loc[out["Date"].eq("2024-01-02"), "gspc_close"]).all()
+    assert out.loc[out["Date"].eq("2024-01-03"), "gspc_close"].iloc[0] == 100.0
+
+
+def test_korean_external_features_remain_same_date(monkeypatch):
+    monkeypatch.setattr(external_features, "_safe_download", lambda symbol, start, end: _external_series())
+
+    out, _ = external_features.add_external_market_features_with_coverage(_base_external_dates(), ["^KS11"])
+
+    assert out.loc[out["Date"].eq("2024-01-02"), "ks11_close"].iloc[0] == 100.0
+
+
+def test_external_features_do_not_backfill_leading_dates(monkeypatch):
+    series = pd.Series(
+        [100.0],
+        index=pd.DatetimeIndex(["2024-01-03"], name="Date"),
+    )
+    monkeypatch.setattr(external_features, "_safe_download", lambda symbol, start, end: series)
+
+    out, _ = external_features.add_external_market_features_with_coverage(_base_external_dates(), ["^KS11"])
+
+    assert pd.isna(out.loc[out["Date"].eq("2024-01-02"), "ks11_close"]).all()
