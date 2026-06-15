@@ -94,3 +94,18 @@ def test_external_features_do_not_backfill_leading_dates(monkeypatch):
     out, _ = external_features.add_external_market_features_with_coverage(_base_external_dates(), ["^KS11"])
 
     assert pd.isna(out.loc[out["Date"].eq("2024-01-02"), "ks11_close"]).all()
+
+
+def test_korean_index_us_fallback_is_delayed(monkeypatch):
+    def fake_download(symbol, start, end):
+        if symbol == "^KS11":
+            return pd.Series(dtype=float)
+        return _external_series()
+
+    monkeypatch.setattr(external_features, "_safe_download", fake_download)
+
+    out, coverage = external_features.add_external_market_features_with_coverage(_base_external_dates(), ["^KS11"])
+
+    assert coverage["details"][0]["used"] == "EWY"
+    assert pd.isna(out.loc[out["Date"].eq("2024-01-02"), "ks11_close"]).all()
+    assert out.loc[out["Date"].eq("2024-01-03"), "ks11_close"].iloc[0] == 100.0
