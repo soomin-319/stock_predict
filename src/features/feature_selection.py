@@ -132,7 +132,7 @@ def select_feature_columns(df: pd.DataFrame) -> list[str]:
         c
         for c in df.columns
         if c not in DISPLAY_ONLY_CONTEXT_COLUMNS
-        and (c.startswith(FEATURE_COLUMN_PREFIXES) or c in MODEL_FEATURE_COLUMN_BASE)
+        and (c.startswith(FEATURE_COLUMN_PREFIXES) or c.endswith("_missing") or c in MODEL_FEATURE_COLUMN_BASE)
     ]
 
 

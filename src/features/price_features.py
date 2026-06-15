@@ -32,6 +32,15 @@ WARNING_LEVEL_MAP = {
     "investment_risk": 3.0,
 }
 KRX_PRICE_LIMIT_CHANGE_DATE = pd.Timestamp("2015-06-15")
+NEUTRAL_FEATURE_VALUES = {
+    "rsi_14": 50.0,
+    "stoch_k": 50.0,
+    "stoch_d": 50.0,
+    "macd": 0.0,
+    "macd_signal": 0.0,
+    "macd_hist": 0.0,
+}
+MISSING_INDICATOR_SOURCE_COLUMNS = ("ma_120", "vol_60", "atr_14", "cci_20", "obv_change_5d")
 
 
 def _coerce_numeric_series(df: pd.DataFrame, aliases: list[str], default: float = 0.0) -> pd.Series:
@@ -88,6 +97,10 @@ def _price_limit_pct(df: pd.DataFrame) -> pd.Series:
     if explicit is None:
         return default
     return pd.to_numeric(df[explicit], errors="coerce").fillna(default)
+
+
+def feature_missing_rate_summary(df: pd.DataFrame, columns: list[str]) -> dict[str, float]:
+    return {column: float(df[column].isna().mean()) for column in columns if column in df.columns}
 
 
 def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
@@ -341,4 +354,10 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out["target_up"] = (out["target_log_return"] > 0).astype(int)
     out["target_close"] = out["Close"] * np.exp(out["target_log_return"])
     out = out.replace([np.inf, -np.inf], np.nan)
+    for column in MISSING_INDICATOR_SOURCE_COLUMNS:
+        if column in out.columns:
+            out[f"{column}_missing"] = out[column].isna().astype(float)
+    for column, neutral in NEUTRAL_FEATURE_VALUES.items():
+        if column in out.columns:
+            out[column] = out[column].fillna(neutral)
     return out.sort_values("_feature_input_order", kind="stable").drop(columns="_feature_input_order")

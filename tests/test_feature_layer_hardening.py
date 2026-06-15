@@ -7,7 +7,8 @@ import pytest
 from src.config.settings import FeatureConfig
 from src.config.settings import InvestmentCriteriaConfig
 from src.features.investment_signals import add_investment_signal_features
-from src.features.price_features import build_features
+from src.features.feature_selection import select_feature_columns
+from src.features.price_features import build_features, feature_missing_rate_summary
 from src.features.technical_indicators import compute_technical_indicator_block
 
 
@@ -131,3 +132,28 @@ def test_price_limit_flags_use_explicit_row_override():
     out = build_features(frame, FeatureConfig())
 
     assert out["limit_hit_up_flag"].iloc[1] == 1
+
+
+def test_feature_neutral_values_and_missing_indicators_are_explicit():
+    out = build_features(_price_frame(30), FeatureConfig())
+
+    assert out["rsi_14"].iloc[0] == 50.0
+    assert out["stoch_k"].iloc[0] == 50.0
+    assert out["ma_120_missing"].iloc[0] == 1.0
+    assert "ma_120_missing" in select_feature_columns(out)
+
+
+def test_feature_missing_rate_summary_reports_selected_columns():
+    frame = pd.DataFrame({"ma_120": [np.nan, np.nan], "rsi_14": [50.0, 50.0]})
+
+    summary = feature_missing_rate_summary(frame, ["ma_120", "rsi_14"])
+
+    assert summary["ma_120"] == pytest.approx(1.0)
+    assert summary["rsi_14"] == pytest.approx(0.0)
+
+
+def test_selected_features_never_contain_infinity():
+    out = build_features(_price_frame(30), FeatureConfig())
+    selected = out[select_feature_columns(out)].select_dtypes(include=[np.number])
+
+    assert not np.isinf(selected.to_numpy()).any()

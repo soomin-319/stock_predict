@@ -47,7 +47,7 @@ from src.domain.signal_policy import (
 from src.inference.predict import signal_label_series
 from src.features.external_features import add_external_market_features_with_coverage
 from src.features.investment_signals import add_investment_signal_features
-from src.features.price_features import build_features, select_feature_columns
+from src.features.price_features import build_features, feature_missing_rate_summary, select_feature_columns
 from src.features.regime_features import annotate_market_regime
 from src.models.lgbm_heads import MultiHeadPrediction, MultiHeadStockModel
 from src.pipeline_support import (
@@ -762,6 +762,7 @@ def _write_pipeline_artifacts(
     diagnostics: PipelineDiagnostics,
     report_metadata: dict[str, Any],
     artifact_manager: RunArtifactManager,
+    feature_missing_rates: dict[str, float],
 ) -> dict[str, Any]:
     scored_oof = validation_result["scored_oof"]
     backtest = validation_result["backtest"]
@@ -885,6 +886,8 @@ def _write_pipeline_artifacts(
             status=report_metadata["status"],
             blocking_reasons=report_metadata["blocking_reasons"],
         )
+    diagnostics_report = diagnostics.to_report(coverage_report_summary)
+    diagnostics_report["feature_missing_rates"] = feature_missing_rates
     report = {
         **report_metadata,
         "universe_name": cfg.universe.name,
@@ -912,7 +915,7 @@ def _write_pipeline_artifacts(
             "min_value_traded": cfg.backtest.min_value_traded,
             "status": coverage_gate_status,
         },
-        "diagnostics": diagnostics.to_report(coverage_report_summary),
+        "diagnostics": diagnostics_report,
         "oof_diagnostics": oof_diagnostics,
         "probability_calibration": validation_result["probability_calibration"],
         "prediction_coverage": {
@@ -1079,6 +1082,7 @@ def run_pipeline(
     with diagnostics.time_stage("build_feature_matrix"):
         feat, external_coverage, feature_columns = _build_pipeline_feature_matrix(data, cfg, use_external)
     diagnostics.set_rows("features", feat)
+    feature_missing_rates = feature_missing_rate_summary(feat, feature_columns)
 
     _print_progress(7, total_steps, "Running walk-forward validation")
     _print_progress(8, total_steps, "Evaluating baselines")
@@ -1137,6 +1141,7 @@ def run_pipeline(
             diagnostics=diagnostics,
             report_metadata=report_metadata,
             artifact_manager=artifact_manager,
+            feature_missing_rates=feature_missing_rates,
         )
 
     _print_prediction_console_summary(pred_df)

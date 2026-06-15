@@ -217,6 +217,8 @@ def test_run_pipeline_generates_report_without_graph_artifacts(tmp_path):
     assert "timings_seconds" in diagnostics
     assert "row_counts" in diagnostics
     assert "coverage_summary" in diagnostics
+    assert "feature_missing_rates" in diagnostics
+    assert "ma_120" in diagnostics["feature_missing_rates"]
     assert diagnostics["row_counts"]["raw_input"] > 0
     assert diagnostics["row_counts"]["features"] > 0
     assert diagnostics["row_counts"]["oof_predictions"] > 0
