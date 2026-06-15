@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
+from src.config.settings import FeatureConfig
+from src.features.price_features import build_features
 from src.features.technical_indicators import compute_technical_indicator_block
 
 
@@ -24,3 +27,55 @@ def test_obv_change_is_finite_when_obv_crosses_zero():
     )
 
     assert np.isfinite(block["obv_change_5d"].dropna()).all()
+
+
+def _price_frame(periods: int = 30) -> pd.DataFrame:
+    dates = pd.date_range("2024-01-01", periods=periods, freq="B")
+    return pd.DataFrame(
+        {
+            "Date": dates,
+            "Symbol": ["AAA"] * periods,
+            "Open": np.arange(100.0, 100.0 + periods),
+            "High": np.arange(101.0, 101.0 + periods),
+            "Low": np.arange(99.0, 99.0 + periods),
+            "Close": np.arange(100.0, 100.0 + periods),
+            "Volume": np.arange(1_000.0, 1_000.0 + periods),
+        }
+    )
+
+
+def test_build_features_sorts_for_calculation_and_restores_input_row_order():
+    frame = _price_frame(30)
+    frame["row_id"] = np.arange(len(frame))
+    shuffled = frame.sample(frac=1.0, random_state=7).reset_index(drop=True)
+
+    out = build_features(shuffled, FeatureConfig())
+
+    assert out["row_id"].tolist() == shuffled["row_id"].tolist()
+    row = out.loc[out["Date"].eq(frame["Date"].iloc[1])].iloc[0]
+    assert row["daily_return"] == pytest.approx(frame["Close"].iloc[1] / frame["Close"].iloc[0] - 1)
+
+
+def test_build_features_technical_columns_match_indicator_block():
+    frame = _price_frame(30)
+
+    out = build_features(frame, FeatureConfig())
+    expected = compute_technical_indicator_block(
+        frame,
+        rsi_period=14,
+        stochastic_period=14,
+        cci_period=20,
+    )
+
+    pd.testing.assert_series_equal(out["atr_14"], expected["atr_14"], check_names=False)
+    pd.testing.assert_series_equal(out["obv"], expected["obv"], check_names=False)
+
+
+def test_vol_ratio_20_is_current_volume_over_twenty_day_average():
+    frame = _price_frame(30)
+
+    out = build_features(frame, FeatureConfig())
+
+    assert out["vol_ratio_20"].iloc[-1] == pytest.approx(
+        frame["Volume"].iloc[-1] / frame["Volume"].rolling(20).mean().iloc[-1]
+    )
