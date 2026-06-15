@@ -24,18 +24,41 @@ def test_feature_selection_module_keeps_display_only_context_out_of_model_featur
 
 
 def test_technical_indicators_module_exposes_core_price_helpers():
-    from src.features.technical_indicators import compute_macd, compute_obv, compute_rsi, rolling_zscore
+    from src.features.technical_indicators import (
+        compute_atr,
+        compute_macd,
+        compute_obv,
+        compute_rsi,
+        compute_technical_indicator_block,
+        rolling_zscore,
+    )
 
     close = pd.Series([10.0, 11.0, 10.0, 12.0, 13.0])
     volume = pd.Series([100.0, 120.0, 130.0, 140.0, 150.0])
+    frame = pd.DataFrame(
+        {
+            "High": close + 1.0,
+            "Low": close - 1.0,
+            "Close": close,
+            "Volume": volume,
+        }
+    )
 
     rsi = compute_rsi(close, period=3)
     macd, signal, hist = compute_macd(close)
     obv = compute_obv(close, volume)
     zscore = rolling_zscore(close, window=3)
+    block = compute_technical_indicator_block(
+        frame,
+        rsi_period=3,
+        stochastic_period=3,
+        cci_period=3,
+    )
 
     assert len(rsi) == len(close)
     assert len(macd) == len(signal) == len(hist) == len(close)
     assert obv.iloc[0] == 0.0
     assert obv.iloc[-1] == 280.0
     assert np.isfinite(zscore.fillna(0.0)).all()
+    pd.testing.assert_series_equal(block["atr_14"], compute_atr(frame["High"], frame["Low"], close), check_names=False)
+    pd.testing.assert_series_equal(block["obv"], obv, check_names=False)
