@@ -14,6 +14,7 @@ _LOGGER = logging.getLogger(__name__)
 _YF = None
 MAX_DOWNLOAD_ATTEMPTS = 3
 _sleep = time.sleep
+SAME_DATE_EXTERNAL_SYMBOLS = frozenset({"^KS11", "^KQ11"})
 
 
 def _get_yfinance():
@@ -153,6 +154,15 @@ def _download_external_symbol(sym: str, start: str, end: str) -> tuple[str, dict
     return sym, {"symbol": sym, "status": "ok", "used": used_candidate}, e
 
 
+def _apply_availability_lag(frame: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    if symbol in SAME_DATE_EXTERNAL_SYMBOLS:
+        return frame
+    out = frame.copy()
+    value_columns = [column for column in out.columns if column != "Date"]
+    out[value_columns] = out[value_columns].shift(1)
+    return out
+
+
 
 def add_external_market_features_with_coverage(df: pd.DataFrame, symbols: list[str]) -> tuple[pd.DataFrame, dict]:
     out = df.copy()
@@ -190,12 +200,12 @@ def add_external_market_features_with_coverage(df: pd.DataFrame, symbols: list[s
         if detail["used"] != sym:
             coverage["fallback_used"] += 1
         coverage["details"].append(detail)
-        ext = ext.merge(frame, on="Date", how="left")
+        ext = ext.merge(_apply_availability_lag(frame, detail["used"]), on="Date", how="left")
 
     if coverage["successful"] == 0:
         return out, coverage
 
-    ext = ext.sort_values("Date").ffill().bfill()
+    ext = ext.sort_values("Date").ffill()
     out = out.merge(ext, on="Date", how="left")
     return out, coverage
 
