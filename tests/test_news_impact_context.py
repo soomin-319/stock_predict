@@ -1,10 +1,15 @@
 ﻿import json
+import types
 from pathlib import Path
 
 import pandas as pd
 
 from src.domain.signal_policy import recommendation_from_signal
-from src.reports.news_impact_context import append_generated_news_impact_context, append_news_impact_context
+from src.reports.news_impact_context import (
+    append_generated_news_impact_context,
+    append_llm_news_impact_context,
+    append_news_impact_context,
+)
 from src.reports.result_formatter import build_result_simple
 from src.pipeline import _classify_context_export
 
@@ -215,3 +220,76 @@ def test_result_simple_includes_news_impact_display_columns_when_available():
     assert simple.loc[0, "뉴스/공시 영향 점수"] == "+42.0점"
     assert simple.loc[0, "뉴스/공시 영향 요약"] == "HBM 수요 증가"
     assert simple.loc[0, "뉴스/공시 영향 참고"] == "참고용"
+
+
+def _gemma_pred_df() -> pd.DataFrame:
+    return pd.DataFrame([{"Date": "2026-06-16", "Symbol": "005930.KS", "종목명": "삼성전자"}])
+
+
+def _gemma_context_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Date": "2026-06-16",
+                "Symbol": "005930.KS",
+                "source_type": "news",
+                "title": "삼성전자 HBM 공급계약",
+                "published_at": "2026-06-16T09:30:00+09:00",
+                "provider": "naver",
+                "url": "https://news.example/1",
+                "raw_id": "n1",
+            }
+        ]
+    )
+
+
+def test_append_llm_news_impact_uses_report_json(tmp_path):
+    def fake_run(inputs):
+        report = Path(inputs.output_dir) / "report.json"
+        report.write_text(
+            json.dumps(
+                {
+                    "rows": [
+                        {
+                            "date": "2026-06-16",
+                            "ticker": "005930",
+                            "news_disclosure_score": 42.0,
+                            "top_reason": "공급계약",
+                            "event_count": 1,
+                            "risk_flags": "llm_judged",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        return types.SimpleNamespace(artifact_paths={"report.json": report})
+
+    out = append_llm_news_impact_context(
+        _gemma_pred_df(),
+        _gemma_context_df(),
+        llm_config_path="configs/news_impact.gemma.example.json",
+        symbols=["005930.KS"],
+        symbol_name_map={"005930.KS": "삼성전자"},
+        run_date="2026-06-16",
+        _run_daily_pipeline=fake_run,
+    )
+    assert "news_impact_final_score" in out.columns
+    assert float(out.iloc[0]["news_impact_final_score"]) == 42.0
+
+
+def test_append_llm_news_impact_falls_back_on_error():
+    def boom(inputs):
+        raise RuntimeError("gemma server down")
+
+    out = append_llm_news_impact_context(
+        _gemma_pred_df(),
+        _gemma_context_df(),
+        llm_config_path="configs/news_impact.gemma.example.json",
+        symbols=["005930.KS"],
+        symbol_name_map={"005930.KS": "삼성전자"},
+        run_date="2026-06-16",
+        _run_daily_pipeline=boom,
+    )
+    # 폴백: 규칙 기반 표시 컬럼이 생성됨
+    assert "뉴스/공시 영향 점수" in out.columns
