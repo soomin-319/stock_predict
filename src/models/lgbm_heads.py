@@ -10,7 +10,13 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 
-MODEL_ARTIFACT_VERSION = 1
+MODEL_ARTIFACT_VERSION = 2
+NEUTRAL_FEATURE_DEFAULTS: dict[str, float] = {
+    "rsi_14": 50.0,
+    "stoch_k": 50.0,
+    "stoch_d": 50.0,
+    "cci_20": 0.0,
+}
 
 
 def _validate_quantiles(quantiles: List[float]) -> list[float]:
@@ -87,6 +93,7 @@ class MultiHeadStockModel:
         self.use_gpu = use_gpu
         self.head_n_jobs = 1 if head_n_jobs is None else int(head_n_jobs or 1)
         self._feature_columns: List[str] = []
+        self._feature_imputer_values: Dict[str, float] = {}
         self.reg_model = None
         self.cls_model = None
         self.quantile_models: Dict[float, Any] = {}
@@ -141,13 +148,53 @@ class MultiHeadStockModel:
             max_depth=3,
         )
 
+    def _compute_feature_imputer_values(self, df: pd.DataFrame, feature_columns: List[str]) -> Dict[str, float]:
+        values: Dict[str, float] = {}
+        for column in feature_columns:
+            if column in NEUTRAL_FEATURE_DEFAULTS:
+                values[column] = NEUTRAL_FEATURE_DEFAULTS[column]
+                continue
+            series = pd.to_numeric(df[column], errors="coerce")
+            median = series.median()
+            if pd.isna(median):
+                values[column] = 0.0
+            else:
+                values[column] = float(median)
+        return values
+
+    def _impute_features(self, frame: pd.DataFrame) -> pd.DataFrame:
+        x = frame[self._feature_columns].copy()
+        for column in self._feature_columns:
+            x[column] = pd.to_numeric(x[column], errors="coerce").fillna(self._feature_imputer_values.get(column, 0.0))
+        return x
+
     def fit(self, df: pd.DataFrame, feature_columns: List[str], quantiles: List[float]):
         quantiles = _validate_quantiles(quantiles)
-        train = df.dropna(subset=feature_columns + ["target_log_return", "target_up"])
-        x = train[feature_columns]
-        y_reg = train["target_log_return"]
+        if not feature_columns:
+            raise ValueError("feature_columns must contain at least one feature.")
+        missing = [c for c in feature_columns if c not in df.columns]
+        if missing:
+            raise ValueError(
+                f"Training data is missing {len(missing)} feature columns: {missing[:5]}{'...' if len(missing) > 5 else ''}"
+            )
+        required_targets = ["target_log_return", "target_up"]
+        missing_targets = [c for c in required_targets if c not in df.columns]
+        if missing_targets:
+            raise ValueError(f"Training data is missing target columns: {missing_targets}")
+
+        target_ready = df.dropna(subset=required_targets).copy()
+        usable_mask = target_ready[feature_columns].notna().any(axis=1)
+        train = target_ready[usable_mask].copy()
+        if train.empty:
+            raise ValueError("No usable training rows after dropping missing targets and all-missing feature rows.")
         y_cls = train["target_up"]
-        self._feature_columns = feature_columns
+        if y_cls.nunique(dropna=True) < 2:
+            raise ValueError("target_up must contain at least two classes for classification training.")
+
+        self._feature_columns = list(feature_columns)
+        self._feature_imputer_values = self._compute_feature_imputer_values(target_ready, self._feature_columns)
+        x = self._impute_features(train)
+        y_reg = train["target_log_return"]
 
         # 모든 독립 모델 학습 태스크를 수집한다.
         tasks: list[tuple] = [
@@ -180,7 +227,7 @@ class MultiHeadStockModel:
                 f"{missing[:5]}{'...' if len(missing) > 5 else ''}"
             )
 
-        x = df[self._feature_columns].copy().fillna(0)
+        x = self._impute_features(df)
 
         predicted_return = self.reg_model.predict(x)
         up_probability = self.cls_model.predict_proba(x)[:, 1]
@@ -191,12 +238,20 @@ class MultiHeadStockModel:
             raise RuntimeError(
                 f"MultiHeadPrediction requires at least 3 quantile heads, got {len(quantiles)}: {quantiles}"
             )
+        selected = np.vstack(
+            [
+                q_preds[quantiles[0]],
+                q_preds[quantiles[len(quantiles) // 2]],
+                q_preds[quantiles[-1]],
+            ]
+        ).T
+        selected = np.sort(selected, axis=1)
         return MultiHeadPrediction(
             predicted_return=predicted_return,
             up_probability=up_probability,
-            quantile_low=q_preds[quantiles[0]],
-            quantile_mid=q_preds[quantiles[len(quantiles) // 2]],
-            quantile_high=q_preds[quantiles[-1]],
+            quantile_low=selected[:, 0],
+            quantile_mid=selected[:, 1],
+            quantile_high=selected[:, 2],
         )
 
     def _feature_columns_hash(self) -> str:
@@ -214,8 +269,30 @@ class MultiHeadStockModel:
             "use_gpu": self.use_gpu,
             "feature_count": len(self._feature_columns),
             "feature_hash": self._feature_columns_hash() if self._feature_columns else None,
+            "imputer_feature_count": len(self._feature_imputer_values),
             "quantiles": sorted(self.quantile_models.keys()),
         }
+
+    def feature_importance_frame(self) -> pd.DataFrame:
+        rows: list[dict[str, Any]] = []
+
+        def _append(head: str, model: Any) -> None:
+            values = getattr(model, "feature_importances_", None)
+            if values is None:
+                values = getattr(model, "coef_", None)
+            if values is None:
+                return
+            arr = np.asarray(values, dtype=float).reshape(-1)
+            if len(arr) != len(self._feature_columns):
+                return
+            for feature, importance in zip(self._feature_columns, arr):
+                rows.append({"head": head, "feature": feature, "importance": float(importance)})
+
+        _append("regression", self.reg_model)
+        _append("classification", self.cls_model)
+        for quantile, model in sorted(self.quantile_models.items()):
+            _append(f"quantile_{quantile:g}", model)
+        return pd.DataFrame(rows, columns=["head", "feature", "importance"])
 
     def save(self, path: str | Path) -> Path:
         """Persist a fitted model to disk with metadata for reproducibility.
@@ -237,6 +314,7 @@ class MultiHeadStockModel:
             "head_n_jobs": self.head_n_jobs,
             "use_gpu": self.use_gpu,
             "feature_columns": list(self._feature_columns),
+            "feature_imputer_values": dict(self._feature_imputer_values),
             "feature_hash": self._feature_columns_hash(),
             "reg_model": self.reg_model,
             "cls_model": self.cls_model,
@@ -268,6 +346,11 @@ class MultiHeadStockModel:
         )
         model.backend = payload.get("backend", model.backend)
         model._feature_columns = list(payload["feature_columns"])
+        model._feature_imputer_values = {
+            str(key): float(value) for key, value in payload.get("feature_imputer_values", {}).items()
+        }
+        if not model._feature_imputer_values:
+            model._feature_imputer_values = {column: 0.0 for column in model._feature_columns}
         model.reg_model = payload["reg_model"]
         model.cls_model = payload["cls_model"]
         model.quantile_models = payload.get("quantile_models", {})

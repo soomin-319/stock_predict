@@ -34,7 +34,7 @@ def build_prediction_frame(
     out["predicted_return"] = np.expm1(out["predicted_log_return"]) * 100.0
     out["predicted_close"] = out["Close"] * np.exp(out["predicted_log_return"])
     out["up_probability"] = pred.up_probability
-    out["uncertainty_width"] = pred.quantile_high - pred.quantile_low
+    out["uncertainty_width"] = np.maximum(pred.quantile_high - pred.quantile_low, 0.0)
     out["uncertainty_band"] = pd.Series(pred.quantile_low, index=out.index).map(lambda v: f"{float(v):.3f}") + " ~ " + pd.Series(pred.quantile_high, index=out.index).map(lambda v: f"{float(v):.3f}")
 
     out["rel_strength"] = percentile_score(out["predicted_log_return"]) - 0.5

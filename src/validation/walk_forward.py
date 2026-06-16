@@ -53,6 +53,11 @@ def _iter_folds(df: pd.DataFrame, cfg: TrainingConfig):
         valid_start_date = dates[valid_start_idx]
 
         train_df = df[df["Date"] <= train_end_date]
+        lookback = max(0, int(getattr(cfg, "walk_forward_lookback_days", 0) or 0))
+        if lookback > 0:
+            train_dates = sorted(pd.Series(train_df["Date"].dropna().unique()))
+            cutoff_dates = train_dates[-lookback:]
+            train_df = train_df[train_df["Date"].isin(cutoff_dates)]
         valid_df = df[(df["Date"] >= valid_start_date) & (df["Date"] <= valid_end_date)]
         if valid_df.empty:
             continue

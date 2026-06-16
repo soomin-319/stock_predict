@@ -49,6 +49,8 @@ class TrainingConfig:
     embargo_days: int = 0
     # 최종 모델 학습에 사용할 최근 거래일 수 (0 = 전체 히스토리 사용)
     final_model_lookback_days: int = 252 * 3
+    # Walk-forward 학습에 사용할 최근 거래일 수 (0 = 확장창)
+    walk_forward_lookback_days: int = 0
 
 
 @dataclass
@@ -136,7 +138,7 @@ def _validate_ratio(value, path: str) -> None:
 def _validate_app_config(cfg: AppConfig) -> None:
     for name in ("min_train_size", "test_size", "step_size"):
         _validate_positive(getattr(cfg.training, name), f"training.{name}")
-    for name in ("purge_gap_days", "embargo_days", "final_model_lookback_days"):
+    for name in ("purge_gap_days", "embargo_days", "final_model_lookback_days", "walk_forward_lookback_days"):
         _validate_positive(getattr(cfg.training, name), f"training.{name}", allow_zero=True)
     quantiles = cfg.training.quantiles
     valid_quantile_values = isinstance(quantiles, list) and all(
