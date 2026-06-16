@@ -304,3 +304,22 @@ def test_pipeline_accepts_news_impact_llm_config_flag():
     args = parser.parse_args(["--news-impact-llm-config", "configs/news_impact.gemma.example.json"])
     assert args.news_impact_llm_config == "configs/news_impact.gemma.example.json"
     assert "news_impact_llm_config" in signature(run_pipeline).parameters
+
+
+def test_append_llm_news_impact_falls_back_on_empty_report(tmp_path):
+    def fake_run_empty(inputs):
+        report = Path(inputs.output_dir) / "report.json"
+        report.write_text(json.dumps({"rows": []}), encoding="utf-8")
+        return types.SimpleNamespace(artifact_paths={"report.json": report})
+
+    out = append_llm_news_impact_context(
+        _gemma_pred_df(),
+        _gemma_context_df(),
+        llm_config_path="configs/news_impact.gemma.example.json",
+        symbols=["005930.KS"],
+        symbol_name_map={"005930.KS": "삼성전자"},
+        run_date="2026-06-16",
+        _run_daily_pipeline=fake_run_empty,
+    )
+    # gemma가 유효 row를 못 내면(서버 다운 등) 규칙 기반으로 폴백
+    assert "뉴스/공시 영향 점수" in out.columns

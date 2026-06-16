@@ -192,7 +192,12 @@ def append_llm_news_impact_context(
                 )
             )
             report_path = result.artifact_paths["report.json"]
-            return append_news_impact_context(pred_df, report_path)
+            scored = append_news_impact_context(pred_df, report_path)
+            if "news_impact_final_score" not in scored.columns:
+                # gemma가 유효 row를 못 냄(서버 다운 시 모든 판정 실패 등) -> 규칙 기반 폴백
+                print("[NEWS IMPACT][gemma] 유효 결과 없음 → 규칙 기반 폴백")
+                return append_generated_news_impact_context(pred_df, context_raw_df)
+            return scored
     except Exception as exc:  # server/alias/timeout/schema validation -> rule-based fallback
         print(f"[NEWS IMPACT][gemma] 실패 → 규칙 기반 폴백: {type(exc).__name__}: {exc}")
         return append_generated_news_impact_context(pred_df, context_raw_df)

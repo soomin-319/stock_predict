@@ -41,3 +41,10 @@ def test_news_impact_runtime_examples_keep_openai_default_and_gemma_option():
     assert "OPENAI_API_KEY" not in openai_example
     assert '"llm_provider": "llama_cpp"' in gemma_example
     assert '"llm_model": "gemma-4-26b-a4b"' in gemma_example
+
+
+def test_news_impact_llm_prompt_asset_is_vendored():
+    from pathlib import Path
+
+    # impact_judge.build_system_prompt()가 런타임에 읽는 필수 자산. 머지 시 누락 방지.
+    assert Path("docs/NEWS_IMPACT_LLM_PROMPT.md").exists()

@@ -135,6 +135,19 @@ Copy-Item configs/news_impact.example.json configs/news_impact.json
 stock-news-impact --help
 ```
 
+### On-demand gemma news-impact (챗봇)
+
+요청 종목 예측 시 뉴스/공시 임팩트를 로컬 gemma로 판정하도록 연결할 수 있다.
+
+1. 로컬 llama.cpp로 `gemma-4-26b-a4b`를 `http://localhost:8001/v1`에 서빙.
+2. 연결 확인:
+   ```bash
+   python -m src.news_impact.run llm-smoke --config configs/news_impact.gemma.example.json
+   ```
+   `{"status": "ok", ...}` 이면 정상.
+3. 챗봇 구성에서 `PipelineRuntimeConfig(news_impact_llm_config="configs/news_impact.gemma.example.json")` 설정.
+4. 이후 단일 종목 예측 / "최신화" 시 gemma로 임팩트를 판정한다. 서버 무응답·오류 시 규칙 기반으로 자동 폴백하며, 부트스트랩(전 종목 prewarm)은 규칙 기반을 유지한다. 산출 점수는 표시용이며 `predicted_return`·추천·신호 정책을 바꾸지 않는다.
+
 ## Environment Variables
 
 - `OPENAI_API_KEY`, `OPENAI_MODEL`: issue/news summary generation; `src.news_impact` also uses `OPENAI_API_KEY` by default.
