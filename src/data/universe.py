@@ -14,7 +14,7 @@ def load_universe_symbols_list(path: str | Path) -> list[str]:
     if not p.exists():
         raise FileNotFoundError(f"Universe file not found: {path}")
 
-    df = pd.read_csv(p)
+    df = pd.read_csv(p, encoding="utf-8-sig")
     if "Symbol" not in df.columns:
         raise ValueError("Universe CSV must include 'Symbol' column")
 

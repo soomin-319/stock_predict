@@ -228,11 +228,18 @@ class KakaoColabPredictionBot:
         self._bootstrap_formatter_guard()
 
     def _load_latest_manifest(self) -> dict[str, Any] | None:
-        path = self.result_root / "latest" / "manifest.json"
+        pointer_path = self.result_root / "latest_manifest.json"
         try:
+            pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+            run_id = str(pointer["run_id"])
+            path = self.result_root / "runs" / run_id / "manifest.json"
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
-            return None
+        except (FileNotFoundError, OSError, json.JSONDecodeError, KeyError):
+            path = self.result_root / "latest" / "manifest.json"
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, OSError, json.JSONDecodeError):
+                return None
         return payload if isinstance(payload, dict) else None
 
     @staticmethod
@@ -272,9 +279,15 @@ class KakaoColabPredictionBot:
                 for item in manifest.get("artifacts", [])
                 if isinstance(item, dict)
             }
-            latest_path = self.result_root / "latest" / relative_path
-            if relative_path in declared and latest_path.exists():
-                return latest_path
+            if relative_path in declared:
+                run_id = str(manifest.get("run_id", ""))
+                if run_id and "/" not in run_id and "\\" not in run_id and ".." not in run_id:
+                    run_path = self.result_root / "runs" / run_id / relative_path
+                    if run_path.exists():
+                        return run_path
+                latest_path = self.result_root / "latest" / relative_path
+                if latest_path.exists():
+                    return latest_path
         if manifest is None and self._legacy_result_is_operational(legacy_path):
             return legacy_path
         return self.result_root / ".unavailable" / Path(relative_path).name
@@ -1096,7 +1109,7 @@ class KakaoColabPredictionBot:
         if not path.exists():
             return []
         try:
-            df = pd.read_csv(path)
+            df = pd.read_csv(path, encoding="utf-8-sig")
         except Exception as exc:
             self._console_log(f"KRX 심볼 맵 로드 실패: {path} ({exc})")
             return []

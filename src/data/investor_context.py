@@ -59,7 +59,7 @@ def _load_dart_corp_map(path: str | None) -> dict[str, str]:
     if not path:
         return {}
     try:
-        df = pd.read_csv(path)
+        df = pd.read_csv(path, encoding="utf-8-sig")
     except Exception:
         return {}
     if "Symbol" not in df.columns or "corp_code" not in df.columns:

@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from src.reports.run_artifacts import RunArtifactManager
+from src.reports.run_artifacts import RunArtifactManager, resolve_latest_run_dir
 
 
 def _metadata(run_id: str, *, environment: str = "production", data_mode: str = "real") -> dict:
@@ -94,3 +94,11 @@ def test_unknown_status_cannot_promote_latest(tmp_path: Path):
 def test_run_id_cannot_escape_runs_directory(tmp_path: Path):
     with pytest.raises(ValueError, match="unsafe run_id"):
         RunArtifactManager(tmp_path, _metadata("../outside"))
+
+
+def test_latest_pointer_resolves_promoted_run_directory(tmp_path: Path):
+    manager = RunArtifactManager(tmp_path, _metadata("run-1"))
+    _write_required(manager, "one")
+    manager.finalize()
+
+    assert resolve_latest_run_dir(tmp_path) == tmp_path / "runs" / "run-1"

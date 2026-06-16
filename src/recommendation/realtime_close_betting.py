@@ -82,9 +82,9 @@ class RealTimeCloseBettingRecommendationService:
 
     def _load_default_symbols(self, universe_csv: str | Path | None, universe_limit: int) -> pd.DataFrame:
         if universe_csv is None:
-            df = pd.read_csv(DEFAULT_UNIVERSE_CSV) if DEFAULT_UNIVERSE_CSV.exists() else pd.DataFrame()
+            df = pd.read_csv(DEFAULT_UNIVERSE_CSV, encoding="utf-8-sig") if DEFAULT_UNIVERSE_CSV.exists() else pd.DataFrame()
         else:
-            df = pd.read_csv(Path(universe_csv))
+            df = pd.read_csv(Path(universe_csv), encoding="utf-8-sig")
         if df is None or df.empty or "Symbol" not in df.columns:
             return pd.DataFrame(columns=["Symbol", "Name", "Market", "Bucket"])
         if "Market" in df.columns:

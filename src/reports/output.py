@@ -115,8 +115,14 @@ def print_pipeline_prediction_console_summary(pred_df: pd.DataFrame) -> None:
     format_prediction_console_summary(out)
 
 
-def drop_empty_detail_columns(detail_df: pd.DataFrame) -> pd.DataFrame:
-    """Drop optional detail columns that are entirely empty in current run outputs."""
+def drop_empty_detail_columns(
+    detail_df: pd.DataFrame,
+    *,
+    prune_empty_optional: bool = False,
+) -> pd.DataFrame:
+    """Keep detail schema stable; optionally prune empty optional columns for legacy callers."""
+    if not prune_empty_optional:
+        return detail_df
     optional_cols = [
         "foreign_net_buy",
         "institution_net_buy",
@@ -157,7 +163,7 @@ def drop_empty_detail_columns(detail_df: pd.DataFrame) -> pd.DataFrame:
                 drop_cols.append(col)
             continue
         normalized = series.astype(str).str.strip()
-        non_empty = normalized[~normalized.isin({"", "-", "nan", "None"})]
+        non_empty = normalized[~normalized.isin({"", "-", "nan", "NaN", "None", "<NA>", "NA", "null"})]
         if non_empty.empty:
             drop_cols.append(col)
     if not drop_cols:
@@ -191,7 +197,7 @@ def build_combined_symbol_results(pred_df: pd.DataFrame, summary_csv: str | None
     if pred_df.empty or not summary_csv:
         return None
     try:
-        summary = pd.read_csv(summary_csv)
+        summary = pd.read_csv(summary_csv, encoding="utf-8-sig")
     except Exception:
         return None
 

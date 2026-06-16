@@ -22,6 +22,7 @@ REQUIRED_ARTIFACTS = (
     "pm_report.json",
     "pipeline_report.json",
 )
+LATEST_POINTER = "latest_manifest.json"
 
 COMPATIBILITY_COPIES = {
     "csv/result_simple.csv": "result_simple.csv",
@@ -95,6 +96,38 @@ def _copy_compatibility_files(result_root: Path) -> None:
         temp.replace(target)
 
 
+def _write_latest_pointer(result_root: Path, manifest: dict[str, Any]) -> None:
+    run_id = str(manifest["run_id"])
+    payload = {
+        "run_id": run_id,
+        "run_dir": f"runs/{run_id}",
+        "manifest_path": f"runs/{run_id}/manifest.json",
+        "promoted_at": datetime.now(timezone.utc).isoformat(),
+    }
+    atomic_write_text(
+        result_root / LATEST_POINTER,
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def resolve_latest_run_dir(result_root: Path) -> Path | None:
+    pointer_path = Path(result_root) / LATEST_POINTER
+    try:
+        pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+        run_id = str(pointer["run_id"])
+    except Exception:
+        try:
+            pointer = json.loads((Path(result_root) / "latest" / "manifest.json").read_text(encoding="utf-8"))
+            run_id = str(pointer["run_id"])
+        except Exception:
+            return None
+    if not SAFE_RUN_ID_PATTERN.fullmatch(run_id):
+        return None
+    run_dir = Path(result_root) / "runs" / run_id
+    return run_dir if run_dir.exists() else None
+
+
 class RunArtifactManager:
     def __init__(self, result_root: Path, metadata: dict[str, Any]):
         self.result_root = Path(result_root)
@@ -156,8 +189,15 @@ class RunArtifactManager:
         self.write_json("manifest.json", manifest)
         if promotable:
             _replace_directory(self.run_dir, self.result_root / "latest")
+            _write_latest_pointer(self.result_root, manifest)
             _copy_compatibility_files(self.result_root)
         return manifest
 
 
-__all__ = ["COMPATIBILITY_COPIES", "REQUIRED_ARTIFACTS", "RunArtifactManager"]
+__all__ = [
+    "COMPATIBILITY_COPIES",
+    "LATEST_POINTER",
+    "REQUIRED_ARTIFACTS",
+    "RunArtifactManager",
+    "resolve_latest_run_dir",
+]
