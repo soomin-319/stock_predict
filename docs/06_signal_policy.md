@@ -1,13 +1,16 @@
 # 06. 시그널 정책 및 추천
 
-예측 결과를 매수/매도/관망 추천으로 변환하는 정책 레이어.
+예측 결과를 매수/매도/관망 추천으로 변환하는 정책 레이어. 이 프로젝트의 모든 출력은 리서치/운영 지원용이며 투자 조언이나 자동매매 시스템이 아니다.
+
+> 핵심 원칙: 매수/매도/관망 결정은 다음날 예상 수익률인 `predicted_return`만 사용한다. 뉴스, 공시, `news_impact_*`, 이벤트 부스트는 표시·진단·정렬 보조 정보이며 추천 결정을 바꾸면 안 된다.
 
 ## 모듈 구성
 
 | 모듈 | 역할 |
 |------|------|
-| `src/domain/signal_policy.py` | 핵심 추천 정책 및 이벤트 부스트 |
-| `src/inference/predict.py` | 시그널 레이블 생성 |
+| `src/domain/signal_policy.py` | 핵심 추천 정책, 이벤트 부스트, 리스크/PM 요약 필드 |
+| `src/inference/predict.py` | 예측 프레임과 시그널 레이블 생성 |
+| `src/pipeline_support.py` | 최신 예측 프레임 조립 및 정책 프레임 마무리 |
 | `src/recommendation/close_betting.py` | 종가 베팅 추천 메시지 포맷 |
 | `src/recommendation/realtime_close_betting.py` | 실시간 종가 추천 서비스 |
 
@@ -18,7 +21,6 @@
 ### 핵심 규칙
 
 ```python
-# src/domain/signal_policy.py:34
 def recommendation_from_signal(
     signal_score, predicted_return, up_probability=None, uncertainty_score=None
 ) -> str:
@@ -29,15 +31,13 @@ def recommendation_from_signal(
     return "관망"
 ```
 
-**추천 결정 기준은 `predicted_return`(다음날 예상 수익률 %)만 사용한다.**
-
 | 조건 | 추천 |
 |------|------|
 | `predicted_return > 2.0%` | 매수 |
 | `predicted_return <= -2.0%` | 매도 |
-| 그 외 | 관망 |
+| 그 외 또는 결측 | 관망 |
 
-`signal_score`, `up_probability`, 뉴스, 공시 등은 **지원 진단 정보**이며 추천 결정에 영향을 주지 않는다.
+`signal_score`, `up_probability`, `uncertainty_score`, 뉴스, 공시, 이벤트 부스트는 추천 결정에 영향을 주지 않는다.
 
 ---
 
@@ -45,68 +45,85 @@ def recommendation_from_signal(
 
 ```python
 signal_score = (
-    return_weight    × norm_return        # 예상 수익률 정규화
-  + up_prob_weight   × up_probability     # 상승 확률
-  + rel_strength_weight × rel_strength   # 상대 강도
-  - uncertainty_penalty × uncertainty_score  # 불확실성 패널티
-  + event_boost_score                    # 이벤트 부스트 (아래 참조)
+    return_weight × norm_return
+  + up_prob_weight × up_probability
+  + rel_strength_weight × rel_strength
+  - uncertainty_penalty × uncertainty_score
+  + event_boost_score
 )
 ```
 
-시그널 점수는 종목 **순위** 결정에 사용된다 (백테스트 Top-K 선택).
+시그널 점수는 종목 **순위**, Top-K 선택, 진단 표시용이다. 추천 라벨(매수/매도/관망)의 근거가 아니다.
 
 ### 신뢰도 점수 (`confidence_score`)
 
-```python
-# src/domain/signal_policy.py:56
-def confidence_label(confidence_score: float) -> str:
-    if c >= 0.80: return "신뢰도 높음"
-    if c >= 0.60: return "신뢰도 보통"
-    return "신뢰도 낮음"
-```
+실제 코드의 `confidence_label`은 4단계다.
+
+| 조건 | 라벨 |
+|------|------|
+| `confidence_score >= 0.80` | `신뢰도 매우 높음` |
+| `confidence_score >= 0.67` | `신뢰도 높음` |
+| `confidence_score >= 0.34` | `신뢰도 보통` |
+| 그 외 | `신뢰도 낮음` |
+| 결측 | `신뢰도 보통` |
 
 ---
 
 ## 이벤트 부스트 (`vectorized_event_signal_boost`)
 
-```python
-# src/domain/signal_policy.py
-def vectorized_event_signal_boost(pred_df: pd.DataFrame) -> pd.DataFrame
-```
-
-특정 이벤트 조건에 따라 `event_boost_score`를 계산한다:
+특정 시장/수급/기술 조건에 따라 `event_boost_score`를 계산한다. 부스트와 패널티는 **누적 가산**이다.
 
 | 이벤트 | 부스트/패널티 | 조건 |
 |--------|--------------|------|
-| 거래대금 상위 3위 | +0.05 | `is_top_turnover_3 == 1` |
-| 외국인+기관 동시 순매수 | +0.04 | 두 흐름 모두 양수 |
-| 고확신 동시 순매수 (1,000억↑) | +0.08 | 외국인+기관 각각 1,000억 이상 |
-| 강성 동시 순매수 | +0.06 | 두 흐름 합계 대규모 |
-| 섹터 리더 확인 | +0.05 | 동행 상승 종목 N개 이상 |
-| 52주 신고가 근접 | +0.03 | 종가 ≥ 52주 고가 × 0.97 |
-| RSI 풀백 | +0.02 | RSI 30~35 구간 |
-| NASDAQ 강한 테일윈드 | +0.06 | 나스닥 선물 +1% 이상 |
-| NASDAQ 강한 헤드윈드 | -0.12 | 나스닥 선물 -1% 이하 |
-| RSI 과매수 | -0.08 | RSI ≥ 70 |
+| 거래대금 상위 3위 | `+0.05` | `turnover_rank_daily <= 3` |
+| 거래대금 상위권 | `+0.04` | `turnover_rank_daily <= top_turnover_rank`(기본 15) |
+| 외국인+기관 동시 순매수 | `+0.04` | 두 흐름 모두 양수 |
+| 강한 동시 순매수 | `+0.06` | 외국인·기관 각각 `high_conviction_net_buy_krw` 이상 |
+| 상위 거래대금+강한 동시 순매수 결합 | `+0.08` | 상위권 거래대금이며 강한 동시 순매수 |
+| 섹터 리더 확인 | `+0.05` | `leader_confirmation_flag > 0` |
+| 52주 신고가 근접/돌파 | `+0.03` | `near_52w_high_flag > 0` 또는 `breakout_52w_flag > 0` |
+| RSI 풀백 | `+0.02` | RSI 30~35 기본 구간 |
+| NASDAQ 양수 테일윈드 | `+0.03` | `nq_f_ret_1d > 0` |
+| NASDAQ 강한 테일윈드 | `+0.06` | `nq_f_ret_1d >= 0.01` 기본 |
+| NASDAQ 강한 헤드윈드 | `-0.12` | `nq_f_ret_1d <= -0.01` 기본 |
+| RSI 과매수 | `-0.08` | RSI 70 이상 기본 |
+
+### 누적 규칙 예시
+
+- 거래대금 1~3위는 `상위 3위(+0.05)`와 `상위권(+0.04)`가 함께 적용되어 거래대금 조건만으로 `+0.09`가 된다.
+- 강한 동시 순매수는 `동시 순매수(+0.04)`, `강한 동시 순매수(+0.06)`, 조건 충족 시 `상위 거래대금+강한 동시 순매수(+0.08)`가 함께 쌓일 수 있다.
+- NASDAQ 수익률이 `+1%` 이상이면 양수 테일윈드 `+0.03`과 강한 테일윈드 `+0.06`이 함께 적용된다.
+
+### 중복 적용 방지
+
+`vectorized_event_signal_boost`는 `event_boost_score`가 이미 있는 프레임을 다시 받을 수 있다. 이 경우 기존 부스트를 `signal_score`에서 빼고 새 부스트를 더해, 최신 예측 경로에서 이벤트 부스트가 두 번 들어가지 않도록 한다.
+
+---
+
+## 52주 신고가 근접 기준
+
+`near_52w_high_flag`는 `src/features/investment_signals.py`에서 설정 기반으로 생성한다.
+
+```python
+distance_to_52w_high = 1.0 - close_to_52w_high
+near_52w_high_flag = distance_to_52w_high <= near_52w_distance_threshold
+```
+
+기본 `near_52w_distance_threshold=0.03`이므로 `close_to_52w_high >= 0.97`과 같다. 임계값은 `InvestmentCriteriaConfig`로 조정한다.
 
 ---
 
 ## 시그널 레이블 (`inference/predict.py`)
 
-```python
-# src/inference/predict.py
-def signal_label_series(signal_score: pd.Series) -> pd.Series
-```
+`signal_score`를 고정 경계로 구간화한다.
 
-`signal_score`를 구간별 레이블로 변환 (순위·정렬용):
-
-| 점수 범위 | 레이블 |
-|-----------|--------|
-| 상위 | `strong_buy` |
-| 중상 | `buy` |
-| 중립 | `neutral` |
-| 중하 | `sell` |
-| 하위 | `strong_sell` |
+| 점수 범위 | 라벨 |
+|-----------|------|
+| `(-inf, 0.25]` | `strong_negative` |
+| `(0.25, 0.45]` | `weak_negative` |
+| `(0.45, 0.55]` | `neutral` |
+| `(0.55, 0.75]` | `weak_positive` |
+| `(0.75, inf)` | `strong_positive` |
 
 ---
 
@@ -115,94 +132,89 @@ def signal_label_series(signal_score: pd.Series) -> pd.Series
 ### `close_betting.py`
 
 ```python
-# src/recommendation/close_betting.py
 def format_recommendation_message(pred_df: pd.DataFrame, symbol: str) -> str
 ```
 
-카카오 챗봇 응답용 추천 메시지를 생성한다:
+카카오 챗봇 응답용 추천 메시지를 생성한다.
 
-```
+```text
 [삼성전자 (005930)]
 권고: 매수
 예상 수익률: +2.34%
 상승확률: 62.1%
-신뢰도: 높음
+신뢰도 높음
 ```
 
 ### `realtime_close_betting.py`
 
 ```python
-# src/recommendation/realtime_close_betting.py
 class RealTimeCloseBettingRecommendationService:
     def get_recommendation(self, symbol: str) -> str
 ```
 
-실시간으로 특정 종목의 최신 예측 결과를 조회하여 추천 메시지를 반환. 캐시된 `result_simple.csv`를 우선 사용한다.
+특정 종목의 최신 예측 결과를 조회해 추천 메시지를 반환한다. 캐시된 `result_simple.csv`를 우선 사용한다.
 
 ---
 
 ## 포트폴리오 액션 및 리스크 플래그
 
-최종 예측 프레임에 추가되는 필드:
+최종 예측 프레임에 추가되는 주요 필드:
 
 | 필드 | 값 예시 | 설명 |
 |------|---------|------|
-| `recommendation` | `매수` / `매도` / `관망` | 추천 결정 |
-| `signal_score` | 0.0 ~ 1.0 | 시그널 종합 점수 |
-| `signal_label` | `buy` / `neutral` | 시그널 레이블 |
-| `confidence_score` | 0.0 ~ 1.0 | 예측 신뢰도 |
-| `portfolio_action` | `buy` / `hold` / `skip` | 포트폴리오 액션 |
-| `risk_flag` | `low_liquidity` 등 | 리스크 플래그 |
+| `recommendation` | `매수` / `매도` / `관망` | `predicted_return` 기반 추천 |
+| `signal_score` | `0.0 ~ 1.0+` | 종합 시그널 점수. 이벤트 누적으로 1을 넘을 수 있음 |
+| `signal_label` | `weak_positive` / `neutral` 등 | 시그널 점수 구간 라벨 |
+| `confidence_score` | `0.0 ~ 1.0` | 예측 신뢰도 |
+| `confidence_label` | `신뢰도 높음` 등 | 신뢰도 라벨 |
+| `portfolio_action` | `신규매수` / `관망` 등 | PM 표시용 액션 |
+| `risk_flag` | `LOW_LIQUIDITY` 등 | 리스크 플래그 |
 | `coverage_gate_status` | `normal` / `caution` / `halt` | 커버리지 상태 |
+
+### `LOW_LIQUIDITY`
+
+`risk_flag`는 `value_traded < min_liquidity_threshold`이면 `LOW_LIQUIDITY`를 붙인다. `min_liquidity_threshold`가 없거나 0 이하이면 백테스트 기본값 `BacktestConfig().min_value_traded`(기본 30억)를 사용한다.
 
 ---
 
 ## 중요 제약사항
 
-> 뉴스, 공시, `news_impact_*` 컬럼은 **표시 전용**이며 추천 결정에 절대 사용하지 않는다.
->
-> `predicted_return`만이 매수/매도/관망의 결정 기준이다.
->
-> — `docs/ARCHITECTURE.md` 추천 정책 섹션
+- 뉴스, 공시, `news_impact_*` 컬럼은 **표시/리뷰 전용**이다.
+- 뉴스/공시 정보는 `predicted_return`, 추천, 순위, 신호를 변경하면 안 된다.
+- 매수/매도/관망 추천은 오직 다음날 예상 수익률 `predicted_return` 기준이다.
 
 ---
 
-## 개선 및 수정 제안
+## 개선 및 수정 진행 현황
 
 > 우선순위: **P0(버그) > P1(정합성) > P2(문서/품질)**.
 
-### P0 — 최신 예측 경로에서 이벤트 부스트가 `signal_score`에 이중 적용
+### 해결됨 — P0 이벤트 부스트 이중 적용
 
-- **문제**: 최신 예측 산출 시 `build_scored_prediction_frame`가 `vectorized_event_signal_boost`를 호출해 `signal_score += event_boost_score`를 1회 적용한다(`pipeline.py:707` → `pipeline_support.py:86`). 직후 `finalize_latest_prediction_frame` → `build_prediction_policy_frame`가 **같은 부스트를 다시 더한다**(`pipeline.py:719` → `signal_policy.py:285,173`). 결과적으로 최신 예측의 `signal_score`/`signal_label`에 이벤트 부스트가 **두 번** 들어간다. (OOF/백테스트 경로는 `apply_tuned_signal`이 `signal_score`를 처음부터 재계산하므로 1회만 적용되어 영향 없음.)
-- **영향**: 추천(매수/매도/관망)은 `predicted_return`만 쓰므로 불변이지만, `result_detail/simple.csv`에 노출되는 `signal_score`·`signal_label`·순위가 왜곡된다.
-- **제안**: `build_prediction_policy_frame`가 이미 부스트가 적용된 프레임을 받을 때는 재적용하지 않도록 가드(`event_boost_score` 존재 시 skip)를 두거나, 부스트 적용 책임을 한 함수로 단일화.
+- 최신 예측 경로에서 `build_scored_prediction_frame`과 `build_prediction_policy_frame`가 모두 이벤트 부스트를 적용할 수 있었다.
+- `vectorized_event_signal_boost`를 idempotent하게 만들어 기존 `event_boost_score`가 있으면 `signal_score`에서 기존 부스트를 제거한 뒤 새 부스트를 더한다.
 
-### P0 — 문서의 `confidence_label` 임계값이 코드와 불일치
+### 해결됨 — P0 `confidence_label` 문서 불일치
 
-- **문제**: 문서는 `≥0.80 높음 / ≥0.60 보통 / else 낮음`(3단계)로 적었지만, 코드는 `≥0.80 매우 높음 / ≥0.67 높음 / ≥0.34 보통 / else 낮음`(4단계)이다(`signal_policy.py:56-66`).
-- **제안**: 문서를 4단계 실제 임계값으로 정정.
+- 문서를 실제 4단계 임계값(`0.80/0.67/0.34`)에 맞췄다.
 
-### P1 — 문서의 52주 근접 기준(×0.97)과 코드(0.95) 불일치
+### 해결됨 — P1 52주 근접 기준 정합성
 
-- **문제**: 이벤트 부스트 표는 "종가 ≥ 52주 고가 × 0.97"이라 적었으나, 플래그 생성은 `>= 0.95`로 하드코딩이며(`price_features.py:262`) 설정값 `near_52w_distance_threshold=0.03`은 미사용이다. (상세는 `03_features.md` 참고.)
-- **제안**: 코드를 설정 기반(`1 - near_52w_distance_threshold`)으로 바꾸고 문서·설정·코드를 일치.
+- 코드의 설정 기반 기준(`near_52w_distance_threshold`, 기본 0.03)을 문서에 명시했다.
 
-### P1 — 이벤트 부스트의 의도적/비의도적 가산 중복 명시
+### 해결됨 — P1 이벤트 부스트 누적 가산 명시
 
-- **문제**: 거래대금 1~3위 종목은 `TOP3_TURNOVER_EVENT_BOOST(+0.05)`와 `TOP_TURNOVER_EVENT_BOOST(+0.04)`가 **동시 가산**되어 +0.09가 된다(`signal_policy.py:158-159`). 고확신 동시순매수도 `dual_buy + strong_dual_buy + combined`가 누적된다. 의도일 수 있으나 문서에는 단일 항목처럼 보인다.
-- **제안**: 부스트가 누적 가산임을 표에 주석으로 명시하고, 상한(clip)·정규화 여부를 정의.
+- 거래대금, 강한 동시 순매수, NASDAQ 테일윈드가 누적될 수 있음을 문서화했다.
 
-### P1 — `risk_flag`의 `LOW_LIQUIDITY` 기준이 사실상 비활성
+### 해결됨 — P1 `LOW_LIQUIDITY` 기본 임계값
 
-- **문제**: `value_traded < min_liquidity_threshold`로 판정하는데(`signal_policy.py:80`), `min_liquidity_threshold` 기본은 컨텍스트에서 0으로 전달되는 경우가 많아 거의 트리거되지 않는다(`pipeline_support.py:42`).
-- **제안**: 백테스트의 `min_value_traded`(기본 30억)와 동일 임계를 위험 플래그에도 연결.
+- `min_liquidity_threshold`가 없거나 0 이하일 때 백테스트 기본 `min_value_traded`를 사용하도록 정책 레이어를 보강했다.
 
-### P2 — `signal_label` 경계 문서화
+### 해결됨 — P2 `signal_label` 경계 문서화
 
-- **문제**: 문서 표는 `strong_buy/buy/neutral/sell/strong_sell`로 적었으나 실제 라벨은 `strong_negative/weak_negative/neutral/weak_positive/strong_positive`이고 경계는 `0.25/0.45/0.55/0.75`이다(`inference/predict.py:19-24`).
-- **제안**: 실제 라벨·경계로 정정.
+- 실제 라벨과 경계(`0.25/0.45/0.55/0.75`)로 문서를 정정했다.
 
-### P2 — 행 단위 `apply`의 성능
+### 향후 과제 — P2 행 단위 `apply` 성능
 
-- **문제**: `build_prediction_policy_frame`가 `prediction_reason`·`_jongbae_score`·`build_pm_summary_fields`를 `df.apply(..., axis=1)`로 종목마다 호출(`signal_policy.py:286-290`). 종목이 많으면 느리다.
-- **제안**: 이벤트 부스트처럼 벡터화하거나, 사유 텍스트는 상위 노출 종목으로 한정 생성.
+- `build_prediction_policy_frame`의 `prediction_reason`, `_jongbae_score`, `build_pm_summary_fields`는 아직 행 단위 `apply`를 사용한다.
+- 종목 수가 많아 병목이 확인되면 벡터화하거나, 표시용 사유 텍스트 생성을 상위 노출 종목으로 제한한다.

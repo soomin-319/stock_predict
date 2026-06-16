@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.config.settings import InvestmentCriteriaConfig
+from src.config.settings import BacktestConfig, InvestmentCriteriaConfig
 
 
 HIGH_CONVICTION_NET_BUY = 100_000_000_000
@@ -19,6 +19,7 @@ STRONG_DUAL_BUY_EVENT_BOOST = 0.06
 HIGH_CONVICTION_COMBINED_EVENT_BOOST = 0.08
 NASDAQ_FUTURES_TAILWIND_EVENT_BOOST = 0.03
 DEFAULT_CRITERIA = InvestmentCriteriaConfig()
+DEFAULT_MIN_LIQUIDITY_THRESHOLD = BacktestConfig().min_value_traded
 
 
 def _to_numeric_series(df: pd.DataFrame, column: str, default: float = 0.0) -> pd.Series:
@@ -77,7 +78,10 @@ def risk_flag(row: pd.Series) -> str:
         flags.append("LOW_UP_PROB")
     if float(row.get("history_direction_accuracy", 0.5) or 0.5) < 0.45:
         flags.append("LOW_HISTORY_ACC")
-    if float(row.get("value_traded", 0) or 0) < float(row.get("min_liquidity_threshold", 0) or 0):
+    min_liquidity = float(row.get("min_liquidity_threshold", 0) or 0)
+    if min_liquidity <= 0:
+        min_liquidity = DEFAULT_MIN_LIQUIDITY_THRESHOLD
+    if float(row.get("value_traded", 0) or 0) < min_liquidity:
         flags.append("LOW_LIQUIDITY")
     if float(row.get("external_coverage_ratio", 1.0) or 1.0) < 0.6:
         flags.append("EXTERNAL_FEATURE_MISSING")
@@ -168,9 +172,13 @@ def vectorized_event_signal_boost(
     event_boost = event_boost + strong_nasdaq_tailwind_mask.astype(float) * NASDAQ_STRONG_TAILWIND_EVENT_BOOST
     event_boost = event_boost - strong_nasdaq_headwind_mask.astype(float) * NASDAQ_STRONG_HEADWIND_EVENT_PENALTY
 
+    existing_boost = _to_numeric_series(out, "event_boost_score") if "event_boost_score" in out.columns else None
     out["event_boost_score"] = event_boost.round(6)
     if "signal_score" in out.columns:
-        out["signal_score"] = pd.to_numeric(out["signal_score"], errors="coerce").fillna(0.0) + out["event_boost_score"]
+        base_score = pd.to_numeric(out["signal_score"], errors="coerce").fillna(0.0)
+        if existing_boost is not None:
+            base_score = base_score - existing_boost
+        out["signal_score"] = base_score + out["event_boost_score"]
     return out
 
 
