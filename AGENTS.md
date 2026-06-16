@@ -42,7 +42,7 @@ All generated CSV and JSON outputs should stay under `result/`, including `resul
 
 ## Commit & Pull Request Guidelines
 
-Recent history uses short imperative commit subjects, often with PR references, for example `Refresh stale cached predictions from detail date in bot handler (#207)`. Keep commits focused. If any repository change is made, create a pull request before final handoff unless the user explicitly says not to. Pull requests should include a summary, test results, linked issues when relevant, and artifact paths when user-facing outputs change. Note new config keys, data files, or external API requirements.
+Recent history uses short imperative commit subjects, often with PR references, for example `Refresh stale cached predictions from detail date in bot handler (#207)`. Keep commits focused. If any repository change is made, the agent MUST commit, push, and create a pull request before final handoff unless the user explicitly says not to. Do not stop after local changes only. Pull requests should include a summary, test results, linked issues when relevant, and artifact paths when user-facing outputs change. Note new config keys, data files, or external API requirements.
 
 ## Security & Configuration Tips
 
