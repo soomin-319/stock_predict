@@ -61,7 +61,11 @@ from src.reports.context_policy import evaluate_context_policy
 from src.reports.report_metadata import build_report_metadata, generate_run_id, next_krx_business_day
 from src.reports.run_artifacts import RunArtifactManager
 from src.reports.issue_summary import append_issue_summary_columns
-from src.reports.news_impact_context import append_generated_news_impact_context, append_news_impact_context
+from src.reports.news_impact_context import (
+    append_generated_news_impact_context,
+    append_llm_news_impact_context,
+    append_news_impact_context,
+)
 from src.reports.result_formatter import (
     format_percentage_text as formatter_format_percentage_text,
 )
@@ -697,6 +701,7 @@ def _predict_pipeline_latest(
     issue_summary_symbols: list[str] | None,
     issue_summary_n_jobs: int,
     news_impact_report: str | None,
+    news_impact_llm_config: str | None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict, MultiHeadStockModel]:
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
     lookback = int(getattr(cfg.training, "final_model_lookback_days", 0) or 0)
@@ -737,6 +742,15 @@ def _predict_pipeline_latest(
     )
     if news_impact_report:
         pred_df = append_news_impact_context(pred_df, news_impact_report)
+    elif news_impact_llm_config:
+        pred_df = append_llm_news_impact_context(
+            pred_df,
+            context_raw_df,
+            llm_config_path=news_impact_llm_config,
+            symbols=issue_summary_symbols,
+            symbol_name_map=symbol_name_map,
+            run_date=pd.to_datetime(pred_df["Date"]).max().strftime("%Y-%m-%d"),
+        )
     else:
         pred_df = append_generated_news_impact_context(pred_df, context_raw_df)
     pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True))
@@ -997,6 +1011,7 @@ def run_pipeline(
     max_positions_per_market_type: int | None = None,
     issue_summary_symbols: list[str] | None = None,
     news_impact_report: str | None = None,
+    news_impact_llm_config: str | None = None,
     walk_forward_n_jobs: int | None = None,
     model_n_jobs: int | None = None,
     model_head_n_jobs: int | None = None,
@@ -1133,6 +1148,7 @@ def run_pipeline(
             issue_summary_symbols=issue_summary_symbols,
             issue_summary_n_jobs=issue_summary_n_jobs,
             news_impact_report=news_impact_report,
+            news_impact_llm_config=news_impact_llm_config,
         )
     diagnostics.set_rows("latest_feature_rows", latest)
     diagnostics.set_rows("latest_predictions", pred_df)
@@ -1174,6 +1190,7 @@ def build_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--universe-csv", default=None, help="Optional universe CSV with Symbol column")
     parser.add_argument("--report-json", default="pipeline_report.json", help="Pipeline summary JSON")
     parser.add_argument("--news-impact-report", default=None, help="Optional stock-news-impact JSON report for display-only context")
+    parser.add_argument("--news-impact-llm-config", default=None, help="Optional llama.cpp/gemma LLM config for on-demand news-impact judging")
     parser.add_argument("--fetch-real", action="store_true", help="Fetch real OHLCV from yfinance before running")
     parser.add_argument("--disable-external", action="store_true", help="Disable external market feature download")
     parser.add_argument("--fetch-investor-context", action="store_true", help="Fetch investor flow context features (foreign/institution flows)")
@@ -1311,6 +1328,7 @@ def main():
         max_positions_per_market_type=args.max_positions_per_market_type,
         issue_summary_symbols=args.issue_summary_symbols,
         news_impact_report=args.news_impact_report,
+        news_impact_llm_config=args.news_impact_llm_config,
         walk_forward_n_jobs=args.walk_forward_n_jobs,
         model_n_jobs=args.model_n_jobs,
         model_head_n_jobs=args.model_head_n_jobs,

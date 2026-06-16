@@ -293,3 +293,14 @@ def test_append_llm_news_impact_falls_back_on_error():
     )
     # 폴백: 규칙 기반 표시 컬럼이 생성됨
     assert "뉴스/공시 영향 점수" in out.columns
+
+
+def test_pipeline_accepts_news_impact_llm_config_flag():
+    from inspect import signature
+
+    from src.pipeline import build_cli_parser, run_pipeline
+
+    parser = build_cli_parser()
+    args = parser.parse_args(["--news-impact-llm-config", "configs/news_impact.gemma.example.json"])
+    assert args.news_impact_llm_config == "configs/news_impact.gemma.example.json"
+    assert "news_impact_llm_config" in signature(run_pipeline).parameters
