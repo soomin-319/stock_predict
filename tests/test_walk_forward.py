@@ -86,6 +86,17 @@ def test_iter_folds_no_training_date_leaks_into_validation(trading_dates):
         assert all(valid_start <= d <= valid_end for d in valid_dates)
 
 
+def test_iter_folds_can_limit_training_to_recent_lookback_window(trading_dates):
+    df = _make_df(trading_dates)
+    cfg = _small_cfg(walk_forward_lookback_days=60)
+
+    train_end, _valid_start, _valid_end, train_df, _valid_df = next(_iter_folds(df, cfg))
+
+    assert train_df["Date"].max() == train_end
+    assert train_df["Date"].nunique() == 60
+    assert train_df["Date"].min() == sorted(df[df["Date"] <= train_end]["Date"].unique())[-60]
+
+
 def test_execute_folds_caps_nested_model_parallelism(monkeypatch):
     seen_cfg = []
     seen_workers = []

@@ -9,7 +9,7 @@ import pytest
 from src.config.settings import AppConfig
 from src.features.price_features import build_features
 from src.features.regime_features import annotate_market_regime
-from src.models.lgbm_heads import MultiHeadStockModel
+from src.models.lgbm_heads import MODEL_ARTIFACT_VERSION, MultiHeadStockModel
 from src.pipeline import (
     _drop_empty_detail_columns,
     _run_pipeline_validation,
@@ -230,6 +230,15 @@ def test_run_pipeline_generates_report_without_graph_artifacts(tmp_path):
     assert Path(payload["artifacts"]["result_simple_csv"]).exists()
     assert Path(payload["artifacts"]["result_disclosure_csv"]).exists()
     assert Path(payload["artifacts"]["pm_report_json"]).exists()
+    assert Path(payload["artifacts"]["model_artifact"]).exists()
+    assert Path(payload["artifacts"]["model_metadata_json"]).exists()
+    importance_path = Path(payload["artifacts"]["model_feature_importance_csv"])
+    assert importance_path.exists()
+    importance_df = pd.read_csv(importance_path, encoding="utf-8-sig")
+    assert {"head", "feature", "importance"}.issubset(importance_df.columns)
+    assert payload["model"]["feature_count"] == payload["feature_count"]
+    assert payload["model"]["feature_hash"]
+    assert payload["model"]["artifact_version"] == MODEL_ARTIFACT_VERSION
     assert "visualization_note" not in payload
     assert not any(
         "figure" in key.lower() or "plot" in key.lower() or str(value).lower().endswith(".png")

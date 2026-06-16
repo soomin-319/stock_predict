@@ -697,7 +697,7 @@ def _predict_pipeline_latest(
     issue_summary_symbols: list[str] | None,
     issue_summary_n_jobs: int,
     news_impact_report: str | None,
-) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+) -> tuple[pd.DataFrame, pd.DataFrame, dict, MultiHeadStockModel]:
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
     lookback = int(getattr(cfg.training, "final_model_lookback_days", 0) or 0)
     if lookback > 0:
@@ -742,7 +742,7 @@ def _predict_pipeline_latest(
     pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True))
     pred_df["권고"] = pred_df["recommendation"]
     oof_diagnostics = _compute_oof_diagnostics(scored_oof)
-    return pred_df, latest, oof_diagnostics
+    return pred_df, latest, oof_diagnostics, model
 
 
 def _write_pipeline_artifacts(
@@ -763,6 +763,7 @@ def _write_pipeline_artifacts(
     report_metadata: dict[str, Any],
     artifact_manager: RunArtifactManager,
     feature_missing_rates: dict[str, float],
+    final_model: MultiHeadStockModel,
 ) -> dict[str, Any]:
     scored_oof = validation_result["scored_oof"]
     backtest = validation_result["backtest"]
@@ -855,6 +856,13 @@ def _write_pipeline_artifacts(
         no_data_reason=no_data_reason,
     )
     disclosure_path = artifact_manager.write_csv("csv/result_disclosure.csv", disclosure_df)
+    model_path = final_model.save(artifact_manager.path("model/model.pkl"))
+    model_meta_path = model_path.with_suffix(model_path.suffix + ".meta.json")
+    model_feature_importance_path = artifact_manager.write_csv(
+        "csv/model_feature_importance.csv",
+        final_model.feature_importance_frame(),
+    )
+    model_metadata = final_model.metadata()
 
     coverage_report_summary = {
         "external_coverage_ratio": external_coverage_ratio,
@@ -918,6 +926,12 @@ def _write_pipeline_artifacts(
         "diagnostics": diagnostics_report,
         "oof_diagnostics": oof_diagnostics,
         "probability_calibration": validation_result["probability_calibration"],
+        "model": {
+            **model_metadata,
+            "artifact_path": str(model_path),
+            "metadata_path": str(model_meta_path),
+            "feature_importance_path": str(model_feature_importance_path),
+        },
         "prediction_coverage": {
             "requested_universe_size": int(len(set(requested_universe_symbols))) if requested_universe_symbols else None,
             "predictions_row_count": int(len(pred_df)),
@@ -934,6 +948,9 @@ def _write_pipeline_artifacts(
             "result_simple_csv": str(simple_path),
             "result_news_csv": str(news_path),
             "result_disclosure_csv": str(disclosure_path),
+            "model_artifact": str(model_path),
+            "model_metadata_json": str(model_meta_path),
+            "model_feature_importance_csv": str(model_feature_importance_path),
         },
     }
 
@@ -1104,7 +1121,7 @@ def run_pipeline(
 
     _print_progress(12, total_steps, "Training final model and creating latest predictions")
     with diagnostics.time_stage("train_final_and_predict_latest"):
-        pred_df, latest, oof_diagnostics = _predict_pipeline_latest(
+        pred_df, latest, oof_diagnostics, final_model = _predict_pipeline_latest(
             feat=feat,
             feature_columns=feature_columns,
             cfg=cfg,
@@ -1142,6 +1159,7 @@ def run_pipeline(
             report_metadata=report_metadata,
             artifact_manager=artifact_manager,
             feature_missing_rates=feature_missing_rates,
+            final_model=final_model,
         )
 
     _print_prediction_console_summary(pred_df)
