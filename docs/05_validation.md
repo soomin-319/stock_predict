@@ -105,11 +105,12 @@ def run_long_only_topk_backtest(df: pd.DataFrame, cfg: BacktestConfig) -> dict
 ### 백테스트 전략
 
 - **전략**: Long-only (매수만), Top-K 종목 선택
-- **선택 기준**: `signal_score` 상위 K개 (`top_k=20`)
+- **선택 기준**: `predicted_return` 내림차순 우선, `signal_score` 내림차순 보조 정렬 (`top_k=20`)
+- **중요 원칙**: 매수/매도/보유 판단과 순위는 다음날 기대수익률(`predicted_return`)을 기준으로 한다. 뉴스·공시 정보는 표시용 컨텍스트이며 기대수익률, 순위, 추천, 신호를 바꾸지 않는다.
 - **필터 조건**:
   - `up_probability >= min_up_probability` (기본 0.50)
-  - `signal_score >= min_signal_score` (기본 0.0)
   - `value_traded >= min_value_traded` (기본 30억원)
+  - `max_capacity_notional >= portfolio_value / top_k`
   - `coverage_gate_status != "halt"`
 
 ### BacktestConfig
@@ -124,7 +125,7 @@ class BacktestConfig:
     fee_bps: float = 10.0              # 거래 수수료 (bps)
     slippage_bps: float = 5.0          # 슬리피지
     min_up_probability: float = 0.50   # 최소 상승 확률
-    min_signal_score: float = 0.0      # 최소 시그널 점수
+    min_signal_score: float = 0.0      # 현재 백테스트 필터에는 미적용
     turnover_limit: float = 0.5        # 일 최대 회전율
     min_value_traded: float = 3_000_000_000  # 최소 거래대금 (30억원)
     max_positions_per_market_type: int = 12  # 시장별 최대 보유 종목 수
@@ -217,10 +218,12 @@ def evaluate_backtest_validity(backtest: dict, tradable_count: int) -> dict
 
 다음 조건을 검사하여 `backtest_valid: bool` 반환:
 
-- 충분한 샘플 수
-- 거래 가능 종목 존재
-- 샤프 비율 합리적 범위
-- 최대 낙폭 한도 이내
+- 거래 가능 예측 행 존재 (`tradable_prediction_count > 0`)
+- 평가일 존재 (`days > 0`)
+- 전체 평가일이 커버리지 게이트로 중단되지 않음 (`halted_days < days`)
+- 평균 선택 종목 수가 0보다 큼 (`avg_selected_count > 0`)
+
+현재 구현은 샤프 비율·최대 낙폭·최소 평가일 수 임계값을 차단 조건으로 사용하지 않는다.
 
 유효하지 않으면 `pipeline_report.json`에 `status: "warning"`와 `blocking_reasons` 목록 추가.
 
@@ -245,20 +248,21 @@ def classification_metrics(y_true, y_prob) -> dict
 
 > 우선순위: **P0(정확성/문서 불일치) > P1(견고성) > P2(성능/품질)**.
 
-### P0 — 문서가 명시한 `min_signal_score` 필터가 백테스트에서 미적용
+### 문서 정정 완료 — `min_signal_score` 필터 설명
 
-- **문제**: 문서는 백테스트 필터 조건으로 `signal_score >= min_signal_score`를 명시하지만(`05_validation.md`), 실제 `_apply_liquidity_and_capacity_filters`는 `up_probability`·`value_traded`·체결가능 용량만 거른다(`backtest.py:65-73`). `min_signal_score`는 **어디에서도 적용되지 않는다**.
-- **제안**: 필터에 `signal_score >= cfg.min_signal_score` 추가, 또는 문서에서 해당 조건 삭제. (적용 시 기본값 0.0의 영향 범위도 함께 검토.)
+- **정정**: 백테스트 필터 조건에서 `signal_score >= min_signal_score`를 제거했다. 실제 구현은 `up_probability`, `value_traded`, 체결가능 용량, 커버리지 게이트를 기준으로 필터링한다.
+- **비고**: `BacktestConfig.min_signal_score` 필드는 남아 있지만 현재 백테스트 필터에는 적용되지 않는다.
 
-### P0 — 종목 선택 기준 문서 불일치(signal_score vs predicted_return)
+### 문서 정정 완료 — 종목 선택 기준(predicted_return vs signal_score)
 
-- **문제**: 문서는 "`signal_score` 상위 K개 선택"이라고 하지만, 코드는 `predicted_return` 우선, `signal_score` 보조로 정렬한다(`backtest.py:99,135`). 즉 이벤트 부스트가 반영된 `signal_score`가 아니라 원시 예상수익률이 1차 선택 기준이다.
-- **제안**: 의도에 맞게 정렬 키를 `signal_score`로 바꾸거나, 문서를 "predicted_return 우선 정렬"로 정정. (어느 쪽이 백테스트 성과가 좋은지 A/B 비교 권장.)
+- **정정**: 종목 선택 기준을 `predicted_return` 우선, `signal_score` 보조 정렬로 명시했다.
+- **근거**: 매수/매도/보유 판단과 순위는 다음날 기대수익률(`predicted_return`)을 기준으로 해야 하며, 뉴스·공시 컨텍스트는 기대수익률, 순위, 추천, 신호를 변경하지 않는다.
 
-### P0 — `result_validity` 검사가 문서 주장보다 약함
+### 문서 정정 완료 — `result_validity` 검사 범위
 
-- **문제**: 문서는 "샤프 비율 합리적 범위·최대 낙폭 한도·충분한 샘플 수"를 검사한다고 하지만, 실제 `evaluate_backtest_validity`는 (a) 거래가능 종목 0, (b) 평가일 0, (c) 전일 halt, (d) 평균 선택수 0 **네 가지만** 본다(`result_validity.py`). 샤프·MDD·샘플수 임계 검사는 없다.
-- **제안**: 문서가 약속한 임계 검사를 실제 구현(예: `sharpe`가 비현실적으로 큼, `max_drawdown` < 한도, `days >= min_days`)하거나 문서를 현재 구현에 맞게 축소.
+- **정정**: `evaluate_backtest_validity`가 실제로 검사하는 조건만 문서에 남겼다.
+- **현재 범위**: 거래 가능 예측 행 존재, 평가일 존재, 전체 평가일 halt 여부, 평균 선택 종목 수 0 여부.
+- **비고**: 샤프 비율·최대 낙폭·최소 평가일 수 임계값은 현재 차단 조건으로 사용하지 않는다.
 
 ### P1 — 시그널 가중치 튜닝의 과적합/탐색 빈약
 
