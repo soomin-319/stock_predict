@@ -58,7 +58,7 @@ from src.pipeline_support import (
 )
 from src.reports.pm_report import build_pm_report, save_pm_report
 from src.reports.context_policy import evaluate_context_policy
-from src.reports.report_metadata import build_report_metadata, generate_run_id
+from src.reports.report_metadata import build_report_metadata, generate_run_id, next_krx_business_day
 from src.reports.run_artifacts import RunArtifactManager
 from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.news_impact_context import append_generated_news_impact_context, append_news_impact_context
@@ -1069,9 +1069,7 @@ def run_pipeline(
     diagnostics.set_rows("context_raw_events", context_raw_df)
     input_as_of = pd.to_datetime(data.get("Date"), errors="coerce").max()
     input_as_of_date = None if pd.isna(input_as_of) else input_as_of.strftime("%Y-%m-%d")
-    prediction_for_date = (
-        None if pd.isna(input_as_of) else (input_as_of + pd.offsets.BDay(1)).strftime("%Y-%m-%d")
-    )
+    prediction_for_date = next_krx_business_day(input_as_of_date)
     context_dates = (
         pd.to_datetime(context_raw_df.get("Date"), errors="coerce")
         if not context_raw_df.empty and "Date" in context_raw_df.columns

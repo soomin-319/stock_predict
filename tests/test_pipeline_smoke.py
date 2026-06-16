@@ -118,7 +118,7 @@ def test_resolve_output_path_windows_tmp_mapping():
     assert out.name == "predictions.csv"
 
 
-def test_drop_empty_detail_columns_removes_only_empty_optional_fields():
+def test_drop_empty_detail_columns_preserves_empty_optional_fields_by_default():
     detail_df = pd.DataFrame(
         [
             {
@@ -134,9 +134,9 @@ def test_drop_empty_detail_columns_removes_only_empty_optional_fields():
 
     cleaned = _drop_empty_detail_columns(detail_df)
 
-    assert "foreign_net_buy" not in cleaned.columns
-    assert "news_sentiment" not in cleaned.columns
-    assert "target_up" not in cleaned.columns
+    assert "foreign_net_buy" in cleaned.columns
+    assert "news_sentiment" in cleaned.columns
+    assert "target_up" in cleaned.columns
     assert "predicted_return" in cleaned.columns
 
 

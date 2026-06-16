@@ -67,9 +67,23 @@ def _modified_at(path: Path) -> datetime:
     return datetime.fromtimestamp(marker.stat().st_mtime, tz=timezone.utc)
 
 
+def _protected_latest_run_ids(runs_root: Path) -> set[str]:
+    protected: set[str] = set()
+    for marker in (runs_root.parent / "latest_manifest.json", runs_root.parent / "latest" / "manifest.json"):
+        try:
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        run_id = payload.get("run_id") if isinstance(payload, dict) else None
+        if run_id:
+            protected.add(str(run_id))
+    return protected
+
+
 def cleanup_runs(runs_root: Path, policy: RetentionPolicy, now: datetime) -> list[str]:
     if not runs_root.exists():
         return []
+    protected_run_ids = _protected_latest_run_ids(runs_root)
     successful: list[Path] = []
     failed: list[Path] = []
     for run in (path for path in runs_root.iterdir() if path.is_dir()):
@@ -81,10 +95,14 @@ def cleanup_runs(runs_root: Path, policy: RetentionPolicy, now: datetime) -> lis
     successful.sort(key=_modified_at, reverse=True)
     removed = []
     for index, run in enumerate(successful):
+        if run.name in protected_run_ids:
+            continue
         age = now - _modified_at(run)
         if index >= policy.successful_run_count or age > timedelta(days=policy.successful_run_days):
             removed.append(_remove(run, runs_root))
     for run in failed:
+        if run.name in protected_run_ids:
+            continue
         if now - _modified_at(run) > timedelta(days=policy.failed_run_days):
             removed.append(_remove(run, runs_root))
     return removed

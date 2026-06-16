@@ -164,7 +164,7 @@ def load_company_mapping(
 
 
 def _read_csv(path: str | Path) -> list[dict[str, str]]:
-    with Path(path).open(newline="", encoding="utf-8") as file:
+    with Path(path).open(newline="", encoding="utf-8-sig") as file:
         return list(csv.DictReader(file))
 
 

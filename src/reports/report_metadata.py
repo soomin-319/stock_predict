@@ -4,17 +4,70 @@ import hashlib
 import json
 import subprocess
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = "1.0"
+
+KOREA_MARKET_HOLIDAYS = {
+    "2025-01-01",
+    "2025-01-28",
+    "2025-01-29",
+    "2025-01-30",
+    "2025-03-03",
+    "2025-05-05",
+    "2025-05-06",
+    "2025-06-03",
+    "2025-06-06",
+    "2025-08-15",
+    "2025-10-03",
+    "2025-10-06",
+    "2025-10-07",
+    "2025-10-08",
+    "2025-10-09",
+    "2025-12-25",
+    "2025-12-31",
+    "2026-01-01",
+    "2026-02-16",
+    "2026-02-17",
+    "2026-02-18",
+    "2026-03-02",
+    "2026-05-05",
+    "2026-05-25",
+    "2026-08-17",
+    "2026-09-24",
+    "2026-09-25",
+    "2026-10-05",
+    "2026-10-09",
+    "2026-12-25",
+    "2026-12-31",
+}
 
 
 def generate_run_id(now: datetime | None = None) -> str:
     current = now or datetime.now(timezone.utc)
     return f"{current.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:8]}"
 
+
+def next_krx_business_day(input_as_of_date: str | datetime | None) -> str | None:
+    if input_as_of_date is None:
+        return None
+    if isinstance(input_as_of_date, datetime):
+        current = input_as_of_date.date()
+    else:
+        raw = str(input_as_of_date).strip()
+        if not raw:
+            return None
+        normalized = raw[:10]
+        try:
+            current = datetime.fromisoformat(normalized).date()
+        except ValueError:
+            return None
+    candidate = current + timedelta(days=1)
+    while candidate.weekday() >= 5 or candidate.isoformat() in KOREA_MARKET_HOLIDAYS:
+        candidate += timedelta(days=1)
+    return candidate.isoformat()
 
 def detect_git_commit(project_root: Path) -> str | None:
     try:
@@ -71,4 +124,5 @@ __all__ = [
     "detect_git_commit",
     "generate_run_id",
     "hash_config",
+    "next_krx_business_day",
 ]

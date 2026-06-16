@@ -44,7 +44,7 @@ def resolve_incremental_fetch_start(input_csv: str, requested_start: str) -> str
     if not path.exists():
         return requested_start
     try:
-        base = pd.read_csv(path, usecols=["Date"])
+        base = pd.read_csv(path, usecols=["Date"], encoding="utf-8-sig")
         if base.empty:
             return requested_start
         parsed = pd.to_datetime(base["Date"], errors="coerce").dropna()

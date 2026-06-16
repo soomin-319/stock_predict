@@ -19,7 +19,7 @@ def _read_symbol_name_csv(path: Path) -> pd.DataFrame:
     if not str(path) or not path.exists() or not path.is_file():
         return pd.DataFrame(columns=["Ticker", "Symbol", "Name", "Market"])
 
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, encoding="utf-8-sig")
     expected = {"Ticker", "Symbol", "Name", "Market"}
     if not expected.issubset(set(df.columns)):
         raise ValueError(f"KRX symbol-name CSV must include columns: {sorted(expected)}")
