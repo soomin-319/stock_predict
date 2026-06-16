@@ -243,6 +243,27 @@ def test_aggregate_oof_predictions_rejects_conflicting_targets():
         aggregate_oof_predictions(raw)
 
 
+def test_aggregate_oof_predictions_records_conflicting_stable_values():
+    raw = pd.DataFrame(
+        {
+            "Date": [pd.Timestamp("2024-01-02")] * 2,
+            "Symbol": ["A", "A"],
+            "target_log_return": [0.02, 0.02],
+            "target_up": [1, 1],
+            "predicted_return": [0.01, 0.03],
+            "up_probability": [0.6, 0.8],
+            "sector": ["IT", "Finance"],
+        }
+    )
+
+    aggregated, diagnostics = aggregate_oof_predictions(raw)
+
+    assert len(aggregated) == 1
+    assert aggregated.loc[0, "sector"] == "IT"
+    assert diagnostics["stable_conflict_count"] == 1
+    assert diagnostics["stable_conflict_columns"] == {"sector": 1}
+
+
 def test_run_fold_adds_fold_provenance_to_oof(monkeypatch):
     class _FakeModel:
         def __init__(self, **_kwargs):

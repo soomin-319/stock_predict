@@ -147,6 +147,8 @@ def aggregate_oof_predictions(raw_oof: pd.DataFrame) -> tuple[pd.DataFrame, dict
         "unique_row_count": 0,
         "duplicate_row_count": 0,
         "duplicate_ratio": 0.0,
+        "stable_conflict_count": 0,
+        "stable_conflict_columns": {},
     }
     if raw_oof.empty:
         return raw_oof.copy(), diagnostics
@@ -164,9 +166,12 @@ def aggregate_oof_predictions(raw_oof: pd.DataFrame) -> tuple[pd.DataFrame, dict
     ]
     provenance_cols = [c for c in ("fold_id", "train_start", "train_end", "valid_start", "valid_end") if c in raw_oof.columns]
     stable_cols = [c for c in raw_oof.columns if c not in {*key, *prediction_cols, *provenance_cols}]
+    stable_conflict_columns = {}
     for column in stable_cols:
-        if raw_oof.groupby(key, dropna=False)[column].nunique(dropna=False).gt(1).any():
-            raise ValueError(f"Conflicting OOF stable values for Date + Symbol: {column}")
+        conflict_groups = raw_oof.groupby(key, dropna=False)[column].nunique(dropna=False).gt(1)
+        conflict_count = int(conflict_groups.sum())
+        if conflict_count:
+            stable_conflict_columns[column] = conflict_count
 
     rows = []
     for values, group in raw_oof.groupby(key, sort=True, dropna=False):
@@ -192,6 +197,8 @@ def aggregate_oof_predictions(raw_oof: pd.DataFrame) -> tuple[pd.DataFrame, dict
             "unique_row_count": unique_count,
             "duplicate_row_count": raw_count - unique_count,
             "duplicate_ratio": float((raw_count - unique_count) / raw_count),
+            "stable_conflict_count": int(sum(stable_conflict_columns.values())),
+            "stable_conflict_columns": stable_conflict_columns,
         }
     )
     return aggregated, diagnostics
