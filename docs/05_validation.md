@@ -124,10 +124,15 @@ class BacktestConfig:
     max_daily_participation: float = 0.10   # 일 거래대금 대비 최대 참여율
     fee_bps: float = 10.0              # 거래 수수료 (bps)
     slippage_bps: float = 5.0          # 슬리피지
+    dynamic_slippage_bps: float = 10.0 # 동적 슬리피지 계수
+    conservative_slippage_multiplier: float = 1.5
+    aggressive_slippage_multiplier: float = 0.75
     min_up_probability: float = 0.50   # 최소 상승 확률
     min_signal_score: float = 0.0      # 현재 백테스트 필터에는 미적용
     turnover_limit: float = 0.5        # 일 최대 회전율
     min_value_traded: float = 3_000_000_000  # 최소 거래대금 (30억원)
+    min_external_coverage_ratio: float = 0.0
+    min_investor_coverage_ratio: float = 0.5
     max_positions_per_market_type: int = 12  # 시장별 최대 보유 종목 수
 ```
 
@@ -144,7 +149,10 @@ class BacktestConfig:
     "avg_selected_count": float,   # 평균 선택 종목 수
     "benchmark_cum_return": float, # 벤치마크(KOSPI) 누적 수익률
     "excess_cum_return": float,    # 초과 수익률
+    "cost_scenarios": dict,        # 비용 시나리오별 누적 수익률
     "halted_days": int,            # 커버리지 게이트로 정지된 날 수
+    "liquidity_blocked_days": int, # 유동성/용량 필터로 선택 종목이 없는 날 수
+    "avg_market_type_count": float,# 일평균 선택 시장 유형 수
     "series": list[dict],          # 일별 시계열 데이터
 }
 ```
@@ -159,7 +167,7 @@ def coverage_gate_status(cfg, external_coverage_ratio, investor_coverage_ratio) 
 | 상태 | 조건 | 효과 |
 |------|------|------|
 | `normal` | 커버리지 모두 정상 | 백테스트 정상 실행 |
-| `caution` | 커버리지 < 70% | 경고만 표시, 실행 계속 |
+| `caution` | 외부·투자자 커버리지 중 하나라도 `max(0.7, min_*_coverage_ratio)` 미만 | 경고만 표시, 실행 계속 |
 | `halt` | 최소 비율 미달 | 해당 날짜 거래 중단 |
 
 ---
@@ -175,9 +183,8 @@ def evaluate_baselines(feat: pd.DataFrame) -> dict
 
 | 기준선 | 설명 |
 |--------|------|
-| `naive_zero` | 항상 0 예측 |
-| `naive_mean` | 훈련 데이터 평균으로 예측 |
-| `buy_and_hold` | 전 종목 보유 수익률 |
+| `baseline_zero` | 항상 0 예측, 상승확률 0.5 |
+| `baseline_prev_return` | 전일 `log_return`을 다음날 수익률 예측값으로 사용 |
 
 ---
 
@@ -284,12 +291,12 @@ def classification_metrics(y_true, y_prob) -> dict
 - **문제**: `_iter_folds`가 각 폴드의 `train_df`/`valid_df` 슬라이스를 **리스트로 모두 materialize**한 뒤(`walk_forward.py:214`) `ProcessPoolExecutor`로 넘긴다. 확장창이라 후반 폴드의 `train_df`가 매우 커서 (a) 전체 슬라이스 동시 보유로 메모리 급증, (b) 프로세스 간 대용량 피클 직렬화 오버헤드가 발생한다(Windows spawn에서 특히 큼).
 - **제안**: 폴드를 인덱스 경계만 전달하고 워커 내부에서 슬라이싱, 또는 공유메모리/Arrow. 폴드 lazy 생성으로 동시 보유량 축소.
 
-### P2 — OOF 집계가 충돌 값에 ValueError로 중단
+### 진행 완료 — OOF 안정 컬럼 충돌 진단화
 
-- **문제**: `aggregate_oof_predictions`는 `(Date, Symbol)` 중복에서 안정 컬럼 값이 다르면 `ValueError`로 전체 중단(`walk_forward.py:152-164`). 피처가 미세하게 달라지면 운영이 멈춘다.
-- **제안**: 충돌을 진단 카운트로 강등하고 대표값(첫 행)으로 진행하되 `oof_diagnostics`에 충돌 수를 기록.
+- **수정**: `aggregate_oof_predictions`는 `(Date, Symbol)` 중복에서 안정 컬럼 값이 달라도 첫 행 대표값으로 집계하고, `oof_diagnostics.stable_conflict_count`와 `stable_conflict_columns`에 충돌 수를 기록한다.
+- **유지**: `target_log_return`, `target_up` 등 타겟 컬럼 충돌은 데이터 정합성 문제이므로 계속 `ValueError`로 중단한다.
 
-### P2 — `baselines`/`coverage_gate` 문서 보강
+### 문서 정정 완료 — `baselines`/`coverage_gate` 문서 보강
 
-- `caution`은 외부·투자자 커버리지 중 하나라도 0.7 미만일 때 트리거됨(`backtest.py:35-38`)을 표에 명시.
-- 기준선에 "전일 종가 유지(naive last)" 등 추세 기준선 추가 시 모델 우위 판단이 더 엄격해진다.
+- `caution` 조건을 외부·투자자 커버리지 중 하나라도 `max(0.7, min_*_coverage_ratio)` 미만인 경우로 명시했다.
+- 실제 `evaluate_baselines` 반환값(`baseline_zero`, `baseline_prev_return`)에 맞게 기준선 표를 정정했다.
