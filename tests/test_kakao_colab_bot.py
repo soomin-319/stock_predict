@@ -2088,3 +2088,22 @@ def test_guide_response_includes_recommendation_quick_reply(tmp_path: Path):
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "도움말", "user": {"id": "u-guide-rec"}}})
 
     assert any(reply["messageText"] == "추천" for reply in response["template"]["quickReplies"])
+
+
+def test_build_command_includes_llm_config_when_enabled():
+    cfg = PipelineRuntimeConfig(news_impact_llm_config="configs/news_impact.gemma.example.json")
+    cmd = cfg.build_command("005930.KS", enable_news_impact_llm=True)
+    assert "--news-impact-llm-config" in cmd
+    assert "configs/news_impact.gemma.example.json" in cmd
+
+
+def test_build_command_excludes_llm_config_when_disabled():
+    cfg = PipelineRuntimeConfig(news_impact_llm_config="configs/news_impact.gemma.example.json")
+    cmd = cfg.build_command("005930.KS", enable_news_impact_llm=False)
+    assert "--news-impact-llm-config" not in cmd
+
+
+def test_build_command_excludes_llm_config_when_unset():
+    cfg = PipelineRuntimeConfig(news_impact_llm_config=None)
+    cmd = cfg.build_command("005930.KS", enable_news_impact_llm=True)
+    assert "--news-impact-llm-config" not in cmd

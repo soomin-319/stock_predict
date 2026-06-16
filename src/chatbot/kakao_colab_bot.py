@@ -89,6 +89,7 @@ class PipelineRuntimeConfig:
     async_issue_summary_on_demand: bool = True
     real_start: str = "2018-01-01"
     prewarm_default_predictions: bool = True
+    news_impact_llm_config: str | None = None
     extra_args: tuple[str, ...] = ()
 
     def build_command(
@@ -96,6 +97,7 @@ class PipelineRuntimeConfig:
         symbol: str,
         add_symbols: list[str] | None = None,
         issue_summary_symbols: list[str] | None = None,
+        enable_news_impact_llm: bool = False,
     ) -> list[str]:
         normalized_add_symbols = [str(s) for s in (add_symbols or [symbol]) if str(s).strip()]
         normalized_issue_symbols = [str(s) for s in (issue_summary_symbols or [symbol]) if str(s).strip()]
@@ -117,6 +119,8 @@ class PipelineRuntimeConfig:
                 cmd.extend(["--dart-corp-map-csv", self.dart_corp_map_csv])
         if self.openai_model:
             cmd.extend(["--openai-model", self.openai_model])
+        if enable_news_impact_llm and self.news_impact_llm_config:
+            cmd.extend(["--news-impact-llm-config", self.news_impact_llm_config])
         if not self.use_external:
             cmd.append("--disable-external")
         if self.report_json:
@@ -1122,7 +1126,8 @@ class KakaoColabPredictionBot:
     def _start_prediction_job(self, symbol: str) -> bool:
         issue_summary_symbols = [symbol]
         add_symbols = [symbol]
-        if self._is_bootstrap_required():
+        is_bootstrap = self._is_bootstrap_required()
+        if is_bootstrap:
             bootstrap_symbols = self._load_bootstrap_symbols_from_krx_map()
             if bootstrap_symbols:
                 add_symbols = bootstrap_symbols
@@ -1135,6 +1140,7 @@ class KakaoColabPredictionBot:
             symbol,
             add_symbols=add_symbols,
             issue_summary_symbols=issue_summary_symbols,
+            enable_news_impact_llm=not is_bootstrap,
         )
         display_code = self._display_code(symbol)
         submitted_at = datetime.now(timezone.utc).isoformat()
