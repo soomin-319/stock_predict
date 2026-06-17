@@ -2175,3 +2175,14 @@ def test_session_row_overrides_baseline(tmp_path):
     assert set(df["종목코드"]) == {"005930", "000660"}  # 베이스라인 + 세션 합집합
     samsung = df[df["종목코드"] == "005930"].iloc[0]
     assert samsung["권고"] == "매수"  # 세션이 베이스라인을 덮음
+
+
+def test_detail_date_falls_back_to_published(tmp_path):
+    bot = _make_overlay_bot(tmp_path)
+    # published detail에만 000660 존재
+    detail = tmp_path / "published" / "latest" / "csv" / "result_detail.csv"
+    detail.parent.mkdir(parents=True, exist_ok=True)
+    detail.write_text(
+        "Symbol,Date\n000660.KS,2026-06-17\n", encoding="utf-8-sig"
+    )
+    assert bot._latest_prediction_date_from_detail("000660.KS") == "2026-06-17"

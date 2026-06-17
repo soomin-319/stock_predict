@@ -722,32 +722,35 @@ class KakaoColabPredictionBot:
             row["Date"] = detail_date
         return self._apply_issue_summary_cache(row, symbol)
 
-    def _latest_prediction_date_from_detail(self, symbol: str) -> str | None:
-        detail_path = self._resolve_result_path("csv/result_detail.csv", self.result_detail_path)
-        if not detail_path.exists():
-            return None
-        try:
-            detail_df = pd.read_csv(detail_path, dtype={"Symbol": str}, encoding="utf-8-sig")
-        except Exception:
-            return None
-        if detail_df.empty or "Symbol" not in detail_df.columns or "Date" not in detail_df.columns:
-            return None
+    def _detail_path_candidates(self) -> list[Path]:
+        candidates = [self._resolve_result_path("csv/result_detail.csv", self.result_detail_path)]
+        published_detail = self.published_dir / "csv" / "result_detail.csv"
+        candidates.append(published_detail)
+        return [p for p in candidates if p and Path(p).exists()]
 
+    def _latest_prediction_date_from_detail(self, symbol: str) -> str | None:
         normalized = normalize_user_symbols([symbol])
         symbol_aliases = {str(symbol)}
         if normalized:
             symbol_aliases.add(str(normalized[0]))
         display_code = self._display_code(symbol)
         symbol_aliases.update({f"{display_code}.KS", f"{display_code}.KQ"})
-
-        matched = detail_df[detail_df["Symbol"].astype(str).isin(symbol_aliases)].copy()
-        if matched.empty:
-            return None
-        matched["Date"] = pd.to_datetime(matched["Date"], errors="coerce")
-        matched = matched.dropna(subset=["Date"])
-        if matched.empty:
-            return None
-        return matched["Date"].max().strftime("%Y-%m-%d")
+        for detail_path in self._detail_path_candidates():
+            try:
+                detail_df = pd.read_csv(detail_path, dtype={"Symbol": str}, encoding="utf-8-sig")
+            except Exception:
+                continue
+            if detail_df.empty or "Symbol" not in detail_df.columns or "Date" not in detail_df.columns:
+                continue
+            matched = detail_df[detail_df["Symbol"].astype(str).isin(symbol_aliases)].copy()
+            if matched.empty:
+                continue
+            matched["Date"] = pd.to_datetime(matched["Date"], errors="coerce")
+            matched = matched.dropna(subset=["Date"])
+            if matched.empty:
+                continue
+            return matched["Date"].max().strftime("%Y-%m-%d")
+        return None
 
     def _load_cached_result_simple(self) -> pd.DataFrame:
         baseline = load_published_simple(self.published_dir)
