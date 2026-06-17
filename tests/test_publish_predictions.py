@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from src.ops.publish_predictions import _effective_news_mode, publish_artifacts
+from src.ops.publish_predictions import publish_artifacts
 from src.ops.published_store import read_index
 
 
@@ -130,9 +130,46 @@ def test_run_publish_rule_mode_uses_no_llm_config(tmp_path: Path):
     assert captured["cfg"] is None
 
 
-def test_effective_news_mode_rule_aliases_and_default():
-    assert _effective_news_mode({"news_impact": {"mode": "rule"}}) == "rule_based"
-    assert _effective_news_mode({"news_impact": {"mode": "rule_based"}}) == "rule_based"
-    assert _effective_news_mode({"news_impact": {"mode": "heuristic"}}) == "rule_based"
-    assert _effective_news_mode({}) == "gemma"
-    assert _effective_news_mode({"news_impact": {"mode": "llm"}}) == "gemma"
+def test_run_publish_records_git_provenance_and_configured_news_mode(tmp_path: Path):
+    project_root = tmp_path
+    run_dir = project_root / "result" / "runs" / "rid-prov"
+    _make_run_dir(run_dir)
+    (project_root / "result" / "latest_manifest.json").write_text(
+        '{"run_id": "rid-prov"}', encoding="utf-8"
+    )
+
+    def fake_pipeline(news_impact_llm_config, full_refresh, config_json=None):
+        return {"manifest": {"promoted": True, "status": "pass", "run_id": "rid-prov"}}
+
+    result = run_publish(
+        _Args(),
+        project_root=project_root,
+        pipeline_fn=fake_pipeline,
+        git_fn=lambda *a, **k: None,
+        provenance_fn=lambda: ("abc1234", "feat/publish"),
+    )
+    assert result["git"]["commit"] == "abc1234"
+    assert result["git"]["branch"] == "feat/publish"
+    assert result["news_mode"] == "gemma"
+
+
+def test_run_publish_rule_mode_labels_news_mode_rule_based(tmp_path: Path):
+    project_root = tmp_path
+    run_dir = project_root / "result" / "runs" / "rid-rule2"
+    _make_run_dir(run_dir)
+    (project_root / "result" / "latest_manifest.json").write_text(
+        '{"run_id": "rid-rule2"}', encoding="utf-8"
+    )
+
+    def fake_pipeline(news_impact_llm_config, full_refresh, config_json=None):
+        return {"manifest": {"promoted": True, "status": "pass", "run_id": "rid-rule2"}}
+
+    result = run_publish(
+        _Args(news_mode="rule"),
+        project_root=project_root,
+        pipeline_fn=fake_pipeline,
+        git_fn=lambda *a, **k: None,
+        provenance_fn=lambda: (None, None),
+    )
+    assert result["news_mode"] == "rule_based"
+    assert result["git"]["commit"] is None

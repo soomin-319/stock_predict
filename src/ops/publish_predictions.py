@@ -137,11 +137,26 @@ def _symbol_count(run_dir: Path) -> int:
         return 0
 
 
-def _effective_news_mode(report: dict[str, Any]) -> str:
-    flags = report.get("news_impact") if isinstance(report.get("news_impact"), dict) else {}
-    if str(flags.get("mode", "")).lower() in {"rule", "rule_based", "heuristic"}:
-        return "rule_based"
-    return "gemma"
+def _default_provenance_fn(project_root: Path) -> Callable[[], tuple[str | None, str | None]]:
+    def _capture(args: list[str]) -> str | None:
+        try:
+            out = subprocess.run(
+                ["git", *args],
+                cwd=project_root,
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except Exception:
+            return None
+        return out.stdout.strip() or None
+
+    def _read() -> tuple[str | None, str | None]:
+        return _capture(["rev-parse", "HEAD"]), _capture(["rev-parse", "--abbrev-ref", "HEAD"])
+
+    return _read
 
 
 def run_publish(
@@ -150,12 +165,14 @@ def run_publish(
     project_root: str | Path,
     pipeline_fn: Callable[..., dict[str, Any]] | None = None,
     git_fn: Callable[[list[str]], None] | None = None,
+    provenance_fn: Callable[[], tuple[str | None, str | None]] | None = None,
 ) -> dict[str, Any]:
     project_root = Path(project_root)
     result_root = project_root / "result"
     published_root = project_root / "published"
     pipeline_fn = pipeline_fn or _default_pipeline_fn(project_root)
     git_fn = git_fn or _default_git_fn(project_root)
+    provenance_fn = provenance_fn or _default_provenance_fn(project_root)
 
     news_config = _news_config_for_mode(args.news_mode)
     report = pipeline_fn(
@@ -173,7 +190,11 @@ def run_publish(
         _LOGGER.warning("manifest에 run_id가 없어 source_run_id가 비어 publish됩니다.")
     trading_date = infer_trading_date(run_dir)
     symbol_count = _symbol_count(run_dir)
-    news_mode = "rule_based" if news_config is None else _effective_news_mode(report)
+    # news_mode records the configured mode. A silent per-symbol gemma->rule
+    # fallback inside scoring is not surfaced in the pipeline report, so it is
+    # not detectable here; the label reflects what was requested.
+    news_mode = "rule_based" if news_config is None else "gemma"
+    git_commit, git_branch = provenance_fn()
 
     meta = publish_artifacts(
         run_dir=run_dir,
@@ -182,7 +203,8 @@ def run_publish(
         news_mode=news_mode,
         source_run_id=str(manifest.get("run_id", "")),
         symbol_count=symbol_count,
-        git_branch="main",
+        git_commit=git_commit,
+        git_branch=git_branch,
     )
 
     if not args.no_push and not args.dry_run:
