@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import hmac
 import json
 import logging
 import re
@@ -90,6 +91,9 @@ class PipelineRuntimeConfig:
     real_start: str = "2018-01-01"
     prewarm_default_predictions: bool = True
     extra_args: tuple[str, ...] = ()
+    kakao_webhook_secret: str | None = None
+    max_concurrent_prediction_jobs: int = 2
+    refresh_cooldown_seconds: int = 60
 
     def build_command(
         self,
@@ -630,9 +634,6 @@ class KakaoColabPredictionBot:
         match = _STOCK_CODE_PATTERN.search(text)
         if match:
             return match.group(0)
-        first_token = text.split()[0]
-        if re.search(r"\d", first_token):
-            return first_token
         return None
 
     def _find_name_candidates(self, query: str) -> list[dict[str, Any]]:
@@ -1120,6 +1121,30 @@ class KakaoColabPredictionBot:
         return deduped
 
     def _start_prediction_job(self, symbol: str) -> bool:
+        with self._state_lock:
+            existing = self._job_registry.get(symbol, {})
+            if existing.get("status") == "running":
+                self._console_log(f"{self._display_code(symbol)} 예측 작업이 이미 실행 중입니다.")
+                return True
+            running_count = sum(
+                1
+                for key, state in self._job_registry.items()
+                if key != self.BOOTSTRAP_JOB_KEY and state.get("status") == "running"
+            )
+            max_jobs = max(1, int(self.runtime_config.max_concurrent_prediction_jobs or 1))
+            if running_count >= max_jobs:
+                self._console_log(
+                    f"{self._display_code(symbol)} 예측 작업 거부: 동시 실행 한도({max_jobs}) 초과"
+                )
+                return False
+            elapsed = self._job_elapsed_seconds(existing)
+            cooldown = max(0, int(self.runtime_config.refresh_cooldown_seconds or 0))
+            if elapsed is not None and elapsed < cooldown:
+                self._console_log(
+                    f"{self._display_code(symbol)} 예측 작업 거부: 재실행 대기시간 {cooldown}초 미만"
+                )
+                return False
+
         issue_summary_symbols = [symbol]
         add_symbols = [symbol]
         if self._is_bootstrap_required():
@@ -1869,11 +1894,7 @@ class KakaoColabPredictionBot:
         atomic_write_text(path, json.dumps(safe_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _build_response(self, text: str, quick_replies: list[tuple[str, str]] | None = None) -> dict[str, Any]:
-        message_text = str(text or "")
-        max_len = 900
-        if len(message_text) > max_len:
-            message_text = message_text[: max_len - 8].rstrip() + "\n...(생략)"
-        return attach_quick_replies(simple_text_response(message_text), quick_replies[:10] if quick_replies else None)
+        return attach_quick_replies(simple_text_response(str(text or "")), quick_replies[:10] if quick_replies else None)
 
 
 def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: PipelineRuntimeConfig | None = None):
@@ -1881,6 +1902,7 @@ def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: Pipel
 
     app = Flask(__name__)
     service = bot or KakaoColabPredictionBot(runtime_config=runtime_config)
+    effective_config = runtime_config or service.runtime_config
 
     @app.get("/health")
     def health():
@@ -1888,6 +1910,11 @@ def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: Pipel
 
     @app.post("/kakao/webhook")
     def kakao_webhook():
+        secret = str(effective_config.kakao_webhook_secret or "").strip()
+        if secret:
+            provided = request.headers.get("X-Webhook-Secret", "")
+            if not hmac.compare_digest(provided, secret):
+                return jsonify({"error": "unauthorized"}), 401
         payload = request.get_json(silent=True) or {}
         try:
             return jsonify(service.handle_kakao_payload(payload))
@@ -2126,6 +2153,9 @@ def main():
     parser.add_argument("--openai-model", default=None)
     parser.add_argument("--naver-client-id", default=None)
     parser.add_argument("--naver-client-secret", default=None)
+    parser.add_argument("--kakao-webhook-secret", default=None)
+    parser.add_argument("--max-concurrent-prediction-jobs", type=int, default=None)
+    parser.add_argument("--refresh-cooldown-seconds", type=int, default=None)
     parser.add_argument("--use-pyngrok", action="store_true")
     parser.add_argument("--ngrok-auth-token", default=None)
     parser.add_argument("--ngrok-domain", default=None)
@@ -2140,6 +2170,17 @@ def main():
         openai_model=args.openai_model or os.getenv("OPENAI_MODEL"),
         naver_client_id=args.naver_client_id or os.getenv("NAVER_CLIENT_ID"),
         naver_client_secret=args.naver_client_secret or os.getenv("NAVER_CLIENT_SECRET"),
+        kakao_webhook_secret=args.kakao_webhook_secret or os.getenv("KAKAO_WEBHOOK_SECRET"),
+        max_concurrent_prediction_jobs=(
+            args.max_concurrent_prediction_jobs
+            if args.max_concurrent_prediction_jobs is not None
+            else int(os.getenv("MAX_CONCURRENT_PREDICTION_JOBS", "2"))
+        ),
+        refresh_cooldown_seconds=(
+            args.refresh_cooldown_seconds
+            if args.refresh_cooldown_seconds is not None
+            else int(os.getenv("PREDICTION_REFRESH_COOLDOWN_SECONDS", "60"))
+        ),
     )
     if args.use_pyngrok:
         launched = launch_colab_kakao_bot(
