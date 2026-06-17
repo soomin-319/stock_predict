@@ -25,6 +25,7 @@ dev = ["pytest"]
 [project.scripts]
 stock-predict = "src.pipeline:main"
 stock-predict-kakao = "src.chatbot.kakao_colab_bot:main"
+stock-predict-publish = "src.ops.publish_predictions:main"
 stock-news-impact = "src.news_impact.run:main"
 
 [tool.setuptools.packages.find]
