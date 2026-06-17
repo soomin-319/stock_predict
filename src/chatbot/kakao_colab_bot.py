@@ -34,6 +34,7 @@ from src.chatbot.responses import attach_quick_replies, simple_text_response
 from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.news_impact_context import append_generated_news_impact_context
 from src.reports.result_formatter import validate_result_simple_schema
+from src.ops.published_store import load_published_simple
 from src.utils.atomic_files import atomic_write_text
 from src.utils.secrets import redact_argv, redact_text, redact_value
 from src.recommendation.close_betting import format_recommendation_message
@@ -749,6 +750,22 @@ class KakaoColabPredictionBot:
         return matched["Date"].max().strftime("%Y-%m-%d")
 
     def _load_cached_result_simple(self) -> pd.DataFrame:
+        baseline = load_published_simple(self.published_dir)
+        session = self._load_session_result_simple()
+        if baseline.empty:
+            return session
+        if session.empty:
+            return baseline.copy()
+        baseline = baseline.copy()
+        session = session.copy()
+        baseline["종목코드"] = baseline["종목코드"].astype(str)
+        session["종목코드"] = session["종목코드"].astype(str)
+        session_codes = set(session["종목코드"])
+        kept_baseline = baseline[~baseline["종목코드"].isin(session_codes)]
+        merged = pd.concat([session, kept_baseline], ignore_index=True)
+        return merged
+
+    def _load_session_result_simple(self) -> pd.DataFrame:
         result_simple_path = self._resolve_result_path("csv/result_simple.csv", self.result_simple_path)
         if not result_simple_path.exists():
             with self._state_lock:

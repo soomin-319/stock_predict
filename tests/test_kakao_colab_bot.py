@@ -2127,3 +2127,51 @@ def test_is_bootstrap_required_always_false(tmp_path):
         session_path="result/runtime/sessions.json",
     )
     assert bot._is_bootstrap_required() is False
+
+
+def _write_simple_csv(path: Path, rows: list[tuple[str, str, str]]):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # 세션 로더의 스키마 검증을 통과하도록 필수 컬럼을 모두 채운다.
+    header = "종목코드,종목명,권고,내일 예상 종가,내일 예상 수익률(%),상승확률(%),예측 신뢰도"
+    lines = [header]
+    lines += [
+        f"{code},{name},{rec},70000,1.0%,60.0%,70.0%" for code, name, rec in rows
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
+
+
+def _make_overlay_bot(tmp_path: Path) -> KakaoColabPredictionBot:
+    cfg = PipelineRuntimeConfig(project_root=tmp_path, published_dir="published/latest")
+    # published 베이스라인: 2종목
+    _write_simple_csv(
+        tmp_path / "published" / "latest" / "csv" / "result_simple.csv",
+        [("005930", "삼성전자", "관망"), ("000660", "SK하이닉스", "매수")],
+    )
+    bot = KakaoColabPredictionBot(
+        runtime_config=cfg,
+        result_simple_path="result/result_simple.csv",
+        state_path="result/runtime/jobs.json",
+        session_path="result/runtime/sessions.json",
+    )
+    return bot
+
+
+def test_baseline_served_without_session(tmp_path):
+    bot = _make_overlay_bot(tmp_path)
+    df = bot._load_cached_result_simple()
+    assert set(df["종목코드"]) == {"005930", "000660"}
+    row = df[df["종목코드"] == "005930"].iloc[0]
+    assert row["권고"] == "관망"
+
+
+def test_session_row_overrides_baseline(tmp_path):
+    bot = _make_overlay_bot(tmp_path)
+    # 세션 온디맨드 결과: 005930 최신화(권고 변경)
+    _write_simple_csv(
+        tmp_path / "result" / "result_simple.csv",
+        [("005930", "삼성전자", "매수")],
+    )
+    df = bot._load_cached_result_simple()
+    assert set(df["종목코드"]) == {"005930", "000660"}  # 베이스라인 + 세션 합집합
+    samsung = df[df["종목코드"] == "005930"].iloc[0]
+    assert samsung["권고"] == "매수"  # 세션이 베이스라인을 덮음
