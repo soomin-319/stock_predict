@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import shutil
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+from src.utils.atomic_files import atomic_write_text
 
 PUBLISHED_ARTIFACTS: tuple[str, ...] = (
     "csv/result_simple.csv",
@@ -58,7 +61,7 @@ def copy_published_set(source_dir: str | Path, dest_dir: str | Path) -> None:
     for rel in PUBLISHED_ARTIFACTS:
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(f".{target.name}.tmp")
+        tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
         shutil.copy2(source / rel, tmp)
         tmp.replace(target)
 
@@ -66,7 +69,8 @@ def copy_published_set(source_dir: str | Path, dest_dir: str | Path) -> None:
 def write_publish_meta(dest_dir: str | Path, meta: PublishMeta) -> Path:
     target = Path(dest_dir) / PUBLISH_META_NAME
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
+    atomic_write_text(
+        target,
         json.dumps(meta.to_dict(), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
@@ -102,7 +106,8 @@ def update_index(published_root: str | Path, meta: PublishMeta) -> dict[str, Any
     entries.append(entry)
     entries.sort(key=lambda e: str(e.get("trading_date", "")), reverse=True)
     payload = {"latest": entries[0]["trading_date"] if entries else None, "entries": entries}
-    (root / INDEX_NAME).write_text(
+    atomic_write_text(
+        root / INDEX_NAME,
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
