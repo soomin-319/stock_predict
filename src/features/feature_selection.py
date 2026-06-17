@@ -124,6 +124,8 @@ DISPLAY_ONLY_CONTEXT_COLUMNS = frozenset(
     }
 )
 
+DISPLAY_ONLY_CONTEXT_PREFIXES = ("news_impact_",)
+
 MODEL_FEATURE_COLUMN_BASE = FEATURE_COLUMN_BASE - DISPLAY_ONLY_CONTEXT_COLUMNS
 
 
@@ -132,6 +134,7 @@ def select_feature_columns(df: pd.DataFrame) -> list[str]:
         c
         for c in df.columns
         if c not in DISPLAY_ONLY_CONTEXT_COLUMNS
+        and not c.startswith(DISPLAY_ONLY_CONTEXT_PREFIXES)
         and (c.startswith(FEATURE_COLUMN_PREFIXES) or c.endswith("_missing") or c in MODEL_FEATURE_COLUMN_BASE)
     ]
 
