@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 from colab import stock_predict_colab as colab_runner
+from colab.stock_predict_colab import load_published_predictions
 
 
 def test_should_bootstrap_default_symbols_for_demo_symbols(tmp_path: Path):
@@ -153,3 +154,41 @@ def test_run_colab_pipeline_incremental_refresh_uses_append(monkeypatch, tmp_pat
     assert captured["append"]["symbols"] == ["005930.KS"]
     assert captured["append"]["start"] == "2024-01-10"
     assert captured["run"]["input_csv"] == "data/real_ohlcv.csv"
+
+
+def _seed_published(root: Path, date: str):
+    for sub in ("latest", f"history/{date}"):
+        d = root / "published" / sub / "csv"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "result_simple.csv").write_text(
+            "종목코드,종목명\n005930,삼성전자\n", encoding="utf-8-sig"
+        )
+        (root / "published" / sub / "publish_meta.json").write_text(
+            f'{{"trading_date": "{date}", "news_mode": "gemma", "symbol_count": 1}}',
+            encoding="utf-8",
+        )
+    (root / "published" / "index.json").write_text(
+        f'{{"latest": "{date}", "entries": [{{"trading_date": "{date}"}}]}}',
+        encoding="utf-8",
+    )
+
+
+def test_load_published_predictions_latest(tmp_path, monkeypatch):
+    _seed_published(tmp_path, "2026-06-17")
+    monkeypatch.setattr(colab_runner, "PROJECT_ROOT", tmp_path)
+    paths = load_published_predictions(date=None)
+    assert Path(paths["result_simple_csv"]).exists()
+    assert paths["trading_date"] == "2026-06-17"
+
+
+def test_load_published_predictions_specific_date(tmp_path, monkeypatch):
+    _seed_published(tmp_path, "2026-06-17")
+    monkeypatch.setattr(colab_runner, "PROJECT_ROOT", tmp_path)
+    paths = load_published_predictions(date="2026-06-17")
+    assert "history/2026-06-17" in Path(paths["result_simple_csv"]).as_posix()
+
+
+def test_load_published_predictions_missing_returns_empty_paths(tmp_path, monkeypatch):
+    monkeypatch.setattr(colab_runner, "PROJECT_ROOT", tmp_path)
+    paths = load_published_predictions(date="2099-01-01")
+    assert paths["result_simple_csv"] == ""
