@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,8 @@ from src.ops.published_store import (
     write_publish_meta,
 )
 from src.reports.run_artifacts import resolve_latest_run_dir
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def publish_artifacts(
@@ -89,15 +92,17 @@ def _news_config_for_mode(news_mode: str) -> str | None:
 
 def _default_pipeline_fn(project_root: Path) -> Callable[..., dict[str, Any]]:
     from src.data.fetch_real_data import append_real_ohlcv_csv, save_real_ohlcv_csv
-    from src.pipeline import (
-        _fallback_symbols_from_input_or_default,
-        _resolve_incremental_fetch_start,
-        run_pipeline,
+    # Imports deferred to call time to avoid importing the heavy pipeline graph
+    # at module load and to sidestep circular imports.
+    from src.data.cli_refresh import (
+        fallback_symbols_from_input_or_default as _fallback_symbols_from_input_or_default,
+        resolve_incremental_fetch_start as _resolve_incremental_fetch_start,
     )
+    from src.pipeline import run_pipeline
 
     input_csv = str(project_root / "data" / "real_ohlcv.csv")
 
-    def _run(news_impact_llm_config: str | None, full_refresh: bool) -> dict[str, Any]:
+    def _run(news_impact_llm_config: str | None, full_refresh: bool, config_json: str | None = None) -> dict[str, Any]:
         symbols = _fallback_symbols_from_input_or_default(input_csv)
         if full_refresh:
             save_real_ohlcv_csv(input_csv, symbols=symbols, start="2020-01-01")
@@ -111,6 +116,7 @@ def _default_pipeline_fn(project_root: Path) -> Callable[..., dict[str, Any]]:
             use_external=False,
             use_investor_context=True,
             news_impact_llm_config=news_impact_llm_config,
+            config_json=config_json,
         )
 
     return _run
@@ -152,13 +158,19 @@ def run_publish(
     git_fn = git_fn or _default_git_fn(project_root)
 
     news_config = _news_config_for_mode(args.news_mode)
-    report = pipeline_fn(news_impact_llm_config=news_config, full_refresh=bool(args.full_refresh))
+    report = pipeline_fn(
+        news_impact_llm_config=news_config,
+        full_refresh=bool(args.full_refresh),
+        config_json=getattr(args, "config_json", None),
+    )
     manifest = report.get("manifest") if isinstance(report, dict) else None
     ensure_operational_manifest(manifest)
 
     run_dir = resolve_latest_run_dir(result_root)
     if run_dir is None:
         raise FileNotFoundError(f"run dir를 찾을 수 없습니다: {result_root}")
+    if not manifest.get("run_id"):
+        _LOGGER.warning("manifest에 run_id가 없어 source_run_id가 비어 publish됩니다.")
     trading_date = infer_trading_date(run_dir)
     symbol_count = _symbol_count(run_dir)
     news_mode = "rule_based" if news_config is None else _effective_news_mode(report)

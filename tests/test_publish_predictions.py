@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.ops.publish_predictions import publish_artifacts
+import pytest
+
+from src.ops.publish_predictions import _effective_news_mode, publish_artifacts
 from src.ops.published_store import read_index
 
 
@@ -41,8 +43,6 @@ def test_publish_artifacts_writes_latest_history_index(tmp_path: Path):
     assert json.loads((published_root / "latest" / "publish_meta.json").read_text(encoding="utf-8"))["news_mode"] == "gemma"
     assert read_index(published_root)["latest"] == "2026-06-17"
 
-
-import pytest
 
 from src.ops.publish_predictions import infer_trading_date, ensure_operational_manifest
 
@@ -90,7 +90,7 @@ def test_run_publish_invokes_pipeline_and_publishes(tmp_path: Path):
 
     pipeline_calls = []
 
-    def fake_pipeline(news_impact_llm_config, full_refresh):
+    def fake_pipeline(news_impact_llm_config, full_refresh, config_json=None):
         pipeline_calls.append({"cfg": news_impact_llm_config, "full": full_refresh})
         return {"manifest": {"promoted": True, "status": "pass", "run_id": "rid-9"}}
 
@@ -117,7 +117,7 @@ def test_run_publish_rule_mode_uses_no_llm_config(tmp_path: Path):
 
     captured = {}
 
-    def fake_pipeline(news_impact_llm_config, full_refresh):
+    def fake_pipeline(news_impact_llm_config, full_refresh, config_json=None):
         captured["cfg"] = news_impact_llm_config
         return {"manifest": {"promoted": True, "status": "pass", "run_id": "rid-r"}}
 
@@ -128,3 +128,11 @@ def test_run_publish_rule_mode_uses_no_llm_config(tmp_path: Path):
         git_fn=lambda *a, **k: None,
     )
     assert captured["cfg"] is None
+
+
+def test_effective_news_mode_rule_aliases_and_default():
+    assert _effective_news_mode({"news_impact": {"mode": "rule"}}) == "rule_based"
+    assert _effective_news_mode({"news_impact": {"mode": "rule_based"}}) == "rule_based"
+    assert _effective_news_mode({"news_impact": {"mode": "heuristic"}}) == "rule_based"
+    assert _effective_news_mode({}) == "gemma"
+    assert _effective_news_mode({"news_impact": {"mode": "llm"}}) == "gemma"
