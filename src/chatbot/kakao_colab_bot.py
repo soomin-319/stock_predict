@@ -73,7 +73,7 @@ class UserSessionState:
 class PipelineRuntimeConfig:
     project_root: Path = field(default_factory=lambda: Path(__file__).resolve().parents[2])
     python_executable: str = sys.executable
-    input_csv: str = "data/real_ohlcv.csv"
+    input_csv: str = "result/session/session_ohlcv.csv"
     report_json: str = "pipeline_report_with_context.json"
     dart_api_key: str | None = None
     dart_corp_map_csv: str | None = "data/dart_corp_map.csv"
@@ -84,12 +84,13 @@ class PipelineRuntimeConfig:
     naver_client_id: str | None = None
     naver_client_secret: str | None = None
     use_external: bool = False
-    bootstrap_default_symbols: bool = True
-    bootstrap_on_launch: bool = True
+    bootstrap_default_symbols: bool = False
+    bootstrap_on_launch: bool = False
     async_issue_summary_on_demand: bool = True
     real_start: str = "2018-01-01"
-    prewarm_default_predictions: bool = True
+    prewarm_default_predictions: bool = False
     news_impact_llm_config: str | None = None
+    published_dir: str = "published/latest"
     extra_args: tuple[str, ...] = ()
 
     def build_command(
@@ -189,6 +190,9 @@ class KakaoColabPredictionBot:
         self.runtime_config = runtime_config or PipelineRuntimeConfig()
         self.project_root = Path(self.runtime_config.project_root)
         self.result_root = self.project_root / "result"
+        self.published_dir = self.project_root / self.runtime_config.published_dir
+        # 온디맨드 세션 입력 CSV의 부모 디렉터리 보장(--add-symbols append 대상)
+        (self.project_root / self.runtime_config.input_csv).parent.mkdir(parents=True, exist_ok=True)
         self._allow_unvalidated_result_paths = result_simple_path is not None
         self.result_simple_path = self.project_root / (result_simple_path or "result/result_simple.csv")
         self.result_detail_path = self.project_root / "result" / "result_detail.csv"
@@ -1098,15 +1102,8 @@ class KakaoColabPredictionBot:
         self._finalize_process(symbol, int(exit_code))
 
     def _is_bootstrap_required(self) -> bool:
-        if self._bootstrap_all_symbols_done:
-            return False
-        if not self.runtime_config.bootstrap_default_symbols:
-            return False
-        with self._state_lock:
-            has_history = bool(self._job_registry)
-        if has_history:
-            return False
-        return not self.result_simple_path.exists()
+        # published 베이스라인 서빙 모델에서는 첫 요청 시 전 종목 부트스트랩을 하지 않는다.
+        return False
 
     def _load_bootstrap_symbols_from_krx_map(self) -> list[str]:
         path = self.project_root / "data" / "krx_symbol_name_map.csv"
@@ -2124,7 +2121,7 @@ def main():
     parser = argparse.ArgumentParser(description="KakaoTalk chatbot webhook for the stock prediction pipeline")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--input", default="data/real_ohlcv.csv")
+    parser.add_argument("--input", default="result/session/session_ohlcv.csv")
     parser.add_argument("--report-json", default="pipeline_report_with_context.json")
     parser.add_argument("--dart-api-key", default=None)
     parser.add_argument("--dart-corp-map-csv", default="data/dart_corp_map.csv")

@@ -1470,7 +1470,7 @@ def test_launch_colab_kakao_bot_starts_bootstrap_after_server_start(monkeypatch,
     )
 
     launched = launch_colab_kakao_bot(
-        runtime_config=PipelineRuntimeConfig(project_root=tmp_path, prewarm_default_predictions=True),
+        runtime_config=PipelineRuntimeConfig(project_root=tmp_path, prewarm_default_predictions=True, bootstrap_on_launch=True),
         tunnel_config=PyngrokTunnelConfig(port=8000),
     )
 
@@ -2107,3 +2107,23 @@ def test_build_command_excludes_llm_config_when_unset():
     cfg = PipelineRuntimeConfig(news_impact_llm_config=None)
     cmd = cfg.build_command("005930.KS", enable_news_impact_llm=True)
     assert "--news-impact-llm-config" not in cmd
+
+
+def test_runtime_config_defaults_disable_bootstrap():
+    cfg = PipelineRuntimeConfig()
+    assert cfg.bootstrap_on_launch is False
+    assert cfg.prewarm_default_predictions is False
+    assert cfg.bootstrap_default_symbols is False
+    assert cfg.published_dir == "published/latest"
+    assert cfg.input_csv == "result/session/session_ohlcv.csv"
+
+
+def test_is_bootstrap_required_always_false(tmp_path):
+    cfg = PipelineRuntimeConfig(project_root=tmp_path)
+    bot = KakaoColabPredictionBot(
+        runtime_config=cfg,
+        result_simple_path="result/result_simple.csv",
+        state_path="result/runtime/jobs.json",
+        session_path="result/runtime/sessions.json",
+    )
+    assert bot._is_bootstrap_required() is False
