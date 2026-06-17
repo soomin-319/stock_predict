@@ -40,3 +40,28 @@ def test_publish_artifacts_writes_latest_history_index(tmp_path: Path):
     assert latest_simple.exists() and hist_simple.exists()
     assert json.loads((published_root / "latest" / "publish_meta.json").read_text(encoding="utf-8"))["news_mode"] == "gemma"
     assert read_index(published_root)["latest"] == "2026-06-17"
+
+
+import pytest
+
+from src.ops.publish_predictions import infer_trading_date, ensure_operational_manifest
+
+
+def test_infer_trading_date_from_detail(tmp_path: Path):
+    run_dir = tmp_path / "runs" / "rid-1"
+    (run_dir / "csv").mkdir(parents=True)
+    (run_dir / "csv" / "result_detail.csv").write_text(
+        "Symbol,Date\n005930.KS,2026-06-16\n005930.KS,2026-06-17\n", encoding="utf-8-sig"
+    )
+    assert infer_trading_date(run_dir) == "2026-06-17"
+
+
+def test_ensure_operational_manifest_accepts_promoted_pass():
+    ensure_operational_manifest(
+        {"promoted": True, "status": "pass", "environment": "production", "data_mode": "real"}
+    )
+
+
+def test_ensure_operational_manifest_rejects_non_operational():
+    with pytest.raises(ValueError):
+        ensure_operational_manifest({"promoted": False, "status": "fail"})
