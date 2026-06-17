@@ -91,3 +91,45 @@ def test_publish_meta_to_dict_shape():
         "symbol_count": 200,
         "git": {"commit": "abc123", "branch": "main"},
     }
+
+
+from src.ops.published_store import (
+    read_index,
+    write_publish_meta,
+    update_index,
+)
+
+
+def _meta(date: str, mode: str = "gemma") -> PublishMeta:
+    return PublishMeta(
+        generated_at_kst=f"{date}T18:05:00+09:00",
+        trading_date=date,
+        news_mode=mode,
+        source_run_id=f"rid-{date}",
+        symbol_count=200,
+    )
+
+
+def test_write_publish_meta(tmp_path: Path):
+    dest = tmp_path / "published" / "latest"
+    dest.mkdir(parents=True)
+    write_publish_meta(dest, _meta("2026-06-17"))
+    payload = json.loads((dest / "publish_meta.json").read_text(encoding="utf-8"))
+    assert payload["trading_date"] == "2026-06-17"
+    assert payload["git"] == {"commit": None, "branch": None}
+
+
+def test_update_index_dedups_and_sorts(tmp_path: Path):
+    root = tmp_path / "published"
+    root.mkdir()
+    update_index(root, _meta("2026-06-16"))
+    update_index(root, _meta("2026-06-17"))
+    update_index(root, _meta("2026-06-17", mode="rule_based"))
+
+    index = read_index(root)
+    assert index["latest"] == "2026-06-17"
+    dates = [e["trading_date"] for e in index["entries"]]
+    assert dates == ["2026-06-17", "2026-06-16"]
+    latest_entry = index["entries"][0]
+    assert latest_entry["news_mode"] == "rule_based"
+    assert latest_entry["symbol_count"] == 200
