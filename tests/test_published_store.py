@@ -133,3 +133,28 @@ def test_update_index_dedups_and_sorts(tmp_path: Path):
     latest_entry = index["entries"][0]
     assert latest_entry["news_mode"] == "rule_based"
     assert latest_entry["symbol_count"] == 200
+
+
+import pandas as pd
+
+from src.ops.published_store import load_published_simple, read_publish_meta
+
+
+def test_load_published_simple_reads_codes_as_str(tmp_path: Path):
+    dest = tmp_path / "published" / "latest"
+    (dest / "csv").mkdir(parents=True)
+    (dest / "csv" / "result_simple.csv").write_text(
+        "종목코드,종목명\n005930,삼성전자\n", encoding="utf-8-sig"
+    )
+    df = load_published_simple(dest)
+    assert list(df["종목코드"]) == ["005930"]
+    assert df["종목코드"].dtype == object
+
+
+def test_load_published_simple_missing_returns_empty(tmp_path: Path):
+    df = load_published_simple(tmp_path / "nope")
+    assert df.empty
+
+
+def test_read_publish_meta_missing_returns_empty(tmp_path: Path):
+    assert read_publish_meta(tmp_path / "nope") == {}

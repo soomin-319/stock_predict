@@ -107,3 +107,24 @@ def update_index(published_root: str | Path, meta: PublishMeta) -> dict[str, Any
         encoding="utf-8",
     )
     return payload
+
+
+def load_published_simple(published_dir: str | Path) -> pd.DataFrame:
+    path = Path(published_dir) / "csv" / "result_simple.csv"
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(path, dtype={"종목코드": str}, encoding="utf-8-sig")
+    except (OSError, ValueError, pd.errors.ParserError):
+        return pd.DataFrame()
+
+
+def read_publish_meta(published_dir: str | Path) -> dict[str, Any]:
+    path = Path(published_dir) / PUBLISH_META_NAME
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
