@@ -65,9 +65,13 @@ Append selected symbols:
 python src/pipeline.py --input data/real_ohlcv.csv --add-symbols 005930 000660.KS --real-start 2024-01-01
 ```
 
+## Daily Publish
+
+Publish the default 200-symbol baseline to `published/` and push it to GitHub by running `stock-predict-publish` once, locally, on demand (no cron). It incrementally refreshes real data, runs the pipeline, copies the operational run into `published/latest/` and `published/history/<trading-date>/`, updates `published/index.json`, then commits and pushes. Use `--no-push` to commit only, `--dry-run` to write the published files without committing, `--full-refresh` to refetch from scratch, and `--news-mode rule` to force rule-based news impact (otherwise gemma at `localhost:8001` with automatic rule-based fallback). News/disclosure scores stay display-only and do not change `predicted_return`, recommendation, or signal policy. See the README "Daily Publish" section for the command/output reference.
+
 ## Kakao/Colab Bot
 
-Operational deployment is GitHub -> Google Colab -> KakaoTalk. Keep the code in GitHub, load or clone it inside Colab, start the chatbot entry point from that runtime, and expose the Flask webhook to KakaoTalk, typically through ngrok.
+Operational deployment is GitHub -> Google Colab -> KakaoTalk. Keep the code and the published baseline (`published/`) in GitHub, load or clone it inside Colab, start the chatbot entry point from that runtime, and expose the Flask webhook to KakaoTalk, typically through ngrok. In Colab, call `load_published_predictions()` to display the GitHub baseline without running the pipeline.
 
 Start the chatbot entry point:
 
@@ -77,10 +81,10 @@ stock-predict-kakao
 
 The bot:
 
-- reads cached prediction rows from `result/result_simple.csv`
+- serves the `published/latest/` baseline and overlays any session predictions from `result/` (session rows override the baseline per 종목코드)
 - maps user symbols with suffix-insensitive matching
-- uses `result/result_detail.csv` for the latest prediction date when available
-- starts a background prediction job if a symbol is missing
+- resolves the latest prediction date from the session detail first, then the published baseline detail
+- predicts only the specific symbol a user requests (or asks to refresh) within the session; automatic bootstrap/prewarm of the default symbols is off, and session predictions are not pushed to GitHub
 - formats cached rows through one safe formatter path and falls back to the same row-based formatter on legacy formatter errors
 - treats news and disclosure summaries as display-only context; they are shown in responses but do not change the next-day expected return or buy/sell/hold signal
 
