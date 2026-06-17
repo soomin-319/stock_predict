@@ -96,6 +96,13 @@ def detect_prompt_injection(text: str) -> tuple[str, ...]:
         "recommend selling",
         "buy this stock",
         "sell this stock",
+        "이전 지시를 무시",
+        "앞선 지시를 무시",
+        "시스템 프롬프트",
+        "매수를 추천",
+        "매도 추천",
+        "이 종목 매수",
+        "이 종목 매도",
     )
     if any(pattern in lowered for pattern in patterns):
         return ("prompt_injection_risk",)
