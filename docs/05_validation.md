@@ -116,7 +116,7 @@ def run_long_only_topk_backtest(df: pd.DataFrame, cfg: BacktestConfig) -> dict
 ### BacktestConfig
 
 ```python
-# src/config/settings.py:77
+# src/config/settings.py:79
 @dataclass
 class BacktestConfig:
     top_k: int = 20                    # 선택 종목 수
@@ -251,9 +251,9 @@ def classification_metrics(y_true, y_prob) -> dict
 
 ---
 
-## 개선 및 수정 제안
+## 개선 및 수정 진행 현황
 
-> 우선순위: **P0(정확성/문서 불일치) > P1(견고성) > P2(성능/품질)**.
+> 우선순위: **P0(정확성/문서 불일치) > P1(견고성) > P2(성능/품질)**. 기준일: 2026-06-17.
 
 ### 문서 정정 완료 — `min_signal_score` 필터 설명
 
@@ -288,7 +288,7 @@ def classification_metrics(y_true, y_prob) -> dict
 
 ### P1 — 폴드 병렬화의 메모리·직렬화 비용
 
-- **문제**: `_iter_folds`가 각 폴드의 `train_df`/`valid_df` 슬라이스를 **리스트로 모두 materialize**한 뒤(`walk_forward.py:214`) `ProcessPoolExecutor`로 넘긴다. 확장창이라 후반 폴드의 `train_df`가 매우 커서 (a) 전체 슬라이스 동시 보유로 메모리 급증, (b) 프로세스 간 대용량 피클 직렬화 오버헤드가 발생한다(Windows spawn에서 특히 큼).
+- **문제**: `walk_forward_validate_result`가 `list(_iter_folds(df, cfg))`로 각 폴드의 `train_df`/`valid_df` 슬라이스를 **리스트로 모두 materialize**한 뒤 `_execute_folds`(`walk_forward.py:226`, `_iter_folds`는 `:37`, `_execute_folds`는 `:123`) `ProcessPoolExecutor`로 넘긴다. 확장창이라 후반 폴드의 `train_df`가 매우 커서 (a) 전체 슬라이스 동시 보유로 메모리 급증, (b) 프로세스 간 대용량 피클 직렬화 오버헤드가 발생한다(Windows spawn에서 특히 큼).
 - **제안**: 폴드를 인덱스 경계만 전달하고 워커 내부에서 슬라이싱, 또는 공유메모리/Arrow. 폴드 lazy 생성으로 동시 보유량 축소.
 
 ### 진행 완료 — OOF 안정 컬럼 충돌 진단화

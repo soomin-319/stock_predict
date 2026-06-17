@@ -68,32 +68,48 @@ src/
 │   ├── context_policy.py    → 07_reports
 │   └── run_artifacts.py     → 07_reports
 ├── news_impact/             → 08_news_impact
+├── ops/
+│   ├── publish_predictions.py → 01_pipeline / 07_reports (기준데이터 게시)
+│   └── published_store.py     → 07_reports (게시 세트/메타/인덱스 I/O)
 ├── chatbot/                 → 09_chatbot
 └── utils/
     ├── atomic_files.py      → 07_reports
     ├── secrets.py           → 10_config
     └── result_cleanup.py    → 07_reports
+
+colab/
+└── stock_predict_colab.py   → 09_chatbot (load_published_predictions: published 베이스라인 서빙)
 ```
 
-## 개선 및 수정 제안 (교차 요약)
+> 기준데이터 게시(`stock-predict-publish`) → published/ → Colab(`load_published_predictions`)·챗봇 베이스라인 서빙 흐름은 [01_pipeline.md](01_pipeline.md)·[07_reports.md](07_reports.md)·[09_chatbot.md](09_chatbot.md)에 분산 기록.
 
-각 문서 하단에 기능별 **개선 및 수정 제안** 섹션을 추가했다. 아래는 우선순위 **P0(정확성/버그/누수)** 항목만 모은 교차 요약이다.
+## 개선 및 수정 진행 현황 (교차 요약)
+
+각 문서 하단에 기능별 **개선 및 수정 진행 현황** 섹션이 있다. 아래는 우선순위 **P0(정확성/버그/누수)** 항목의 현재 상태 교차 요약이다. 기준일: 2026-06-17.
+
+### 해결됨 (P0)
+
+| 영역 | 이슈 | 현재 상태 | 문서 |
+|------|------|-----------|------|
+| 데이터 | KOSDAQ 종목 `.KS` 강제 변환 | KRX 시장 매핑·`.KS`/`.KQ` 교차 폴백 | [02](02_data.md) |
+| 데이터 | `load_ohlcv_csv` BOM 미처리 | `encoding="utf-8-sig"` 적용(`loaders.py:12`) | [02](02_data.md) |
+| 데이터 | 미조정 가격 가짜 급등락 | 수정주가/극단치 플래그 적용 | [02](02_data.md) |
+| 피처 | 외부 지수 "당일" 조인 누수 | `shift(1)` 지연 적용(`external_features.py:162`) | [03](03_features.md) |
+| 피처 | 외부 피처 `bfill()` 역채움 | `bfill()` 제거 | [03](03_features.md) |
+| 피처 | 문서 오류: `vol_ratio_20` 변동성 표기 | 거래량 급증 지표로 본문 정정(`03_features.md:42`) | [03](03_features.md) |
+| 모델 | 분위수 교차 미보정 | `np.sort`로 단조 보정(`lgbm_heads.py:248`) | [04](04_model.md) |
+| 검증 | `min_signal_score` 필터 미적용 | 본문 정정(실제 필터 기준 명시) | [05](05_validation.md) |
+| 검증 | 선택 기준 문서 불일치 | `predicted_return` 우선으로 정정 | [05](05_validation.md) |
+| 검증 | `result_validity` 검사 범위 과장 | 실제 검사 조건으로 정정 | [05](05_validation.md) |
+| 시그널 | 이벤트 부스트 **이중 적용** | idempotent 부스트로 수정 | [06](06_signal_policy.md) |
+| 뉴스 | LLM 판정 키 문서 불일치 | `LLM_REQUIRED_KEYS`로 본문 정정 | [08](08_news_impact.md) |
+| 설정 | `load_app_config` 시그니처 불일치 | `config_path`로 본문 정정(`settings.py:163`) | [10](10_config.md) |
+
+### 미해결 (P0)
 
 | 영역 | 핵심 이슈 | 위치 | 문서 |
 |------|-----------|------|------|
-| 데이터 | KOSDAQ 종목이 `.KS`로 강제 변환되어 수집 실패 | `data/fetch_real_data.py:43` | [02](02_data.md) |
-| 데이터 | `load_ohlcv_csv` BOM 미처리(문서는 자동감지 주장) | `data/loaders.py:12` | [02](02_data.md) |
-| 데이터 | 미조정(unadjusted) 가격 → 분할/증자 시 가짜 급등락 | `fetch_real_data.py:94` | [02](02_data.md) |
-| 피처 | 미국 지수 "당일" 조인으로 미래정보 누수 | `features/external_features.py:185` | [03](03_features.md) |
-| 피처 | 외부 피처 `bfill()`이 미래값을 과거로 역채움 | `external_features.py:184` | [03](03_features.md) |
-| 피처 | 문서 오류: `vol_ratio_20`은 변동성이 아닌 거래량 비율 | `price_features.py:192` | [03](03_features.md) |
-| 모델 | 분위수 교차 미보정 → `uncertainty_width` 음수 가능 | `models/lgbm_heads.py:194` | [04](04_model.md) |
-| 검증 | 문서가 약속한 `min_signal_score` 필터 미적용 | `validation/backtest.py:65` | [05](05_validation.md) |
-| 검증 | 선택 기준이 문서(signal_score)와 달리 predicted_return | `backtest.py:99` | [05](05_validation.md) |
-| 검증 | `result_validity` 검사가 문서 주장보다 약함 | `validation/result_validity.py` | [05](05_validation.md) |
-| 시그널 | 최신 예측 경로에서 이벤트 부스트 **이중 적용** | `pipeline.py:707,719` | [06](06_signal_policy.md) |
-| 뉴스 | LLM 판정 키 문서가 실제 스키마와 불일치 | `news_impact/impact_judge.py:12` | [08](08_news_impact.md) |
-| 챗봇 | `/webhook` 인증 부재(자원 고갈 위험) | `chatbot/kakao_colab_bot.py:1878` | [09](09_chatbot.md) |
-| 설정 | 문서의 `load_app_config` 시그니처 불일치 | `config/settings.py:161` | [10](10_config.md) |
+| 챗봇 | `/kakao/webhook` 인증 부재(자원 고갈 위험) | `chatbot/kakao_colab_bot.py:1912` | [09](09_chatbot.md) |
+| 챗봇 | 잡 제출 레이트리밋/동시성 상한 부재 | `chatbot/kakao_colab_bot.py` | [09](09_chatbot.md) |
 
-> 각 항목의 상세 근거와 제안은 해당 문서의 "개선 및 수정 제안" 섹션 참조.
+> 각 항목의 상세 근거와 남은 제안(P1/P2 포함)은 해당 문서의 "개선 및 수정 진행 현황" 섹션 참조.

@@ -73,22 +73,30 @@ watchlist.csv + company_master.csv
 ```python
 # src/news_impact/impact_judge.py
 def build_system_prompt() -> str
-def build_news_user_prompt(input: NewsAnalysisInput) -> str
-def judgment_to_impact_event(judgment: dict, item: NewsItem) -> ImpactEvent
-def detect_prompt_injection(text: str) -> bool
+def build_news_user_prompt(analysis_input: NewsAnalysisInput, summary: str | None = None) -> str
+def judgment_to_impact_event(
+    judgment: dict, candidate: MappingCandidate, event_id: str,
+    cluster_id: str, company: str, sector: str, evidence_urls: tuple[str, ...],
+) -> ImpactEvent
+def detect_prompt_injection(text: str) -> tuple[str, ...]
 ```
 
-각 뉴스 기사에 대해 LLM에게 다음을 판정하도록 요청:
+각 뉴스 기사에 대해 LLM에게 다음을 판정하도록 요청한다. 실제 필수 키는 `impact_judge.py`의 `LLM_REQUIRED_KEYS`로 고정되어 있다:
 
-| 판정 항목 | 설명 |
+| 판정 항목(`LLM_REQUIRED_KEYS`) | 설명 |
 |-----------|------|
-| `impact_direction` | 주가 방향성 (`positive` / `negative` / `neutral`) |
-| `impact_magnitude` | 임팩트 크기 (0~10) |
-| `confidence` | 판정 신뢰도 (0~1) |
 | `event_type` | 이벤트 분류 (실적, 공시, 산업이슈 등) |
-| `reasoning` | 판정 근거 (한국어) |
+| `direction` | 주가 방향성 |
+| `impact_score` | 임팩트 점수 |
+| `impact_strength` | 임팩트 강도 |
+| `confidence` | 판정 신뢰도 |
+| `time_horizon` | 영향 지속 시계(time horizon) |
+| `reason` | 판정 근거 (한국어) |
+| `why_may_be_wrong` | 반대 시나리오·오판 가능성 |
+| `risk_flags` | 위험 플래그 목록 |
 
-`detect_prompt_injection()`: 악의적 뉴스 콘텐츠가 LLM 프롬프트를 조작하는 것을 방지.
+위 키 중 하나라도 누락되면 `judgment_to_impact_event`가 `ValueError`를 던진다.  
+`detect_prompt_injection()`: 악의적 뉴스 콘텐츠의 프롬프트 조작 징후를 탐지해 **위험 플래그 튜플**을 반환한다(빈 튜플이면 무위험). 현재는 영어 문구 부분일치 블록리스트이며, 탐지되어도 본문은 그대로 LLM에 전달되고 위험 플래그만 부여된다.
 
 ---
 
@@ -128,22 +136,37 @@ class LlamaCppClient:           # 로컬 Llama.cpp 모델 클라이언트
 ## 스키마 (`schema.py`)
 
 ```python
-# src/news_impact/schema.py
+# src/news_impact/schema.py (핵심 필드만 발췌)
 @dataclass
 class NewsItem:
+    source: str
     title: str
-    body: str
-    published_at: str
-    provider: str
+    summary: str
     url: str
+    publisher_domain: str | None
+    published_at: datetime
+    signal_at: datetime
+    market_session: MarketSession
+    quality_flags: list[str] | tuple[str, ...]
+    # 외 original_url, publisher_confidence, timestamp_source, collected_at, raw_text, storage_policy
 
 @dataclass
 class ImpactEvent:
-    symbol: str
-    impact_direction: str
-    impact_magnitude: float
+    event_id: str
+    cluster_id: str
+    ticker: str
+    company: str
+    sector: str
+    event_type: ImpactEventType
+    impact_direction: ImpactDirection
+    impact_strength: float
+    impact_score: float
+    time_horizon: TimeHorizon
     confidence: float
-    event_type: str
+    reason: str
+    why_may_be_wrong: str
+    risk_flags: list[str] | tuple[str, ...]
+    # 외 expectedness, novelty_score, already_reflected_price_move, evidence_urls
 
 @dataclass
 class RunAudit:
@@ -188,11 +211,17 @@ def assign_semantic_cluster_ids(items, clusterer) -> list
 뉴스 임팩트 점수의 실제 주가 예측력을 검증:
 
 ```python
-# src/news_impact/backtester.py
-def run_news_impact_backtest(events: list[ImpactEvent], price_data: pd.DataFrame) -> dict
+# src/news_impact/backtester.py (공개 함수)
+def match_signal_returns(
+    signals: list[BacktestSignal], prices: list[PriceBar],
+    round_trip_cost_bps: float = 26.0, include_missing: bool = False,
+) -> list[BacktestObservation]
+def calculate_metrics(observations, basket_size: int = 5) -> BacktestMetrics  # IC, rank_IC, hit_ratio, top_bottom_spread
+def summarize_by_bucket(observations, bucket: str) -> dict[str, BacktestMetrics]
+def compare_score_variants(baseline_observations, adjusted_observations) -> ...
 ```
 
-이벤트 발생 후 N일 수익률과 임팩트 방향성의 일치율을 측정.
+신호(`BacktestSignal`)를 진입 거래일 다음 가격(`PriceBar`)과 매칭해 거래비용 차감 수익률을 만들고(`match_signal_returns`), 점수–수익률의 IC·rank IC·적중률·상하위 바스켓 스프레드를 집계한다(`calculate_metrics`). 단일 `run_news_impact_backtest` 진입점은 없으며, 위 함수들을 조합해 사용한다.
 
 ---
 
@@ -245,35 +274,38 @@ if news_impact_report:
 
 ---
 
-## 개선 및 수정 제안
+## 개선 및 수정 진행 현황
 
-> 우선순위: **P0(문서/계약 불일치) > P1(보안/견고성) > P2(품질)**.
+> 우선순위: **P0(문서/계약 불일치) > P1(보안/견고성) > P2(품질)**. 기준일: 2026-06-17.
 
-### P0 — LLM 판정 키 문서가 실제 스키마와 불일치
+### 해결됨 — P0 LLM 판정 키 문서 정정
 
-- **문제**: 문서는 판정 항목을 `impact_direction / impact_magnitude / confidence / event_type / reasoning`으로 적었지만, 실제 필수 키는 `event_type, direction, impact_score, impact_strength, confidence, time_horizon, reason, why_may_be_wrong, risk_flags`다(`impact_judge.py:12-22`). `impact_magnitude`·`reasoning`은 존재하지 않으며 `impact_score/impact_strength/reason/why_may_be_wrong`로 분리되어 있다.
-- **제안**: 문서 표를 실제 `LLM_REQUIRED_KEYS`에 맞게 정정하고, `judgment_to_impact_event`가 키 누락 시 `ValueError`를 던진다는 계약을 명시.
+- 본문 판정 표를 실제 `LLM_REQUIRED_KEYS`(`event_type, direction, impact_score, impact_strength, confidence, time_horizon, reason, why_may_be_wrong, risk_flags`)에 맞게 정정했다(`impact_judge.py:12-22`). 존재하지 않던 `impact_magnitude`·`reasoning`을 제거하고, `ImpactEvent` 스키마도 실제 필드로 갱신했다.
+- `judgment_to_impact_event`가 키 누락 시 `ValueError`를 던진다는 계약을 본문에 명시했다(`impact_judge.py:114-116`).
 
-### P0 — `detect_prompt_injection` 반환 타입·강도 문서 정정
+### 해결됨 — P0 `detect_prompt_injection` 반환 타입 문서 정정
 
-- **문제**: 문서는 `detect_prompt_injection(text) -> bool`로 적었으나 실제 반환은 `tuple[str, ...]`(위험 플래그)다(`impact_judge.py:89-102`). 또한 탐지는 7개 영어 문구 **부분일치 블록리스트**에 불과해 한국어/유니코드/우회 표현에 쉽게 뚫린다. 게다가 위험 플래그를 붙일 뿐 **본문은 그대로 LLM에 전달**된다.
-- **제안**: 문서 시그니처 정정. 방어는 (a) 구조적 격리(이미 `<untrusted_article_text>` 태그·시스템 가드 사용 — 좋음)에 더해, (b) 출력 스키마 강제(JSON-only, buy/sell 금지 후처리 검증), (c) 고위험 플래그 시 LLM 스킵 또는 보수 처리.
+- 본문 시그니처를 `detect_prompt_injection(text) -> tuple[str, ...]`(위험 플래그)로 정정했다(`impact_judge.py:89-102`).
 
-### P1 — 백테스트/스코어 함수 시그니처 문서 검증
+### 미해결 — P1 프롬프트 인젝션 방어 강도
 
-- **문제**: 문서의 `run_news_impact_backtest(events, price_data)` 등 일부 시그니처가 예시 수준이라 실제 `backtester.py`/`scorer.py` 구현과 다를 수 있다.
-- **제안**: 공개 함수 시그니처를 코드와 대조해 정정하고, "이벤트 후 N일 수익률 vs 방향 일치율"의 N·집계 방식을 명시.
+- **문제**: 탐지는 7개 영어 문구 **부분일치 블록리스트**에 불과해 한국어/유니코드/우회 표현에 쉽게 뚫린다. 위험 플래그를 붙일 뿐 **본문은 그대로 LLM에 전달**된다.
+- **제안**: 구조적 격리(이미 `<untrusted_article_text>` 태그·시스템 가드 사용 — 양호)에 더해, (a) 출력 스키마 강제(JSON-only, buy/sell 금지 후처리 검증), (b) 고위험 플래그 시 LLM 스킵 또는 보수 처리.
 
-### P1 — LLM 캐시·비용·재현성
+### 해결됨 — P1 백테스트 함수 시그니처 문서 정정
 
-- **문제**: `FileLLMResponseCache`/`LlamaCppClient`가 있으나(문서) 캐시 키(프롬프트 해시) 구성·무효화 정책이 문서화되어 있지 않다. `build_system_prompt()`는 매 호출 `NEWS_IMPACT_LLM_PROMPT.md`를 디스크에서 읽는다(`impact_judge.py:38`).
+- 가공의 `run_news_impact_backtest(events, price_data)` 예시를 제거하고, 실제 공개 함수(`match_signal_returns`, `calculate_metrics`, `summarize_by_bucket`, `compare_score_variants`)와 `BacktestSignal`/`BacktestObservation` 기반 집계 흐름으로 본문을 정정했다.
+
+### 미해결 — P1 LLM 캐시·비용·재현성
+
+- **문제**: `FileLLMResponseCache`/`LlamaCppClient`가 있으나 캐시 키(프롬프트 해시) 구성·무효화 정책이 문서화되어 있지 않다. `build_system_prompt()`는 매 호출 `docs/NEWS_IMPACT_LLM_PROMPT.md`를 디스크에서 읽는다(`impact_judge.py:37-47`).
 - **제안**: 캐시 키에 모델명·프롬프트 버전·기사 해시를 포함하고, 프롬프트 로드를 1회 캐싱. `temperature` 등 결정성 설정을 리포트에 기록.
 
-### P2 — 표시 전용 경계 재확인
+### 미해결 — P2 표시 전용 경계 회귀 테스트
 
-- **문제**: 메인 파이프라인 통합 시 `news_impact_*` 컬럼은 표시 전용이어야 한다(문서). `feature_selection.DISPLAY_ONLY_CONTEXT_COLUMNS`가 뉴스 계열을 모델 입력에서 제외하는지(특히 `news_impact_*` 접두사) 회귀 테스트로 고정 권장.
-- **제안**: "news_impact_ 접두 컬럼은 `select_feature_columns` 결과에 절대 포함되지 않는다"는 단위 테스트 추가.
+- **현황**: `feature_selection.DISPLAY_ONLY_CONTEXT_COLUMNS`가 뉴스/공시 계열 컬럼명을 명시적으로 모델 입력에서 제외하고, `select_feature_columns`는 피처 접두사 allowlist + 이 제외집합으로만 선택한다(`feature_selection.py:111-136`). 다만 `news_impact_*` **접두 기반** 일괄 제외가 아니라 컬럼명 열거 방식이라, 신규 `news_impact_*` 컬럼 추가 시 누락 위험이 있다.
+- **제안**: "`news_impact_` 접두 컬럼은 `select_feature_columns` 결과에 절대 포함되지 않는다"는 회귀 테스트를 추가.
 
-### P2 — 모듈 수(28개+)의 응집도/진입점 정리
+### 미해결 — P2 모듈 수(28개+)의 응집도/진입점 정리
 
 - 독립 실행(`stock-news-impact`)과 메인 통합 두 경로의 의존성 그래프를 문서에 다이어그램으로 추가하면 유지보수가 쉬워진다.

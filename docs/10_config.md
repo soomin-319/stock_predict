@@ -5,7 +5,7 @@
 ## AppConfig 전체 구조
 
 ```python
-# src/config/settings.py:97
+# src/config/settings.py:98
 @dataclass
 class AppConfig:
     universe: UniverseConfig
@@ -79,6 +79,7 @@ class TrainingConfig:
     purge_gap_days: int = 1               # 타겟 누수 방지 갭
     embargo_days: int = 0
     final_model_lookback_days: int = 252 * 3  # 최종 모델 최근 N일 (0=전체)
+    walk_forward_lookback_days: int = 0   # Walk-forward 폴드별 최근 N일 (0=확장창)
 ```
 
 ### SignalConfig — 시그널 가중치
@@ -141,12 +142,12 @@ class BacktestConfig:
 ```python
 # src/config/settings.py
 def load_app_config(
-    config_json: str | None = None,
+    config_path: str | Path | None = None,
     overrides: dict | None = None,
 ) -> AppConfig
 ```
 
-우선순위: **CLI 오버라이드 > config_json 파일 > 기본값**
+우선순위: **CLI 오버라이드(overrides) > config_path 파일 > 기본값**
 
 ### JSON 설정 파일 예시
 
@@ -216,6 +217,20 @@ stock-predict --config-json configs/prod_conservative.json
 
 ---
 
+## `stock-predict-publish` 플래그
+
+기준데이터 게시 명령(`src/ops/publish_predictions.py`, [01_pipeline.md](01_pipeline.md) 참고)은 `AppConfig`와 별개의 자체 플래그를 가진다. `--config-json`만 파이프라인 `AppConfig` 오버라이드로 전달된다.
+
+| 플래그 | 기본값 | 설명 |
+|--------|--------|------|
+| `--news-mode {gemma,rule}` | `gemma` | `gemma`=로컬 LLM(+규칙기반 폴백), `rule`=규칙기반. `publish_meta.json`의 `news_mode`로 기록 |
+| `--full-refresh` | off | 실데이터를 처음부터 재수집(미지정 시 증분 갱신) |
+| `--no-push` | off | 게시 후 commit까지만, push 안 함 |
+| `--dry-run` | off | 게시 파일만 만들고 commit/push 안 함 |
+| `--config-json PATH` | `None` | 파이프라인 `AppConfig` 오버라이드 파일(위 매핑과 동일 우선순위) |
+
+---
+
 ## 설정 직렬화
 
 ```python
@@ -237,36 +252,37 @@ def app_config_to_dict(cfg: AppConfig) -> dict
 
 ---
 
-## 개선 및 수정 제안
+## 개선 및 수정 진행 현황
 
-> 우선순위: **P0(불일치) > P1(검증 강화) > P2(품질/문서)**.
+> 우선순위: **P0(불일치) > P1(검증 강화) > P2(품질/문서)**. 기준일: 2026-06-17.
 
-### P0 — 문서의 `load_app_config` 시그니처 불일치
+### 해결됨 — P0 `load_app_config` 시그니처 문서 정정
 
-- **문제**: 문서는 `load_app_config(config_json=None, overrides=None)`로 적었지만 실제 인자명은 `config_path`다(`settings.py:161`). CLI 매핑 표를 따라 호출하면 `TypeError`가 난다.
-- **제안**: 문서를 `load_app_config(config_path=None, overrides=None)`로 정정.
+- 본문을 실제 시그니처 `load_app_config(config_path: str | Path | None = None, overrides=None)`로 정정했다(`settings.py:163`). 우선순위 설명도 `overrides > config_path 파일 > 기본값`으로 맞췄다.
 
-### P1 — 교차 필드(cross-field) 검증 부재
+### 미해결 — P1 교차 필드(cross-field) 검증 부재
 
-- **문제**: `_validate_app_config`는 개별 필드만 검사한다(`settings.py:136-158`). `min_train_size > test_size`, `step_size <= test_size` 같은 관계 제약이 없어, 잘못된 조합이면 walk-forward가 폴드를 0개 만들고 조용히 적응형 폴백으로 빠진다.
+- **문제**: `_validate_app_config`는 개별 필드만 검사한다(`settings.py:138-160`). `min_train_size > test_size`, `step_size <= test_size` 같은 관계 제약이 없어, 잘못된 조합이면 walk-forward가 폴드를 0개 만들고 조용히 적응형 폴백으로 빠진다(`pipeline.py:553`).
 - **제안**: 관계 제약 검증 추가(위배 시 명확한 `ValueError`). 적응형 폴백이 동작했는지 리포트에 기록.
 
-### P1 — 검증되지 않는 설정 섹션 다수
+### 부분 해결 — P1 검증되지 않는 설정 섹션
 
-- **문제**: `SignalConfig`(가중치), `InvestmentCriteriaConfig`(임계값), `BacktestConfig`의 `fee_bps/slippage_bps/dynamic_slippage_bps/top_k 상한/max_positions_per_market_type` 등은 검증 대상에서 빠져 있다(`settings.py`). 음수 수수료·과대 슬리피지·`max_positions=0` 등이 무방비로 통과한다.
+- **진행**: `BacktestConfig`의 `top_k`(양수), `portfolio_value`(양수), `max_daily_participation`/`min_up_probability`/`turnover_limit`/`min_external_coverage_ratio`/`min_investor_coverage_ratio`(0~1 비율)는 이제 검증된다(`settings.py:154-160`).
+- **남은 문제**: `SignalConfig`(가중치), `InvestmentCriteriaConfig`(임계값), `BacktestConfig`의 `fee_bps/slippage_bps/dynamic_slippage_bps`, `top_k 상한`, `max_positions_per_market_type` 등은 여전히 검증되지 않는다. 음수 수수료·과대 슬리피지·`max_positions=0` 등이 무방비로 통과한다.
 - **제안**: 비용 bps는 `allow_zero` 양수, 가중치/패널티는 합리 범위, `max_positions_per_market_type >= 1` 등으로 검증 확대. 가중치 합계 정규화 정책도 명시.
 
-### P1 — 미사용/오해 소지 설정값 정리
+### 미해결 — P1 런타임 덮어쓰기 필드 명시
 
-- **문제**: `InvestmentCriteriaConfig.near_52w_distance_threshold(0.03)`는 피처 생성에서 사용되지 않고 코드가 0.95를 하드코딩한다(`03_features.md`/`06_signal_policy.md` 참고). 설정만 보고는 0.97로 오해한다. `SignalConfig` 기본값도 튜너가 `up_prob_weight=0.30`으로 덮어쓴다(`05_validation.md` 참고).
-- **제안**: 미사용 설정은 실제로 연결하거나 제거. "런타임에 튜닝으로 덮어쓰는 필드"는 주석/문서에 명시.
+- **정정**: 이전 제안의 "`near_52w_distance_threshold`가 미사용이고 코드가 0.95를 하드코딩한다"는 **사실과 다르다**. `investment_signals.py:88`은 `cfg.near_52w_distance_threshold`(기본 0.03)를 그대로 사용한다(`06_signal_policy.md` 참고).
+- **남은 문제**: `SignalConfig` 기본 가중치는 런타임에 튜너가 덮어쓴다 — `tune_signal_weights`가 `up_prob_weight`를 0.30으로 고정하고, `pipeline.py:595-598`이 `cfg.signal`을 직접 변형한다(`01_pipeline.md`·`05_validation.md` 참고). 설정 기본값만 보면 실제 사용값을 오해한다.
+- **제안**: "런타임에 튜닝으로 덮어쓰는 필드"는 주석/문서에 명시하고, 리포트에 원본 설정과 튜닝 후 값을 분리 기록.
 
-### P2 — 설정 스키마 버전·오타 친화 오류
+### 미해결 — P2 설정 스키마 버전·오타 친화 오류
 
-- **문제**: `_merge_dataclass_config`는 알 수 없는 키에 `ValueError`를 던진다(`settings.py:112`) — 엄격해서 좋지만 오타 시 "가장 가까운 키" 제안이 없다. 또한 스키마 버전 필드가 없어 설정 포맷 변경 추적이 어렵다.
+- **문제**: `_merge_dataclass_config`는 알 수 없는 키에 `ValueError`를 던진다(`settings.py:114`) — 엄격해서 좋지만 오타 시 "가장 가까운 키" 제안이 없다. 또한 설정 스키마 버전 필드가 없어 포맷 변경 추적이 어렵다(리포트 메타데이터의 `SCHEMA_VERSION`은 별개).
 - **제안**: 오류 메시지에 후보 키(difflib) 제안 추가, `config_schema_version` 도입 및 리포트 기록.
 
-### P2 — 환경변수 문서 보강
+### 미해결 — P2 환경변수 문서 보강
 
 - **문제**: 표에 `OPENAI_API_KEY/OPENAI_MODEL/DART_*/NAVER_*`가 있으나 ngrok·웹훅 관련 비밀(`09_chatbot.md`의 웹훅 시크릿 제안 포함)이나 `model`/`temperature` 기본값 출처가 분산돼 있다.
-- **제안**: 모든 환경변수·기본값·우선순위(CLI > env > config_json > 기본값)를 한 표로 통합하고, 비밀은 `.env`/시크릿 매니저 사용을 권장으로 명시.
+- **제안**: 모든 환경변수·기본값·우선순위(CLI > env > config_path > 기본값)를 한 표로 통합하고, 비밀은 `.env`/시크릿 매니저 사용을 권장으로 명시.

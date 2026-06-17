@@ -99,7 +99,7 @@ def filter_by_universe(df: pd.DataFrame, universe: set[str]) -> pd.DataFrame
 
 # src/data/krx_universe.py
 def get_symbol_name_map(symbols: list[str]) -> dict[str, str]
-def find_symbol_candidates_by_name(name: str) -> list[tuple[str, str]]
+def find_symbol_candidates_by_name(query: str, limit: int | None = None) -> list[dict[str, str | float]]
 ```
 
 - 기본 유니버스: `data/kospi200_symbol_name_map.csv` (200개 종목)
