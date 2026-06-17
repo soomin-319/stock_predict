@@ -123,8 +123,9 @@ This repository now vendors the full `src.news_impact` package from `stock-news-
 
 Example files:
 
-- `configs/news_impact.example.json`: OpenAI-default LLM config template; read the API key from `OPENAI_API_KEY`.
-- `configs/news_impact.gemma.example.json`: optional local Gemma/llama.cpp config template.
+- `configs/news_impact.example.json`: default LLM config template (local Gemma/llama.cpp `gemma-4-26b-a4b`), matching the `LLMConfig.default()` code default.
+- `configs/news_impact.gemma.example.json`: same local Gemma/llama.cpp template, used as the explicit path in the chatbot/CLI integration.
+- `configs/news_impact.openai.example.json`: optional OpenAI template; reads the API key from `OPENAI_API_KEY`.
 - `data/news_impact/watchlist.example.csv`: watchlist template.
 - `data/news_impact/company_master.example.csv`: company master template.
 

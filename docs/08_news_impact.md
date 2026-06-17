@@ -104,18 +104,22 @@ class LlamaCppClient:           # 로컬 Llama.cpp 모델 클라이언트
 
 | LLM | 설정 | 비고 |
 |-----|------|------|
-| OpenAI GPT | `OPENAI_API_KEY` | 기본값 |
-| 로컬 Gemma/Llama | `llm_type: "llama_cpp"` | `configs/news_impact.gemma.example.json` |
+| 로컬 Gemma/Llama | `llm_provider: "llama_cpp"` | 기본값 · `configs/news_impact.example.json` |
+| OpenAI GPT | `llm_provider: "openai"` + `OPENAI_API_KEY` | 선택 · `configs/news_impact.openai.example.json` |
+
+코드 기본값(`LLMConfig.default()`, `--news-impact-llm-config` 미지정 시)도 로컬 gemma입니다.
 
 ### LLM 설정 파일 (`configs/news_impact.json`)
 
 ```json
 {
-    "llm_type": "openai",
-    "model": "gpt-5-mini",
-    "api_key_env": "OPENAI_API_KEY",
+    "llm_provider": "llama_cpp",
+    "llm_base_url": "http://localhost:8001/v1",
+    "llm_model": "gemma-4-26b-a4b",
     "temperature": 0.1,
-    "max_tokens": 1024
+    "max_retries": 2,
+    "json_schema_required": true,
+    "timeout_seconds": 60
 }
 ```
 
@@ -229,8 +233,9 @@ if news_impact_report:
 
 | 파일 | 용도 |
 |------|------|
-| `configs/news_impact.example.json` | OpenAI 기본 설정 템플릿 |
-| `configs/news_impact.gemma.example.json` | 로컬 Gemma/Llama 설정 템플릿 |
+| `configs/news_impact.example.json` | 기본 설정 템플릿 (로컬 Gemma/Llama) |
+| `configs/news_impact.gemma.example.json` | 로컬 Gemma/Llama 설정 템플릿 (코드/챗봇 연동 경로) |
+| `configs/news_impact.openai.example.json` | OpenAI 설정 템플릿 (선택) |
 | `data/news_impact/watchlist.example.csv` | 모니터링 종목 목록 템플릿 |
 | `data/news_impact/company_master.example.csv` | 기업 마스터 데이터 템플릿 |
 | `data/news_impact/company_aliases.example.csv` | 기업 별칭 템플릿 |

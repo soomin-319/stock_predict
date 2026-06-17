@@ -21,10 +21,11 @@ Copy-Item data/news_impact/watchlist.example.csv data/news_impact/watchlist.csv
 Copy-Item data/news_impact/company_master.example.csv data/news_impact/company_master.csv
 ```
 
-`configs/news_impact.example.json` uses OpenAI by default and reads the key from
-`OPENAI_API_KEY` (for example, a Colab environment variable). To use the optional
-local Gemma/llama.cpp runtime instead, copy `configs/news_impact.gemma.example.json`
-over `configs/news_impact.json`.
+`configs/news_impact.example.json` defaults to a local Gemma/llama.cpp runtime
+(`gemma-4-26b-a4b` at `http://localhost:8001/v1`), matching the `LLMConfig.default()`
+code default. To use OpenAI instead, copy `configs/news_impact.openai.example.json`
+over `configs/news_impact.json` and provide `OPENAI_API_KEY` (for example, a Colab
+environment variable).
 
 Inspect available options:
 

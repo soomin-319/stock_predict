@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .pytest_tmp/
+.pytest_basetemp/
 *.egg-info/
 
 # Secrets & credentials
@@ -23,6 +24,10 @@ result/
 figures/
 figures_*/
 *.log
+
+# Local LLM model weights (large binaries, never commit)
+models/
+*.gguf
 
 # IDE / OS
 .vscode/

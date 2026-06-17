@@ -27,20 +27,26 @@ def test_pyproject_package_discovery_includes_migrated_news_impact_package():
 def test_news_impact_runtime_examples_are_migrated_without_private_config():
     assert Path("configs/news_impact.example.json").exists()
     assert Path("configs/news_impact.gemma.example.json").exists()
+    assert Path("configs/news_impact.openai.example.json").exists()
     assert not Path("configs/news_impact.json").exists()
     assert Path("data/news_impact/watchlist.example.csv").exists()
     assert Path("data/news_impact/company_master.example.csv").exists()
 
 
-def test_news_impact_runtime_examples_keep_openai_default_and_gemma_option():
-    openai_example = Path("configs/news_impact.example.json").read_text(encoding="utf-8")
+def test_news_impact_runtime_examples_default_to_gemma_with_openai_option():
+    default_example = Path("configs/news_impact.example.json").read_text(encoding="utf-8")
     gemma_example = Path("configs/news_impact.gemma.example.json").read_text(encoding="utf-8")
+    openai_example = Path("configs/news_impact.openai.example.json").read_text(encoding="utf-8")
 
+    # 기본 템플릿(example.json)은 코드 기본값과 동일한 로컬 gemma를 가리킨다.
+    assert '"llm_provider": "llama_cpp"' in default_example
+    assert '"llm_model": "gemma-4-26b-a4b"' in default_example
+    assert '"llm_provider": "llama_cpp"' in gemma_example
+    assert '"llm_model": "gemma-4-26b-a4b"' in gemma_example
+    # OpenAI는 선택지로 보존하며 키는 OPENAI_API_KEY 환경변수에서 읽는다.
     assert '"llm_provider": "openai"' in openai_example
     assert '"llm_model": "gpt-5-mini"' in openai_example
     assert "OPENAI_API_KEY" not in openai_example
-    assert '"llm_provider": "llama_cpp"' in gemma_example
-    assert '"llm_model": "gemma-4-26b-a4b"' in gemma_example
 
 
 def test_news_impact_llm_prompt_asset_is_vendored():

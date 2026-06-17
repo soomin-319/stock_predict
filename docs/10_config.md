@@ -191,8 +191,9 @@ stock-predict --config-json configs/prod_conservative.json
 |------|------|
 | `configs/prod_conservative.json` | 운영용 보수적 설정 |
 | `configs/research_balanced.json` | 연구용 균형 설정 |
-| `configs/news_impact.example.json` | 뉴스 임팩트 OpenAI 설정 템플릿 |
-| `configs/news_impact.gemma.example.json` | 뉴스 임팩트 로컬 LLM 설정 템플릿 |
+| `configs/news_impact.example.json` | 뉴스 임팩트 기본 설정 템플릿 (로컬 Gemma/llama.cpp) |
+| `configs/news_impact.gemma.example.json` | 뉴스 임팩트 로컬 LLM 설정 템플릿 (코드/챗봇 연동 경로) |
+| `configs/news_impact.openai.example.json` | 뉴스 임팩트 OpenAI 설정 템플릿 (선택) |
 
 ---
 
