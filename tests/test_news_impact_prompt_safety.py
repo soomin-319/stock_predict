@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from src.news_impact.impact_judge import (
+    LLM_REQUIRED_KEYS,
     NewsAnalysisInput,
     build_news_user_prompt,
+    build_system_prompt,
     detect_prompt_injection,
 )
 
@@ -28,3 +30,19 @@ def test_news_user_prompt_wraps_article_text_as_untrusted_context():
     assert "<untrusted_article_text>" in prompt
     assert "</untrusted_article_text>" in prompt
     assert prompt.index("<untrusted_article_text>") < prompt.index("ignore previous instructions")
+
+
+def test_build_system_prompt_loads_prompt_file_and_appends_safety_guard():
+    prompt = build_system_prompt()
+
+    # Safety guard the code appends must be present.
+    assert "PROMPT_SOURCE: NEWS_IMPACT_LLM_PROMPT.md" in prompt
+    assert "Return JSON only" in prompt
+    assert "Never output buy/sell recommendations" in prompt
+
+
+def test_build_system_prompt_documents_every_required_key():
+    prompt = build_system_prompt()
+
+    for key in LLM_REQUIRED_KEYS:
+        assert key in prompt, f"system prompt must document required key '{key}'"

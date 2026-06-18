@@ -23,7 +23,12 @@ from src.news_impact.impact_judge import (
     detect_prompt_injection,
     judgment_to_impact_event,
 )
-from src.news_impact.llm_client import FileLLMResponseCache, LLMResponseError, LlamaCppClient
+from src.news_impact.llm_client import (
+    FileLLMResponseCache,
+    LLMResponseError,
+    LlamaCppClient,
+    sha256_text,
+)
 from src.news_impact.llm_config import LLMConfig, load_llm_config
 from src.news_impact.mapper import MappingCandidate
 from src.news_impact.market_clock import KST
@@ -95,12 +100,14 @@ def run_daily_pipeline(inputs: DailyPipelineInputs) -> DailyPipelineResult:
         llm_config=llm_config,
         output_dir=output_dir,
     )
+    system_prompt = build_system_prompt()
     impact_events, llm_failed_count = _build_llm_judged_events(
         run_date=inputs.run_date,
         clustered_news=clustered_news,
         watchlist_tickers=watchlist_tickers,
         companies=companies,
         llm_client=impact_judge_llm,
+        system_prompt=system_prompt,
     )
     if inputs.semantic_clustering and impact_events:
         impact_events = assign_semantic_cluster_ids(
@@ -130,6 +137,8 @@ def run_daily_pipeline(inputs: DailyPipelineInputs) -> DailyPipelineResult:
         llm_model_requested=llm_config.model,
         llm_model_returned=getattr(impact_judge_llm, "last_response_model", None)
         or llm_config.model,
+        llm_temperature=llm_config.temperature,
+        llm_prompt_hash=sha256_text(system_prompt),
         scoring_version=SCORING_VERSION,
         backtest_version=BACKTEST_VERSION,
     )
@@ -267,10 +276,10 @@ def _build_llm_judged_events(
     watchlist_tickers: list[str],
     companies: dict[str, dict[str, str]],
     llm_client: ImpactJudgeLLM,
+    system_prompt: str,
 ) -> tuple[list[ImpactEvent], int]:
     events: list[ImpactEvent] = []
     llm_failed_count = 0
-    system_prompt = build_system_prompt()
     for news_index, clustered in enumerate(clustered_news, start=1):
         item = clustered.item
         article_text, input_flags = _llm_article_text_and_flags(item)
@@ -513,6 +522,9 @@ def _build_audit_payload(
             "watchlist_hash": audit_base["watchlist_hash"],
             "company_master_snapshot_id": audit_base["company_master_snapshot_id"],
             "data_snapshot_id": audit_base["data_snapshot_id"],
+            "llm_model_requested": audit_base["llm_model_requested"],
+            "llm_temperature": audit_base["llm_temperature"],
+            "llm_prompt_hash": audit_base["llm_prompt_hash"],
             "reproducible_report_scope": "rows_excluding_audit_timestamps_and_output_paths",
         },
         "artifacts": {

@@ -76,6 +76,8 @@ def judgment_to_impact_event(...) -> ImpactEvent
 
 누락 키가 있으면 `judgment_to_impact_event()`는 `ValueError`를 발생시킨다.
 
+시스템 프롬프트 본문은 `docs/NEWS_IMPACT_LLM_PROMPT.md`에서 읽는다. `build_system_prompt()`는 이 파일 내용에 안전 가드(`PROMPT_SOURCE`, JSON-only, 매수/매도 추천 금지)를 덧붙여 반환하므로, 프롬프트를 수정할 때는 이 파일을 편집한다. 파일에는 `LLM_REQUIRED_KEYS`의 모든 키와 허용값·범위가 명시돼 있어야 한다.
+
 ### 프롬프트 안전
 
 - 기사 본문은 `build_news_user_prompt()`에서 `<untrusted_article_text>` 블록 안에 넣는다.
@@ -115,7 +117,25 @@ def judgment_to_impact_event(...) -> ImpactEvent
 }
 ```
 
-캐시 키는 요청 payload와 required key 목록에서 생성한다. 재현성 검토에는 모델명, 프롬프트 버전, 온도, 기사 해시, required key 목록을 함께 기록하는 방식이 적합하다.
+캐시 키는 요청 payload와 required key 목록의 sha256으로 생성한다. 캐시 파일은 `stock-news-impact.llm_cache.v1` 봉투 포맷으로 저장되며, `metadata`에 재현성 정보를 함께 남긴다.
+
+```json
+{
+  "schema": "stock-news-impact.llm_cache.v1",
+  "metadata": {
+    "model": "gemma-4-26b-a4b",
+    "temperature": 0.1,
+    "prompt_hash": "<시스템 프롬프트 sha256>",
+    "article_hash": "<유저 프롬프트 sha256>",
+    "required_keys": ["confidence", "direction", "..."]
+  },
+  "response": { "...LLM JSON..." }
+}
+```
+
+`prompt_hash`는 시스템 프롬프트 문자열, `article_hash`는 기사가 포함된 유저 프롬프트의 해시다(`sha256_text()`로 통일). `FileLLMResponseCache.get()`은 봉투면 `response`만 돌려주고, 봉투가 아닌 레거시 파일은 그대로 읽어 하위호환을 유지한다.
+
+런 단위 재현성은 `audit.json`에 남는다. `RunAudit`는 `llm_model_requested`/`llm_model_returned`에 더해 `llm_temperature`, `llm_prompt_hash`(시스템 프롬프트 sha256)를 기록하고, `replay` 블록에도 노출한다. 기사 단위 해시(`article_hash`)는 런 단위 단일값이 없으므로 위 LLM 캐시 메타데이터에 귀속된다.
 
 ---
 
@@ -183,10 +203,15 @@ stock-news-impact `
 
 ---
 
-## 개선 및 수정 진행 현황 (2026-06-17)
+## 개선 및 수정 진행 현황 (2026-06-18)
+
+### 완료
+
+- **(버그 수정)** `build_system_prompt()`가 읽는 `docs/NEWS_IMPACT_LLM_PROMPT.md`가 저장소에 없어 LLM 판정 경로가 `FileNotFoundError`로 죽던 문제를 수정했다. 문서화된 계약(필수 키·범위·JSON-only·untrusted 기사·매수/매도 추천 금지)에 맞춰 프롬프트 파일을 추가했다.
+- `FileLLMResponseCache`를 `stock-news-impact.llm_cache.v1` 봉투 포맷으로 확장해 `model`, `temperature`, `prompt_hash`, `article_hash`, `required_keys`를 메타데이터로 저장한다(레거시 파일 하위호환 유지).
+- `RunAudit`에 `llm_temperature`, `llm_prompt_hash`를 추가하고 `audit.json`의 `replay` 블록에도 노출했다(`llm_model`은 기존 `llm_model_requested/returned`로 커버).
+- `stock-news-impact` 단독 실행 경로와 메인 파이프라인 통합 경로 다이어그램을 README "News Impact Scoring Module" 섹션에 추가했다.
 
 ### 남은 제안
 
-- `FileLLMResponseCache` 캐시 메타데이터에 프롬프트 파일 해시와 모델 alias를 명시적으로 저장한다.
-- LLM 리포트에 `temperature`, `llm_model`, `prompt_hash`, `article_hash`를 남겨 재현성을 높인다.
-- `stock-news-impact` 단독 실행 경로와 메인 파이프라인 통합 경로를 작은 다이어그램으로 README에 추가한다.
+- LLM 캐시 디렉터리 정리(만료/버전 무효화) 정책 정의.
