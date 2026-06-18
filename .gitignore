@@ -32,4 +32,5 @@ models/
 .DS_Store
 
 # Claude session-local artefacts (unpushed commit backups, etc.)
+.claude/
 .claude_*.patch
