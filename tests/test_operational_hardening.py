@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from src.config.settings import load_app_config
+from src.config.settings import app_config_to_dict, load_app_config
 from src.data.investor_context import collect_context_raw_events
 from src.models.lgbm_heads import MultiHeadStockModel
 from src.pipeline import _prepare_pipeline_context
@@ -24,18 +24,52 @@ def test_config_rejects_unknown_nested_key():
         load_app_config(overrides={"training": {"min_trian_size": 10}})
 
 
+def test_config_unknown_key_suggests_close_match():
+    with pytest.raises(ValueError, match=r"training\.min_trian_size.*did you mean 'min_train_size'"):
+        load_app_config(overrides={"training": {"min_trian_size": 10}})
+
+
+def test_config_unknown_key_without_close_match_has_plain_error():
+    with pytest.raises(ValueError, match=r"Unknown configuration key: training\.zzzz"):
+        load_app_config(overrides={"training": {"zzzz": 10}})
+
+
 @pytest.mark.parametrize(
     "overrides, expected",
     [
         ({"training": {"min_train_size": 0}}, "training.min_train_size"),
+        ({"training": {"min_train_size": 252, "test_size": 252}}, "training.min_train_size"),
+        ({"training": {"step_size": 253, "test_size": 252}}, "training.step_size"),
         ({"training": {"quantiles": [0.1, 0.5]}}, "training.quantiles"),
+        ({"training": {"config_schema_version": 2}}, "training.config_schema_version"),
+        ({"feature": {"lookback_windows": [5, 1]}}, "feature.lookback_windows"),
+        ({"feature": {"moving_average_windows": [0, 5]}}, "feature.moving_average_windows"),
+        ({"feature": {"volatility_windows": [5, 5]}}, "feature.volatility_windows"),
+        ({"feature": {"rsi_period": 0}}, "feature.rsi_period"),
+        ({"signal": {"return_weight": -0.1}}, "signal.return_weight"),
+        ({"signal": {"return_weight": 0.0, "up_prob_weight": 0.0, "rel_strength_weight": 0.0}}, "signal weights"),
+        ({"signal": {"uncertainty_penalty": -0.1}}, "signal.uncertainty_penalty"),
+        ({"investment_criteria": {"rsi_buy_watch_low": 40.0, "rsi_buy_watch_high": 35.0}}, "investment_criteria.rsi_buy_watch"),
+        ({"investment_criteria": {"rsi_overbought": 101.0}}, "investment_criteria.rsi_overbought"),
+        ({"investment_criteria": {"near_52w_distance_threshold": 1.1}}, "investment_criteria.near_52w_distance_threshold"),
+        ({"investment_criteria": {"leader_top_n": 0}}, "investment_criteria.leader_top_n"),
         ({"backtest": {"top_k": 0}}, "backtest.top_k"),
         ({"backtest": {"min_up_probability": 1.1}}, "backtest.min_up_probability"),
+        ({"backtest": {"fee_bps": -0.1}}, "backtest.fee_bps"),
+        ({"backtest": {"slippage_bps": -0.1}}, "backtest.slippage_bps"),
+        ({"backtest": {"dynamic_slippage_bps": -0.1}}, "backtest.dynamic_slippage_bps"),
+        ({"backtest": {"conservative_slippage_multiplier": 0.0}}, "backtest.conservative_slippage_multiplier"),
+        ({"backtest": {"aggressive_slippage_multiplier": 0.0}}, "backtest.aggressive_slippage_multiplier"),
+        ({"backtest": {"max_positions_per_market_type": 0}}, "backtest.max_positions_per_market_type"),
     ],
 )
 def test_config_rejects_invalid_ranges(overrides, expected):
     with pytest.raises(ValueError, match=expected):
         load_app_config(overrides=overrides)
+
+
+def test_app_config_to_dict_includes_schema_version():
+    assert app_config_to_dict(load_app_config())["config_schema_version"] == 1
 
 
 @pytest.mark.parametrize(
