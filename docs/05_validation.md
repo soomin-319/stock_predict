@@ -1,6 +1,6 @@
 # 05. Walk-Forward 검증 및 백테스트
 
-`src/validation/` 패키지는 모델 성능 검증, 백테스트, 신호 튜닝, 기준선 비교를 담당한다.
+`src/validation/`는 모델 성능 검증, 백테스트, 시그널 튜닝, 기준선 비교를 담당한다.
 
 ## 모듈 구성
 
@@ -18,257 +18,145 @@
 
 ## Walk-Forward 검증 (`walk_forward.py`)
 
-### 핵심 구조
-
 ```python
-# src/validation/walk_forward.py
 @dataclass
 class FoldResult:
-    train_end: pd.Timestamp
-    valid_start: pd.Timestamp
-    valid_end: pd.Timestamp
+    train_end / valid_start / valid_end: pd.Timestamp
     metrics: dict[str, float]
-    train_start: pd.Timestamp | None = None
-    fold_id: int | None = None
+    train_start: pd.Timestamp | None
+    fold_id: int | None
 
 @dataclass
 class WalkForwardResult:
     folds: list[FoldResult]
-    oof: pd.DataFrame        # Out-of-Fold 예측 전체
+    oof: pd.DataFrame
     oof_diagnostics: dict
 
-def walk_forward_validate_result(
-    feat: pd.DataFrame,
-    feature_columns: list[str],
-    cfg: TrainingConfig,
-) -> WalkForwardResult
+def walk_forward_validate_result(df, feature_columns, cfg) -> WalkForwardResult
 ```
 
-### 폴드 생성 로직
+### 폴드 생성·실행
 
-```
-전체 거래일: [d0, d1, ..., dN]
+- `_iter_fold_windows`는 **날짜 경계(train_end/valid_start/valid_end)만** 생성한다. 데이터 슬라이스를
+  미리 materialize하지 않는다.
+- `_execute_fold_windows`는 워커가 내부에서 슬라이싱하도록 경계만 전달하고, `ProcessPoolExecutor`의
+  `initializer`로 DataFrame을 워커당 1회만 공유한다(폴드별 대용량 피클 직렬화 회피).
+- 병렬 시 `replace(cfg, model_n_jobs=1, model_head_n_jobs=1)`로 모델 내부 스레드를 1로 제한해
+  CPU 과점유(worker × model_n_jobs)를 방지한다.
+- `purge_gap_days`(기본 1)로 검증 윈도우 근처 타깃 누수를 막고, `embargo_days`로 검증 시작을 앞으로 민다.
+- `walk_forward_lookback_days > 0`이면 각 폴드를 최근 N 거래일로 제한(롤링 윈도우).
 
-폴드 예시 (min_train_size=756, test_size=252, step_size=126):
-  Fold 1: train=[d0..d755], purge_gap=1일, valid=[d757..d1008]
-  Fold 2: train=[d0..d881], purge_gap=1일, valid=[d883..d1134]
-  ...
-```
+### OOF 집계 (`aggregate_oof_predictions`)
 
-- **purge_gap_days=1**: 타겟(다음날 수익률)과 검증 윈도우 겹침 방지
-- **embargo_days=0**: 기본 비활성화, 시리얼 상관 우려 시 증가
-- 폴드 병렬 실행: `walk_forward_n_jobs=-1` (기본 CPU 전체 활용)
+- 키 `(Date, Symbol)`로 중복 예측을 평균(`date_symbol_mean_v1`).
+- 동일 키에서 `target_*`이 충돌하면 `ValueError`(데이터 무결성 보호).
+- 중복 비율, 안정 컬럼 충돌 수 등 진단을 함께 반환한다.
 
 ### 폴드별 메트릭
 
-각 `FoldResult.metrics`에 포함:
-
-| 메트릭 | 유형 |
-|--------|------|
-| `mae` | 회귀: 평균 절대 오차 |
-| `rmse` | 회귀: 제곱근 평균 제곱 오차 |
-| `r2` | 회귀: 결정계수 |
-| `ic` | 회귀: 정보계수 (스피어만 상관) |
-| `auc` | 분류: ROC-AUC |
-| `accuracy` | 분류: 정확도 |
-| `f1` | 분류: F1 점수 |
+`FoldResult.metrics`: 회귀(`mae`, `rmse`, `r2`, `ic`)와 분류(`auc`, `accuracy`, `f1` 등).
 
 ---
 
 ## OOF 처리 (`support.py`)
 
 ```python
-# src/validation/support.py
 def split_oof_for_tuning_and_eval(scored_oof, tune_ratio=0.7, ...) -> OOFSplit
 def fit_up_probability_calibrator(tune_df) -> calibrator
 def calibrate_up_probability(oof_df, up_probs) -> pd.Series
-def calibration_split_metrics(tune_df, eval_df, calibrator) -> dict
 def compute_oof_diagnostics(scored_oof) -> dict
-def prediction_from_oof_df(oof: pd.DataFrame) -> MultiHeadPrediction
 ```
 
-OOF를 7:3 비율로 분할:
-- **tuning split (70%)**: 시그널 가중치 튜닝, 캘리브레이터 학습
-- **eval split (30%)**: 최종 백테스트
-
-`compute_oof_diagnostics()`는 중복 OOF 행, 날짜 범위, 종목 수 등 품질 지표를 반환한다.
+OOF를 7:3으로 분할한다. tuning(70%)은 시그널 가중치 튜닝·캘리브레이터 학습에, eval(30%)은 최종 백테스트에 사용한다.
 
 ---
 
 ## 백테스트 (`backtest.py`)
 
 ```python
-# src/validation/backtest.py
-def run_long_only_topk_backtest(df: pd.DataFrame, cfg: BacktestConfig) -> dict
+def run_long_only_topk_backtest(pred_df, cfg: BacktestConfig) -> dict
 ```
 
-### 백테스트 전략
+### 전략
 
-- **전략**: Long-only (매수만), Top-K 종목 선택
-- **선택 기준**: `predicted_return` 내림차순 우선, `signal_score` 내림차순 보조 정렬 (`top_k=20`)
-- **중요 원칙**: 매수/매도/보유 판단과 순위는 다음날 기대수익률(`predicted_return`)을 기준으로 한다. 뉴스·공시 정보는 표시용 컨텍스트이며 기대수익률, 순위, 추천, 신호를 바꾸지 않는다.
-- **필터 조건**:
-  - `up_probability >= min_up_probability` (기본 0.50)
-  - `value_traded >= min_value_traded` (기본 30억원)
-  - `max_capacity_notional >= portfolio_value / top_k`
-  - `coverage_gate_status != "halt"`
+- **Long-only Top-K**, 정렬 우선순위는 `predicted_return` 내림차순, 보조로 `signal_score` 내림차순.
+- **매수/매도/관망과 순위는 익일 기대수익률 기준**이다. 뉴스·공시는 표시용 컨텍스트로 순위·추천을 바꾸지 않는다.
+- **유동성/용량 필터**(`_apply_liquidity_and_capacity_filters`):
+  - `up_probability >= min_up_probability`(기본 0.50)
+  - `value_traded >= min_value_traded`(기본 30억원)
+  - `max_capacity_notional(= value_traded × max_daily_participation) >= portfolio_value / top_k`
+- **시장 유형 상한**: `max_positions_per_market_type`(기본 12) 적용.
+- **턴오버 제한**: `turnover_limit < 1`이면 일별 신규 편입 비율을 제한.
 
-### BacktestConfig
+### 수익률·비용 계산
 
-```python
-# src/config/settings.py:80
-@dataclass
-class BacktestConfig:
-    top_k: int = 20                    # 선택 종목 수
-    portfolio_value: float = 1_000_000_000  # 포트폴리오 규모 (10억원)
-    max_daily_participation: float = 0.10   # 일 거래대금 대비 최대 참여율
-    fee_bps: float = 10.0              # 거래 수수료 (bps)
-    slippage_bps: float = 5.0          # 슬리피지
-    dynamic_slippage_bps: float = 10.0 # 동적 슬리피지 계수
-    conservative_slippage_multiplier: float = 1.5
-    aggressive_slippage_multiplier: float = 0.75
-    min_up_probability: float = 0.50   # 최소 상승 확률
-    min_signal_score: float = 0.0      # 현재 백테스트 필터에는 미적용
-    turnover_limit: float = 0.5        # 일 최대 회전율
-    min_value_traded: float = 3_000_000_000  # 최소 거래대금 (30억원)
-    min_external_coverage_ratio: float = 0.0
-    min_investor_coverage_ratio: float = 0.5
-    max_positions_per_market_type: int = 12  # 시장별 최대 보유 종목 수
-```
+- **수익률 정의 통일**: 일일 포트폴리오 수익률은 선택 종목의 `target_log_return`을 `np.expm1`로 단순수익률로
+  변환한 뒤 가중 합산한다(`_weighted_simple_return`). 자산곡선 `(1+series).cumprod()`와 정합.
+- **용량 가중**: 등가중이 아니라 종목별 체결 용량(`max_capacity_notional`)을 상한으로 한 비례 배분
+  (`_capacity_weights`)으로 비중을 정한다. `invested_weight`(투자 비중 합)도 추적한다.
+- **비용 시나리오**: `conservative`/`neutral`/`aggressive` 슬리피지 배수에 대해 **일자별** 비용 시계열을
+  `gross_series`에 적용해 자산곡선을 재시뮬레이션한다(평탄 복리 근사가 아님).
 
-### 백테스트 출력
+### 출력(요약 키)
 
-```python
-{
-    "days": int,                   # 총 백테스트 거래일 수
-    "cum_return": float,           # 누적 수익률
-    "avg_daily_return": float,     # 평균 일간 수익률
-    "sharpe": float,               # 샤프 비율
-    "max_drawdown": float,         # 최대 낙폭
-    "avg_turnover": float,         # 평균 회전율
-    "avg_selected_count": float,   # 평균 선택 종목 수
-    "benchmark_cum_return": float, # 벤치마크(KOSPI) 누적 수익률
-    "excess_cum_return": float,    # 초과 수익률
-    "cost_scenarios": dict,        # 비용 시나리오별 누적 수익률
-    "halted_days": int,            # 커버리지 게이트로 정지된 날 수
-    "liquidity_blocked_days": int, # 유동성/용량 필터로 선택 종목이 없는 날 수
-    "avg_market_type_count": float,# 일평균 선택 시장 유형 수
-    "series": list[dict],          # 일별 시계열 데이터
-}
-```
+`days`, `cum_return`, `avg_daily_return`, `sharpe`, `max_drawdown`, `avg_turnover`, `avg_selected_count`,
+`benchmark_cum_return`(KOSPI `ks11_ret_1d` 기반), `excess_cum_return`, `cost_scenarios`, `halted_days`,
+`liquidity_blocked_days`, `avg_market_type_count`, `series`(일별 시계열).
 
 ### 커버리지 게이트
 
-```python
-# src/validation/backtest.py:25
-def coverage_gate_status(cfg, external_coverage_ratio, investor_coverage_ratio) -> str
-```
-
 | 상태 | 조건 | 효과 |
 |------|------|------|
-| `normal` | 커버리지 모두 정상 | 백테스트 정상 실행 |
-| `caution` | 외부·투자자 커버리지 중 하나라도 `max(0.7, min_*_coverage_ratio)` 미만 | 경고만 표시, 실행 계속 |
-| `halt` | 최소 비율 미달 | 해당 날짜 거래 중단 |
+| `normal` | 커버리지 정상 | 정상 실행 |
+| `caution` | 외부·투자자 커버리지 중 하나라도 `max(0.7, min_*)` 미만 | 경고, 실행 계속 |
+| `halt` | 최소 비율 미달 | 해당 날짜 거래 중단(수익률 0) |
 
 ---
 
 ## 기준선 평가 (`baselines.py`)
 
-```python
-# src/validation/baselines.py
-def evaluate_baselines(feat: pd.DataFrame) -> dict
-```
-
-모델 성능과 비교하기 위한 단순 기준선들:
-
 | 기준선 | 설명 |
 |--------|------|
 | `baseline_zero` | 항상 0 예측, 상승확률 0.5 |
-| `baseline_prev_return` | 전일 `log_return`을 다음날 수익률 예측값으로 사용 |
-
----
+| `baseline_prev_return` | 전일 `log_return`을 다음날 예측값으로 사용 |
 
 ## 시그널 가중치 튜닝 (`signal_tuning.py`)
 
 ```python
-# src/validation/signal_tuning.py
-def tune_signal_weights(tune_df: pd.DataFrame) -> dict[str, float]
+def tune_signal_weights(pred_df) -> dict
 ```
 
-OOF tune 분할에서 시그널 점수의 가중치를 최적화한다:
-
 ```
-signal_score = return_weight × norm_return
-             + up_prob_weight × up_probability
-             - uncertainty_penalty × uncertainty_score
-             + event_boost_score
+signal_score(점수 산식)
+  = return_weight × norm_return + up_prob_weight × up_probability - uncertainty_penalty × uncertainty_score
 ```
 
-기본 가중치 (`SignalConfig`):
+- 튜닝셋 내부를 **시계열로 다시 분할**(`_time_split`, 70:30)해 train에서 점수를 만들고 valid 성능으로 선택한다.
+- 격자: `return_weight ∈ {0.3,0.45,0.6,0.65}`, `up_prob_weight ∈ {0.20,0.35,0.50}`, `uncertainty_penalty ∈ {0.15,0.25,0.35}`.
+- 동률 시 기본값(`return_weight=0.65, up_prob_weight=0.35, uncertainty_penalty=0.25`)에 가까운 단순한 조합을 선호.
+- 결과에 `train/validation_top_decile_return`과 `top_decile_generalization_gap`을 포함해 과적합 정도를 노출한다.
 
-| 가중치 | 기본값 |
-|--------|--------|
-| `return_weight` | 0.65 |
-| `up_prob_weight` | 0.35 |
-| `uncertainty_penalty` | 0.25 |
-
----
-
-## 백테스트 유효성 검사 (`result_validity.py`)
+## 백테스트 유효성 (`result_validity.py`)
 
 ```python
-# src/validation/result_validity.py
-def evaluate_backtest_validity(backtest: dict, tradable_count: int) -> dict
+def evaluate_backtest_validity(backtest, tradable_count) -> dict
 ```
 
-다음 조건을 검사하여 `backtest_valid: bool` 반환:
-
-- 거래 가능 예측 행 존재 (`tradable_prediction_count > 0`)
-- 평가일 존재 (`days > 0`)
-- 전체 평가일이 커버리지 게이트로 중단되지 않음 (`halted_days < days`)
-- 평균 선택 종목 수가 0보다 큼 (`avg_selected_count > 0`)
-
-현재 구현은 샤프 비율·최대 낙폭·최소 평가일 수 임계값을 차단 조건으로 사용하지 않는다.
-
-유효하지 않으면 `pipeline_report.json`에 `status: "warning"`와 `blocking_reasons` 목록 추가.
-
----
-
-## 메트릭 계산 (`metrics.py`)
-
-```python
-# src/validation/metrics.py
-def regression_metrics(y_true, y_pred) -> dict
-def classification_metrics(y_true, y_prob) -> dict
-```
-
-| 유형 | 메트릭 |
-|------|--------|
-| 회귀 | MAE, RMSE, R², IC (스피어만 상관계수) |
-| 분류 | AUC, Accuracy, F1, Precision, Recall |
+거래 가능 예측 행 존재, 평가일 존재, 전체 평가일이 커버리지 게이트로 중단되지 않음,
+평균 선택 종목 수 > 0을 검사해 `backtest_valid: bool`을 반환한다. 유효하지 않으면
+`pipeline_report.json`에 `status: "warning"`과 `blocking_reasons`가 추가된다. (샤프/낙폭/최소 평가일 임계값은
+현재 차단 조건으로 쓰지 않는다.)
 
 ---
 
 ## 개선 및 수정 제안
 
-> 우선순위: **P0(정확성/문서 불일치) > P1(견고성) > P2(성능/품질)**.
+> 기존 분석의 P1 항목(시그널 튜닝 과적합/탐색 빈약, 백테스트 로그/단순수익률 혼용·등가중 가정,
+> 비용 시나리오 평탄 복리 근사, 폴드 슬라이스 직렬화 비용)은 모두 현재 코드에 반영되었다. 남은 항목은 다음 한 가지다.
 
-### P1 — 시그널 가중치 튜닝의 과적합/탐색 빈약
+### P2 — 튜닝 목적함수의 단순성
 
-- **문제**: `tune_signal_weights`는 **튜닝셋 in-sample 상위 10% 수익률**을 최대화하도록 3×3 격자만 탐색하고, `up_prob_weight`를 0.30으로 **고정**한다(`signal_tuning.py:11-12`). 교차검증·정규화가 없어 노이즈에 과적합되기 쉽고, 문서의 기본값(`up_prob_weight=0.35`)과도 어긋난다.
-- **제안**: 튜닝셋 내부를 다시 시계열 분할해 검증, 탐색 격자 확대 또는 베이지안 탐색, 동률 시 단순(낮은 가중치) 선호, 선택된 가중치의 in/out 성능 차를 리포트.
-
-### P1 — 백테스트의 로그수익률/단순수익률 혼용 및 등가중 가정
-
-- **문제**: 일일 수익률은 선택 종목의 `target_log_return` **평균**(로그수익률)인데, 자산곡선은 `(1+series).cumprod()`로 **단순수익률처럼** 복리화한다(`backtest.py:172,205`). 또한 체결 용량(`max_capacity_notional`)을 계산하고도 비중은 등가중으로 가정한다.
-- **제안**: 로그/단순 정의를 통일(`expm1` 후 단순수익률로 집계), 용량 제약을 실제 비중에 반영한 가중 포트폴리오 수익률 계산.
-
-### P1 — 비용 시나리오가 실제 경로가 아닌 평탄 복리 근사
-
-- **문제**: `cost_scenarios`는 `gross_daily_mean - scenario_cost`를 **일정값으로 N일 복리화**한 근사다(`backtest.py:272-275`). 일자별 변동·턴오버 분포를 반영하지 않아 보수/공격 시나리오가 오도될 수 있다. 게다가 `gross_daily_mean`은 정적 비용만 역가산한다(`backtest.py:251`).
-- **제안**: 시나리오 비용을 일자별 시계열에 적용해 실제 자산곡선을 재시뮬레이션.
-
-### P1 — 폴드 병렬화의 메모리·직렬화 비용
-
-- **문제**: `_iter_folds`가 각 폴드의 `train_df`/`valid_df` 슬라이스를 **리스트로 모두 materialize**한 뒤(`walk_forward.py:226`) `ProcessPoolExecutor`로 넘긴다. 확장창이라 후반 폴드의 `train_df`가 매우 커서 (a) 전체 슬라이스 동시 보유로 메모리 급증, (b) 프로세스 간 대용량 피클 직렬화 오버헤드가 발생한다(Windows spawn에서 특히 큼).
-- **제안**: 폴드를 인덱스 경계만 전달하고 워커 내부에서 슬라이싱, 또는 공유메모리/Arrow. 폴드 lazy 생성으로 동시 보유량 축소.
+- **문제**: `tune_signal_weights`는 valid 분할의 **상위 10% 평균 로그수익률**만 최대화한다. 시계열 분할과
+  일반화 갭 보고로 과적합은 완화됐지만, 거래비용·랭크 IC·하방 리스크는 목적함수에 들어가지 않는다.
+- **제안**: 비용 차감 후 수익률 또는 랭크 IC를 보조 목적으로 추가하고, 선택 가중치의 in/out 성능 차가 큰 경우
+  기본값으로 후퇴하는 가드를 둔다.
