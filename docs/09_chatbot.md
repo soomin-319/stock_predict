@@ -46,10 +46,12 @@ python src/chatbot/kakao_colab_bot.py
 |------|-----|----------|--------|------|
 | 입력 CSV | `--input` | - | `data/real_ohlcv.csv` | 파이프라인 입력 데이터 |
 | 리포트 JSON | `--report-json` | - | `pipeline_report_with_context.json` | 실행 리포트 파일명 |
+| Runtime directory | `--runtime-dir` | `CHATBOT_RUNTIME_DIR` | `result/runtime` | Stores chatbot job/session state, logs, and prewarm metadata |
 | 웹훅 공유 시크릿 | `--kakao-webhook-secret` | `KAKAO_WEBHOOK_SECRET` | 미설정 | 설정 시 `X-Webhook-Secret` 헤더 필수 |
 | 동시 예측 잡 수 | `--max-concurrent-prediction-jobs` | `MAX_CONCURRENT_PREDICTION_JOBS` | `2` | 백그라운드 파이프라인 동시 실행 상한 |
 | 재실행 쿨다운 | `--refresh-cooldown-seconds` | `PREDICTION_REFRESH_COOLDOWN_SECONDS` | `60` | 같은 종목 완료 직후 재실행 최소 간격 |
 | ngrok 인증 | `--ngrok-auth-token` | - | 미설정 | pyngrok 터널 인증 토큰 |
+| Webhook CIDR allowlist | `--allowed-webhook-cidrs` | `KAKAO_ALLOWED_WEBHOOK_CIDRS` | unset | Comma-separated IP/CIDR allowlist. Unset keeps existing allow-all behavior |
 
 ---
 
@@ -66,6 +68,8 @@ Content-Type: application/json
 - 시크릿 미설정: 기존 Colab/로컬 개발처럼 인증 없이 동작한다.
 - 시크릿 설정 + 헤더 누락/불일치: `401 Unauthorized`를 반환한다.
 - ngrok 인증 토큰은 터널 인증용이지 애플리케이션 웹훅 인증이 아니므로 별도로 설정해야 한다.
+- `KAKAO_ALLOWED_WEBHOOK_CIDRS` or `--allowed-webhook-cidrs` restricts `/kakao/webhook` by `request.remote_addr`. Example: `203.0.113.10/32,198.51.100.0/24`.
+- `X-Forwarded-For` is not trusted. Trusted proxy support needs a separate design.
 
 ---
 
@@ -85,7 +89,7 @@ class PredictionJobState:
     completed_at: str | None = None
 ```
 
-잡 상태는 `result/runtime/chatbot_jobs.json`에 저장된다. 로그는 `result/runtime/logs/`에 기록된다.
+? ??? ????? `result/runtime/chatbot_jobs.json`? ????. ??? `result/runtime/logs/`? ????. `--runtime-dir` ?? `CHATBOT_RUNTIME_DIR`? ???? ?/?? ??, ??, prewarm ??? ?? ?? ??? ????. Colab Drive ??? `/content/drive/MyDrive/stock_predict/runtime`??.
 
 안전장치:
 
@@ -93,6 +97,7 @@ class PredictionJobState:
 2. 전체 동시 실행 수가 `max_concurrent_prediction_jobs` 이상이면 새 잡을 거부한다.
 3. 직전 완료 시각이 `refresh_cooldown_seconds`보다 짧으면 재실행을 거부한다.
 4. API 키는 subprocess argv가 아니라 환경변수로 전달하고, 로그/상태 저장 전 `redact_*`로 마스킹한다.
+5. ?? ?? ? ??? `running` ? ? ?? ???? ??? ????? ?? ?? `failed`, `exit_code=-2`, `note=stale_after_restart`? ????.
 
 ---
 
@@ -153,7 +158,7 @@ class PredictionJobState:
 
 ### 3. 추천 종목 조회
 
-`추천` 발화는 `result_simple.csv`에서 추천 후보를 조회한다. 추천/권고 판단은 `predicted_return` 및 기존 추천 정책만 사용한다.
+`??` ??? `result_simple.csv`?? ?? ??? ????. ??/?? ??? `predicted_return` ? ?? ?? ??? ????. ??? ??? Kakao `listCard`? ??, ???, ????, ??? ????. ?? ??? ?? ???? ??? ??? ???, ?? ?? ??? ????? ?? `simpleText` ???? ????.
 
 ### 4. 실시간 종가 추천
 
@@ -178,12 +183,13 @@ from src.utils.secrets import redact_argv, redact_value
 
 ## Colab 운영 팁
 
-Colab 런타임은 재시작 시 메모리 상태가 사라진다. 현재 잡/세션 상태는 `result/runtime/*.json`에 저장되지만, Colab 세션 자체가 사라지면 로컬 디스크도 사라질 수 있다. 장기 운영 시 Google Drive 마운트 경로에 `result/`를 보존하는 구성이 필요하다.
+Colab ???? ??? ? ??? ??? ????. ?? ?/?? ??? `result/runtime/*.json`? ?????, Colab ?? ??? ???? ?? ???? ??? ? ??. ?? ?? ? Google Drive ??? ??? `CHATBOT_RUNTIME_DIR` ?? `--runtime-dir`? ????. ?: `CHATBOT_RUNTIME_DIR=/content/drive/MyDrive/stock_predict/runtime`. ??? ? ?? ?? `running` ?? ?? ? ?? ??? ???? ?? ?? ??? ???.
 
 ---
 
 ## 남은 개선 과제
 
-- P2: Colab Drive 기반 상태/로그 영속화와 부팅 시 `running` 잡 정리.
-- P2: 추천 목록이 길 때 `listCard`/`basicCard` 같은 리치 포맷 추가 검토.
-- P2: 운영 환경에서 허용 IP 또는 카카오 요청 서명 검증을 추가할 수 있는지 검토.
+- Done: Colab Drive-friendly runtime persistence via `--runtime-dir`/`CHATBOT_RUNTIME_DIR` and stale `running` cleanup on boot.
+- Done: recommendation list display with Kakao `listCard`.
+- Done: webhook source IP/CIDR allowlist.
+- P2: verify official Kakao request-signature spec before adding signature validation.
