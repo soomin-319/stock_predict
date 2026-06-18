@@ -12,6 +12,7 @@ from typing import Any
 import pandas as pd
 
 from src.reports.output import safe_to_csv
+from src.reports.report_metadata import SCHEMA_VERSION
 from src.utils.atomic_files import atomic_write_text
 
 REQUIRED_ARTIFACTS = (
@@ -49,6 +50,13 @@ def _csv_row_count(path: Path) -> int | None:
         return None
 
 
+def _csv_columns(path: Path) -> list[str] | None:
+    try:
+        return [str(column) for column in pd.read_csv(path, encoding="utf-8-sig", nrows=0).columns]
+    except Exception:
+        return None
+
+
 def _artifact_entries(run_dir: Path) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for path in sorted(item for item in run_dir.rglob("*") if item.is_file() and item.name != "manifest.json"):
@@ -61,6 +69,9 @@ def _artifact_entries(run_dir: Path) -> list[dict[str, Any]]:
         }
         if path.suffix.lower() == ".csv":
             entry["row_count"] = _csv_row_count(path)
+            entry["columns"] = _csv_columns(path) or []
+            entry["schema_kind"] = path.stem
+            entry["schema_version"] = SCHEMA_VERSION
         entries.append(entry)
     return entries
 

@@ -24,7 +24,8 @@
 
 ```
 result/
-├── latest/                     # 최신 운영 결과 (symbolic link 또는 복사)
++-- latest_manifest.json        # latest production run pointer
++-- latest/                     # compatibility copy of latest production output
 │   ├── manifest.json           # 최신 실행 메타데이터
 │   ├── csv/
 │   │   ├── result_detail.csv   # 전체 예측 상세
@@ -38,7 +39,7 @@ result/
         └── (same structure)
 ```
 
-샘플(`--input data/sample_ohlcv.csv`) 실행은 `latest/`를 업데이트하지 않는다.
+Sample runs (`--input data/sample_ohlcv.csv`) do not update `latest/` or `latest_manifest.json`.
 
 ---
 
@@ -174,12 +175,16 @@ def append_issue_summary_columns(
     openai_model=None,
     summarize_symbols=None,
     summary_n_jobs=1,
+    max_llm_symbols=20,
+    llm_cache_dir=None,
 ) -> pd.DataFrame
 ```
 
 OpenAI API를 사용하여 뉴스/공시 이벤트를 한국어로 요약:
 - `--openai-api-key` 또는 `OPENAI_API_KEY` 환경변수 필요
 - `--issue-summary-symbols`로 요약 종목 제한 가능
+- Default LLM call budget is 20 symbols; rows outside the budget use rule-based summaries.
+- Set `llm_cache_dir` to reuse file-cached LLM summaries for identical model/event inputs.
 - 결과는 `뉴스 요약`, `공시 요약` 컬럼으로 추가 (표시 전용)
 
 ---
@@ -233,36 +238,22 @@ Windows Excel에서 한글이 깨지지 않도록 하기 위함.
 
 ---
 
-## 개선 및 수정 제안
+## Current guardrails and remaining improvements
 
-> 우선순위: **P0(정확성) > P1(견고성) > P2(품질/문서)**.
+> Priority: **P0(correctness) > P1(robustness) > P2(operations/docs)**.
 
-### P1 — `drop_empty_detail_columns`의 컬럼 변동성
+### Applied guardrails
 
-- **문제**: 실행마다 "전부 비어있는" 선택 컬럼을 드롭하므로(`output.py:118-165`), `result_detail.csv`의 **스키마가 실행마다 달라진다**. 다운스트림(엑셀 매크로, 챗봇 파서, BI)이 컬럼 존재를 가정하면 깨진다.
-- **제안**: 컬럼은 항상 유지하고 값만 비우거나, 안정 스키마 버전을 manifest에 기록. 드롭 동작은 옵션화.
+- `drop_empty_detail_columns()` keeps optional columns by default, so `result_detail.csv` schema is stable. Legacy callers can still opt into pruning with `prune_empty_optional=True`.
+- Only production/real runs promote to `latest/`. Sample and smoke runs stay under `result/runs/<run_id>/` and do not change `latest_manifest.json`.
+- Chatbot readers prefer `latest_manifest.json` and read `runs/<run_id>/...` directly.
+- CSV artifact entries in manifest include `row_count`, `columns`, `schema_kind`, and `schema_version`.
+- `pm_report` exposes `PM_REPORT_REQUIRED_FIELDS` and `validate_pm_report_schema()` for contract checks.
+- `cleanup_runs()` preserves the run referenced by `latest_manifest.json` or `latest/manifest.json`.
+- Issue-summary LLM calls are capped at 20 symbols by default. When `llm_cache_dir` is set, file cache is reused. LLM failure or budget overflow never changes prediction values; display-only summaries fall back to rules.
 
-### P1 — `latest/` 링크 원자성·동시성
+### Remaining improvements
 
-- **문제**: `RunArtifactManager.finalize()`가 `result/latest/`를 갱신할 때, 챗봇(`realtime_close_betting`)이 동시에 `result/latest/csv/result_simple.csv`를 읽으면 부분 갱신 상태를 볼 수 있다. Windows에서는 symlink 권한·교체 시맨틱이 제한적이다.
-- **제안**: `latest`를 디렉터리 단위로 원자 교체(임시 디렉터리 생성 후 rename)하거나, `manifest.json`의 `run_id`를 단일 진실원으로 두고 reader가 run 디렉터리를 직접 참조.
-
-### P2 — 메타데이터 영업일 계산 정확성
-
-- **문제**: `prediction_for_date = input_as_of_date 다음 영업일`(문서)인데, 단순 +1영업일 로직은 **한국 공휴일/임시휴장**을 반영하지 못할 수 있다(`report_metadata.py`). 토·일만 건너뛰면 설/추석 연휴에 잘못된 날짜가 나온다.
-- **제안**: KRX 거래일 캘린더(또는 `pandas_market_calendars`/보유 중인 거래일 인덱스)로 다음 거래일 산출.
-
-### P2 — `pm_report`/`result_simple` 스키마 계약 문서화
-
-- **문제**: 챗봇·PM 리포트가 의존하는 `result_simple.csv` 컬럼 계약이 코드(`build_pipeline_result_simple` → `format_result_simple`)에 흩어져 있다.
-- **제안**: 필수 컬럼·타입을 문서/스키마(예: pandera)로 고정해 회귀를 테스트.
-
-### P2 — 결과 정리(`cleanup_old_runs`) 안전장치
-
-- **문제**: `keep_n` 기준으로 오래된 run을 삭제하는데(`utils/result_cleanup.py`), 진행 중이거나 `latest`가 가리키는 run을 보호하는지 문서에 불명확.
-- **제안**: `latest`가 참조하는 `run_id`와 최근 N개는 항상 보존하도록 명시·테스트.
-
-### P2 — 이슈 요약 LLM 호출 비용/실패 처리
-
-- **문제**: `issue_summary.py`(661줄)는 OpenAI 호출로 종목별 한국어 요약을 생성한다. 대량 종목·실패·레이트리밋 시 비용/지연이 크다.
-- **제안**: 요약 대상 기본 상한(상위 N종목), 캐시(뉴스 임팩트 모듈의 `FileLLMResponseCache` 재사용), 실패 시 부분 결과 보존 정책을 문서화.
+- KRX business-day logic includes built-in 2025-2026 holidays. For longer operation, move to a KRX calendar package or managed trading-day table.
+- When `result_simple.csv` or `pm_report.json` contracts change, bump schema version and update chatbot/BI consumer tests together.
+- Treat `latest/` as compatibility copy. New readers should prefer `latest_manifest.json` -> `runs/<run_id>/...`.
