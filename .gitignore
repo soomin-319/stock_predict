@@ -34,3 +34,7 @@ models/
 # Claude session-local artefacts (unpushed commit backups, etc.)
 .claude/
 .claude_*.patch
+.claude/
+
+# Local model checkpoints / weights
+models/

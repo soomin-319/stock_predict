@@ -1,5 +1,10 @@
 from src.chatbot.intent import is_help_utterance, is_status_utterance, normalize_utterance
 from src.chatbot.responses import simple_text_response
+from src.chatbot.kakao_colab_bot import (
+    KakaoColabPredictionBot,
+    PipelineRuntimeConfig,
+    create_app,
+)
 
 
 def test_normalize_utterance_strips_whitespace():
@@ -18,3 +23,77 @@ def test_simple_text_response_shape():
         "version": "2.0",
         "template": {"outputs": [{"simpleText": {"text": "hello"}}]},
     }
+
+
+def make_test_bot(tmp_path, **kwargs):
+    return KakaoColabPredictionBot(
+        result_simple_path=tmp_path / "missing.csv",
+        state_path=tmp_path / "jobs.json",
+        session_path=tmp_path / "sessions.json",
+        **kwargs,
+    )
+
+
+def test_intents_match_phrases_and_punctuation():
+    assert is_help_utterance("도움말 좀 알려줘!")
+    assert is_status_utterance("결과 확인 부탁")
+
+
+def test_simple_text_response_truncates_long_text():
+    response = simple_text_response("가" * 1200, max_text_length=20)
+    text = response["template"]["outputs"][0]["simpleText"]["text"]
+    assert len(text) <= 20
+    assert text.endswith("...(생략)")
+
+
+def test_extract_stock_code_rejects_noisy_numeric_tokens(tmp_path):
+    bot = make_test_bot(tmp_path)
+    assert bot._extract_stock_code("005930") == "005930"
+    assert bot._extract_stock_code("005930.KS") == "005930.KS"
+    assert bot._extract_stock_code("005930 보여줘") == "005930"
+    assert bot._extract_stock_code("abc123") is None
+    assert bot._extract_stock_code("12345") is None
+
+
+def test_kakao_webhook_rejects_missing_or_bad_secret(tmp_path):
+    bot = make_test_bot(tmp_path)
+    app = create_app(bot=bot, runtime_config=PipelineRuntimeConfig(kakao_webhook_secret="secret"))
+    client = app.test_client()
+    assert client.post("/kakao/webhook", json={}).status_code == 401
+    assert client.post("/kakao/webhook", json={}, headers={"X-Webhook-Secret": "bad"}).status_code == 401
+
+
+def test_kakao_webhook_accepts_matching_secret(tmp_path):
+    bot = make_test_bot(tmp_path)
+    app = create_app(bot=bot, runtime_config=PipelineRuntimeConfig(kakao_webhook_secret="secret"))
+    client = app.test_client()
+    response = client.post("/kakao/webhook", json={}, headers={"X-Webhook-Secret": "secret"})
+    assert response.status_code == 200
+
+
+class _DummyProcess:
+    pid = 123
+    stdout = None
+
+
+def test_start_prediction_job_deduplicates_running_symbol(tmp_path):
+    calls = []
+
+    def runner(*args, **kwargs):
+        calls.append(args)
+        return _DummyProcess()
+
+    bot = make_test_bot(tmp_path, process_runner=runner)
+    assert bot._start_prediction_job("005930.KS") is True
+    assert bot._start_prediction_job("005930.KS") is True
+    assert len(calls) == 1
+
+
+def test_start_prediction_job_respects_concurrency_limit(tmp_path):
+    def runner(*args, **kwargs):
+        return _DummyProcess()
+
+    cfg = PipelineRuntimeConfig(max_concurrent_prediction_jobs=1)
+    bot = make_test_bot(tmp_path, runtime_config=cfg, process_runner=runner)
+    assert bot._start_prediction_job("005930.KS") is True
+    assert bot._start_prediction_job("000660.KS") is False
