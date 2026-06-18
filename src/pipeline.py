@@ -7,7 +7,7 @@ import os
 import random
 import sys
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Iterator
@@ -139,7 +139,7 @@ def _feature_columns(df: pd.DataFrame) -> list[str]:
 
 
 def _adaptive_training_cfg(cfg, feat: pd.DataFrame):
-    tuned = cfg.training
+    tuned = replace(cfg.training)
     uniq = len(feat["Date"].unique())
     tuned.min_train_size = min(tuned.min_train_size, max(60, int(uniq * 0.6)))
     tuned.test_size = min(tuned.test_size, max(20, int(uniq * 0.2)))
@@ -323,10 +323,22 @@ def _build_combined_symbol_results(pred_df: pd.DataFrame, summary_csv: str | Non
     return output_build_combined_symbol_results(pred_df, summary_csv, out_path)
 
 
+PIPELINE_STAGE_KEYS = {
+    "load_config_and_inputs",
+    "prepare_context",
+    "build_feature_matrix",
+    "validation_and_tuning",
+    "train_final_and_predict_latest",
+    "save_pipeline_artifacts",
+}
+
+
 @dataclass(slots=True)
 class PipelineDiagnostics:
     timings_seconds: dict[str, float] = field(default_factory=dict)
     row_counts: dict[str, int] = field(default_factory=dict)
+    stage_status: dict[str, dict[str, str]] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
 
     @contextmanager
     def time_stage(self, name: str) -> Iterator[None]:
@@ -339,10 +351,25 @@ class PipelineDiagnostics:
     def set_rows(self, name: str, frame: pd.DataFrame | None) -> None:
         self.row_counts[name] = 0 if frame is None else int(len(frame))
 
+    def mark_stage(self, name: str, status: str, reason: str = "") -> None:
+        self.stage_status[name] = {"status": status, "reason": reason}
+
+    def warn(self, message: str) -> None:
+        if message and message not in self.warnings:
+            self.warnings.append(message)
+
+    def validate_stage_coverage(self, expected: set[str] | None = None) -> None:
+        expected_stages = expected or PIPELINE_STAGE_KEYS
+        missing = sorted(expected_stages - set(self.stage_status))
+        if missing:
+            self.warn(f"missing stage status: {', '.join(missing)}")
+
     def to_report(self, coverage_summary: dict[str, Any]) -> dict[str, Any]:
         return {
             "timings_seconds": {k: round(float(v), 6) for k, v in self.timings_seconds.items()},
             "row_counts": dict(self.row_counts),
+            "stage_status": dict(self.stage_status),
+            "warnings": list(self.warnings),
             "coverage_summary": coverage_summary,
         }
 
@@ -441,16 +468,27 @@ def _prepare_pipeline_context(
         columns=["Date", "Symbol", "source_type", "title", "published_at", "provider", "url", "raw_id"]
     )
     if use_investor_context:
-        data, investor_context_coverage = add_investor_context_with_coverage(
-            data,
-            InvestorContextConfig(
-                enabled=True,
-                enable_disclosure=enable_investor_disclosure,
-                dart_api_key=dart_api_key,
-                dart_corp_map_csv=dart_corp_map_csv,
-                raw_event_n_jobs=int(context_raw_event_n_jobs or 4),
-            ),
-        )
+        try:
+            data, investor_context_coverage = add_investor_context_with_coverage(
+                data,
+                InvestorContextConfig(
+                    enabled=True,
+                    enable_disclosure=enable_investor_disclosure,
+                    dart_api_key=dart_api_key,
+                    dart_corp_map_csv=dart_corp_map_csv,
+                    raw_event_n_jobs=int(context_raw_event_n_jobs or 4),
+                ),
+            )
+        except Exception as exc:
+            investor_context_coverage.update(
+                {
+                    "enabled": True,
+                    "status": "error",
+                    "error": str(exc),
+                    "warnings": [f"investor context unavailable: {exc}"],
+                }
+            )
+            _LOGGER.warning("Investor context unavailable; using OHLCV data only: %s", exc)
         investor_context_coverage.setdefault(
             "raw_events",
             {
@@ -511,9 +549,24 @@ def _prepare_pipeline_context(
 
 def _build_pipeline_feature_matrix(data: pd.DataFrame, cfg: Any, use_external: bool) -> tuple[pd.DataFrame, dict, list[str]]:
     feat = build_features(data, cfg.feature)
-    external_coverage = {"requested": 0, "successful": 0, "failed": 0, "fallback_used": 0, "details": []}
+    external_coverage = {"requested": 0, "successful": 0, "failed": 0, "fallback_used": 0, "details": [], "status": "skipped"}
     if cfg.external.enabled and use_external:
-        feat, external_coverage = add_external_market_features_with_coverage(feat, cfg.external.market_symbols)
+        try:
+            feat, external_coverage = add_external_market_features_with_coverage(feat, cfg.external.market_symbols)
+            external_coverage["status"] = "ok"
+        except Exception as exc:
+            requested = len(getattr(cfg.external, "market_symbols", []) or [])
+            external_coverage = {
+                "requested": requested,
+                "successful": 0,
+                "failed": requested,
+                "fallback_used": 1,
+                "details": [],
+                "status": "error",
+                "error": str(exc),
+                "warnings": [f"external market features unavailable: {exc}"],
+            }
+            _LOGGER.warning("External market features unavailable; using price features only: %s", exc)
     feat = annotate_market_regime(feat)
     feat = add_investment_signal_features(feat, cfg.investment_criteria)
     feat = feat.dropna(subset=["target_log_return"]).copy()
@@ -546,10 +599,14 @@ def _run_pipeline_validation(
     investor_context_coverage: dict,
 ) -> dict[str, Any]:
     walk_forward_result = walk_forward_validate_result(feat, feature_columns, cfg.training)
-    if not walk_forward_result.folds:
+    initial_fold_count = len(walk_forward_result.folds)
+    min_required_folds = int(getattr(cfg.training, "min_required_folds", 3) or 3)
+    adaptive_retry_used = initial_fold_count < min_required_folds
+    if adaptive_retry_used:
         effective_cfg = _adaptive_training_cfg(cfg, feat)
         walk_forward_result = walk_forward_validate_result(feat, feature_columns, effective_cfg)
     folds = walk_forward_result.folds
+    final_fold_count = len(folds)
     oof = walk_forward_result.oof
     wf_summary = pd.DataFrame([f.metrics for f in folds]).mean().to_dict() if folds else {}
     baseline_summary = evaluate_baselines(feat)
@@ -588,20 +645,19 @@ def _run_pipeline_validation(
     eval_df = score_oof(split.eval)
 
     tuned = tune_signal_weights(tune_df)
-    cfg.signal.return_weight = tuned["return_weight"]
-    cfg.signal.up_prob_weight = tuned["up_prob_weight"]
-    cfg.signal.rel_strength_weight = tuned["rel_strength_weight"]
-    cfg.signal.uncertainty_penalty = tuned["uncertainty_penalty"]
+    signal_field_names = set(getattr(cfg.signal, "__dataclass_fields__", {}))
+    tuned_signal_values = {key: value for key, value in tuned.items() if key in signal_field_names}
+    tuned_signal_cfg = replace(cfg.signal, **tuned_signal_values)
 
     def apply_tuned_signal(frame: pd.DataFrame) -> pd.DataFrame:
         if frame.empty:
             return frame.copy()
         out = frame.copy()
         out["signal_score"] = (
-            cfg.signal.return_weight * out["norm_return"]
-            + cfg.signal.up_prob_weight * out["up_probability"]
-            + cfg.signal.rel_strength_weight * out["rel_strength"]
-            - cfg.signal.uncertainty_penalty * out["uncertainty_score"]
+            tuned_signal_cfg.return_weight * out["norm_return"]
+            + tuned_signal_cfg.up_prob_weight * out["up_probability"]
+            + tuned_signal_cfg.rel_strength_weight * out["rel_strength"]
+            - tuned_signal_cfg.uncertainty_penalty * out["uncertainty_score"]
             + out["event_boost_score"].fillna(0.0)
         )
         out["signal_label"] = signal_label_series(out["signal_score"])
@@ -635,6 +691,8 @@ def _run_pipeline_validation(
         "tune_df": tune_df,
         "eval_df": eval_df,
         "tuned": tuned,
+        "tuned_signal_values": tuned_signal_values,
+        "tuned_signal_config": tuned_signal_cfg,
         "calibrator": calibrator,
         "probability_calibration": probability_calibration,
         "oof_diagnostics": walk_forward_result.oof_diagnostics,
@@ -650,6 +708,12 @@ def _run_pipeline_validation(
         "external_coverage_ratio": external_coverage_ratio,
         "investor_coverage_ratio": investor_coverage_ratio,
         "coverage_gate_status": coverage_gate_status,
+        "walk_forward_diagnostics": {
+            "initial_fold_count": int(initial_fold_count),
+            "final_fold_count": int(final_fold_count),
+            "min_required_folds": int(min_required_folds),
+            "adaptive_retry_used": bool(adaptive_retry_used),
+        },
     }
 
 
@@ -697,6 +761,7 @@ def _predict_pipeline_latest(
     issue_summary_symbols: list[str] | None,
     issue_summary_n_jobs: int,
     news_impact_report: str | None,
+    signal_config: Any | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict, MultiHeadStockModel]:
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
     lookback = int(getattr(cfg.training, "final_model_lookback_days", 0) or 0)
@@ -714,10 +779,11 @@ def _predict_pipeline_latest(
     latest = feat.sort_values("Date").groupby("Symbol", as_index=False).tail(1)
     latest_pred = model.predict(latest)
     latest_pred.up_probability = probability_calibrator.transform(latest_pred.up_probability).values
+    effective_signal_config = signal_config or cfg.signal
     pred_df = build_scored_prediction_frame(
         latest,
         latest_pred,
-        cfg.signal,
+        effective_signal_config,
         prediction_context,
         investment_criteria=cfg.investment_criteria,
     )
@@ -727,18 +793,31 @@ def _predict_pipeline_latest(
     pred_df = pred_df.merge(sym_acc, on="Symbol", how="left")
     pred_df["history_direction_accuracy"] = pred_df["history_direction_accuracy"].fillna(0.5)
     pred_df = finalize_latest_prediction_frame(pred_df, symbol_name_map, investment_criteria=cfg.investment_criteria)
-    pred_df = append_issue_summary_columns(
-        pred_df,
-        context_raw_df=context_raw_df,
-        openai_api_key=effective_openai_api_key,
-        openai_model=effective_openai_model,
-        summarize_symbols=issue_summary_symbols,
-        summary_n_jobs=issue_summary_n_jobs,
-    )
-    if news_impact_report:
-        pred_df = append_news_impact_context(pred_df, news_impact_report)
-    else:
-        pred_df = append_generated_news_impact_context(pred_df, context_raw_df)
+    warnings: list[str] = []
+    try:
+        pred_df = append_issue_summary_columns(
+            pred_df,
+            context_raw_df=context_raw_df,
+            openai_api_key=effective_openai_api_key,
+            openai_model=effective_openai_model,
+            summarize_symbols=issue_summary_symbols,
+            summary_n_jobs=issue_summary_n_jobs,
+        )
+    except Exception as exc:
+        warning = f"issue summary unavailable: {exc}"
+        warnings.append(warning)
+        _LOGGER.warning("%s", warning)
+    try:
+        if news_impact_report:
+            pred_df = append_news_impact_context(pred_df, news_impact_report)
+        else:
+            pred_df = append_generated_news_impact_context(pred_df, context_raw_df)
+    except Exception as exc:
+        warning = f"news impact context unavailable: {exc}"
+        warnings.append(warning)
+        _LOGGER.warning("%s", warning)
+    if warnings:
+        pred_df.attrs["warnings"] = warnings
     pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True))
     pred_df["권고"] = pred_df["recommendation"]
     oof_diagnostics = _compute_oof_diagnostics(scored_oof)
@@ -902,7 +981,9 @@ def _write_pipeline_artifacts(
         "universe_size_used": int(data["Symbol"].nunique()),
         "feature_count": len(feature_columns),
         "config": app_config_to_dict(cfg),
+        "config_input": app_config_to_dict(cfg),
         "walk_forward": validation_result["wf_summary"],
+        "walk_forward_diagnostics": validation_result["walk_forward_diagnostics"],
         "oof_policy": {
             "duplicate_policy": "date_symbol_mean",
             "diagnostics": validation_result["oof_diagnostics"],
@@ -910,6 +991,7 @@ def _write_pipeline_artifacts(
         "validation_split": validation_result["validation_split"],
         "baselines": validation_result["baseline_summary"],
         "tuned_signal": tuned,
+        "signal_weights_tuned": asdict(validation_result["tuned_signal_config"]),
         "tuning_samples": int(len(tune_df)),
         "backtest_samples": int(len(backtest_input)),
         "backtest": {k: v for k, v in backtest.items() if k != "series"},
@@ -1050,6 +1132,7 @@ def run_pipeline(
             config_json=config_json,
             cfg_overrides=cfg_overrides,
         )
+    diagnostics.mark_stage("load_config_and_inputs", "ok")
     diagnostics.set_rows("raw_input", raw)
     diagnostics.set_rows("cleaned_input", cleaned)
 
@@ -1065,6 +1148,13 @@ def run_pipeline(
             naver_client_secret=naver_client_secret,
             context_raw_event_n_jobs=context_raw_event_n_jobs,
         )
+    diagnostics.mark_stage(
+        "prepare_context",
+        "caution" if investor_context_coverage.get("status") == "error" else "ok",
+        investor_context_coverage.get("error", ""),
+    )
+    for warning in investor_context_coverage.get("warnings", []):
+        diagnostics.warn(warning)
     diagnostics.set_rows("context_input", data)
     diagnostics.set_rows("context_raw_events", context_raw_df)
     input_as_of = pd.to_datetime(data.get("Date"), errors="coerce").max()
@@ -1096,6 +1186,13 @@ def run_pipeline(
     _print_progress(6, total_steps, "Adding external market features")
     with diagnostics.time_stage("build_feature_matrix"):
         feat, external_coverage, feature_columns = _build_pipeline_feature_matrix(data, cfg, use_external)
+    diagnostics.mark_stage(
+        "build_feature_matrix",
+        "caution" if external_coverage.get("status") == "error" else "ok",
+        external_coverage.get("error", ""),
+    )
+    for warning in external_coverage.get("warnings", []):
+        diagnostics.warn(warning)
     diagnostics.set_rows("features", feat)
     feature_missing_rates = feature_missing_rate_summary(feat, feature_columns)
 
@@ -1112,6 +1209,7 @@ def run_pipeline(
             external_coverage=external_coverage,
             investor_context_coverage=investor_context_coverage,
         )
+    diagnostics.mark_stage("validation_and_tuning", "ok")
     scored_oof = validation_result["scored_oof"]
     diagnostics.set_rows("oof_predictions", scored_oof)
 
@@ -1133,11 +1231,21 @@ def run_pipeline(
             issue_summary_symbols=issue_summary_symbols,
             issue_summary_n_jobs=issue_summary_n_jobs,
             news_impact_report=news_impact_report,
+            signal_config=validation_result["tuned_signal_config"],
         )
+    diagnostics.mark_stage(
+        "train_final_and_predict_latest",
+        "caution" if pred_df.attrs.get("warnings") else "ok",
+        "; ".join(pred_df.attrs.get("warnings", [])),
+    )
+    for warning in pred_df.attrs.get("warnings", []):
+        diagnostics.warn(warning)
     diagnostics.set_rows("latest_feature_rows", latest)
     diagnostics.set_rows("latest_predictions", pred_df)
 
     _print_progress(12, total_steps, "Saving artifacts")
+    diagnostics.mark_stage("save_pipeline_artifacts", "ok")
+    diagnostics.validate_stage_coverage()
     with diagnostics.time_stage("save_pipeline_artifacts"):
         report = _write_pipeline_artifacts(
             pred_df=pred_df,

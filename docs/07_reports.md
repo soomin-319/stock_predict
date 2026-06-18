@@ -237,11 +237,6 @@ Windows Excel에서 한글이 깨지지 않도록 하기 위함.
 
 > 우선순위: **P0(정확성) > P1(견고성) > P2(품질/문서)**.
 
-### P1 — 입력 CSV 인코딩 일관성
-
-- **문제**: 출력은 `utf-8-sig`로 저장하지만(`output.py:59`), `build_combined_symbol_results`는 외부 요약 CSV를 `pd.read_csv(summary_csv)` 기본 인코딩으로 읽는다(`output.py:194`). 이전 단계가 저장한 `utf-8-sig` 파일을 되읽을 때 BOM 헤더로 `Symbol` 매칭이 어긋날 수 있다.
-- **제안**: 프로젝트의 모든 `read_csv`를 `encoding="utf-8-sig"`로 통일(입력 데이터 로더 포함, `02_data.md` 참고).
-
 ### P1 — `drop_empty_detail_columns`의 컬럼 변동성
 
 - **문제**: 실행마다 "전부 비어있는" 선택 컬럼을 드롭하므로(`output.py:118-165`), `result_detail.csv`의 **스키마가 실행마다 달라진다**. 다운스트림(엑셀 매크로, 챗봇 파서, BI)이 컬럼 존재를 가정하면 깨진다.

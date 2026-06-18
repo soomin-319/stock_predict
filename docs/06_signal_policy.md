@@ -189,31 +189,6 @@ class RealTimeCloseBettingRecommendationService:
 
 > 우선순위: **P0(버그) > P1(정합성) > P2(문서/품질)**.
 
-### 해결됨 — P0 이벤트 부스트 이중 적용
-
-- 최신 예측 경로에서 `build_scored_prediction_frame`과 `build_prediction_policy_frame`가 모두 이벤트 부스트를 적용할 수 있었다.
-- `vectorized_event_signal_boost`를 idempotent하게 만들어 기존 `event_boost_score`가 있으면 `signal_score`에서 기존 부스트를 제거한 뒤 새 부스트를 더한다.
-
-### 해결됨 — P0 `confidence_label` 문서 불일치
-
-- 문서를 실제 4단계 임계값(`0.80/0.67/0.34`)에 맞췄다.
-
-### 해결됨 — P1 52주 근접 기준 정합성
-
-- 코드의 설정 기반 기준(`near_52w_distance_threshold`, 기본 0.03)을 문서에 명시했다.
-
-### 해결됨 — P1 이벤트 부스트 누적 가산 명시
-
-- 거래대금, 강한 동시 순매수, NASDAQ 테일윈드가 누적될 수 있음을 문서화했다.
-
-### 해결됨 — P1 `LOW_LIQUIDITY` 기본 임계값
-
-- `min_liquidity_threshold`가 없거나 0 이하일 때 백테스트 기본 `min_value_traded`를 사용하도록 정책 레이어를 보강했다.
-
-### 해결됨 — P2 `signal_label` 경계 문서화
-
-- 실제 라벨과 경계(`0.25/0.45/0.55/0.75`)로 문서를 정정했다.
-
 ### 향후 과제 — P2 행 단위 `apply` 성능
 
 - `build_prediction_policy_frame`의 `prediction_reason`, `_jongbae_score`, `build_pm_summary_fields`는 아직 행 단위 `apply`를 사용한다.
