@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import hmac
+import ipaddress
 import json
 import logging
 import re
@@ -95,6 +96,7 @@ class PipelineRuntimeConfig:
     kakao_webhook_secret: str | None = None
     max_concurrent_prediction_jobs: int = 2
     refresh_cooldown_seconds: int = 60
+    allowed_webhook_cidrs: tuple[str, ...] = ()
 
     def build_command(
         self,
@@ -1949,6 +1951,27 @@ class KakaoColabPredictionBot:
         return attach_quick_replies(simple_text_response(str(text or "")), quick_replies[:10] if quick_replies else None)
 
 
+def _parse_csv_tuple(value: str | None) -> tuple[str, ...]:
+    return tuple(part.strip() for part in str(value or "").split(",") if part.strip())
+
+
+def _is_remote_addr_allowed(remote_addr: str | None, cidrs: tuple[str, ...]) -> bool:
+    if not cidrs:
+        return True
+    try:
+        ip = ipaddress.ip_address(str(remote_addr or ""))
+    except ValueError:
+        return False
+    for cidr in cidrs:
+        try:
+            network = ipaddress.ip_network(cidr, strict=False)
+        except ValueError:
+            continue
+        if ip in network:
+            return True
+    return False
+
+
 def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: PipelineRuntimeConfig | None = None):
     from flask import Flask, jsonify, request
 
@@ -1962,6 +1985,8 @@ def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: Pipel
 
     @app.post("/kakao/webhook")
     def kakao_webhook():
+        if not _is_remote_addr_allowed(request.remote_addr, effective_config.allowed_webhook_cidrs):
+            return jsonify({"error": "forbidden"}), 403
         secret = str(effective_config.kakao_webhook_secret or "").strip()
         if secret:
             provided = request.headers.get("X-Webhook-Secret", "")

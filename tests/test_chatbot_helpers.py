@@ -155,6 +155,28 @@ def test_kakao_webhook_accepts_matching_secret(tmp_path):
     assert response.status_code == 200
 
 
+def test_kakao_webhook_rejects_disallowed_remote_addr(tmp_path):
+    bot = make_test_bot(tmp_path)
+    cfg = PipelineRuntimeConfig(allowed_webhook_cidrs=("10.0.0.0/8",))
+    app = create_app(bot=bot, runtime_config=cfg)
+    client = app.test_client()
+
+    response = client.post("/kakao/webhook", json={}, environ_base={"REMOTE_ADDR": "127.0.0.1"})
+
+    assert response.status_code == 403
+
+
+def test_kakao_webhook_accepts_allowed_remote_addr(tmp_path):
+    bot = make_test_bot(tmp_path)
+    cfg = PipelineRuntimeConfig(allowed_webhook_cidrs=("127.0.0.1/32",))
+    app = create_app(bot=bot, runtime_config=cfg)
+    client = app.test_client()
+
+    response = client.post("/kakao/webhook", json={}, environ_base={"REMOTE_ADDR": "127.0.0.1"})
+
+    assert response.status_code == 200
+
+
 class _DummyProcess:
     pid = 123
     stdout = None
