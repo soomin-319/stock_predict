@@ -255,22 +255,6 @@ def classification_metrics(y_true, y_prob) -> dict
 
 > 우선순위: **P0(정확성/문서 불일치) > P1(견고성) > P2(성능/품질)**.
 
-### 문서 정정 완료 — `min_signal_score` 필터 설명
-
-- **정정**: 백테스트 필터 조건에서 `signal_score >= min_signal_score`를 제거했다. 실제 구현은 `up_probability`, `value_traded`, 체결가능 용량, 커버리지 게이트를 기준으로 필터링한다.
-- **비고**: `BacktestConfig.min_signal_score` 필드는 남아 있지만 현재 백테스트 필터에는 적용되지 않는다.
-
-### 문서 정정 완료 — 종목 선택 기준(predicted_return vs signal_score)
-
-- **정정**: 종목 선택 기준을 `predicted_return` 우선, `signal_score` 보조 정렬로 명시했다.
-- **근거**: 매수/매도/보유 판단과 순위는 다음날 기대수익률(`predicted_return`)을 기준으로 해야 하며, 뉴스·공시 컨텍스트는 기대수익률, 순위, 추천, 신호를 변경하지 않는다.
-
-### 문서 정정 완료 — `result_validity` 검사 범위
-
-- **정정**: `evaluate_backtest_validity`가 실제로 검사하는 조건만 문서에 남겼다.
-- **현재 범위**: 거래 가능 예측 행 존재, 평가일 존재, 전체 평가일 halt 여부, 평균 선택 종목 수 0 여부.
-- **비고**: 샤프 비율·최대 낙폭·최소 평가일 수 임계값은 현재 차단 조건으로 사용하지 않는다.
-
 ### P1 — 시그널 가중치 튜닝의 과적합/탐색 빈약
 
 - **문제**: `tune_signal_weights`는 **튜닝셋 in-sample 상위 10% 수익률**을 최대화하도록 3×3 격자만 탐색하고, `up_prob_weight`를 0.30으로 **고정**한다(`signal_tuning.py:11-12`). 교차검증·정규화가 없어 노이즈에 과적합되기 쉽고, 문서의 기본값(`up_prob_weight=0.35`)과도 어긋난다.
@@ -290,13 +274,3 @@ def classification_metrics(y_true, y_prob) -> dict
 
 - **문제**: `_iter_folds`가 각 폴드의 `train_df`/`valid_df` 슬라이스를 **리스트로 모두 materialize**한 뒤(`walk_forward.py:226`) `ProcessPoolExecutor`로 넘긴다. 확장창이라 후반 폴드의 `train_df`가 매우 커서 (a) 전체 슬라이스 동시 보유로 메모리 급증, (b) 프로세스 간 대용량 피클 직렬화 오버헤드가 발생한다(Windows spawn에서 특히 큼).
 - **제안**: 폴드를 인덱스 경계만 전달하고 워커 내부에서 슬라이싱, 또는 공유메모리/Arrow. 폴드 lazy 생성으로 동시 보유량 축소.
-
-### 진행 완료 — OOF 안정 컬럼 충돌 진단화
-
-- **수정**: `aggregate_oof_predictions`는 `(Date, Symbol)` 중복에서 안정 컬럼 값이 달라도 첫 행 대표값으로 집계하고, `oof_diagnostics.stable_conflict_count`와 `stable_conflict_columns`에 충돌 수를 기록한다.
-- **유지**: `target_log_return`, `target_up` 등 타겟 컬럼 충돌은 데이터 정합성 문제이므로 계속 `ValueError`로 중단한다.
-
-### 문서 정정 완료 — `baselines`/`coverage_gate` 문서 보강
-
-- `caution` 조건을 외부·투자자 커버리지 중 하나라도 `max(0.7, min_*_coverage_ratio)` 미만인 경우로 명시했다.
-- 실제 `evaluate_baselines` 반환값(`baseline_zero`, `baseline_prev_return`)에 맞게 기준선 표를 정정했다.

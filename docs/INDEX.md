@@ -77,25 +77,7 @@ src/
 
 ## 개선 및 수정 제안 (교차 요약)
 
-각 문서 하단에 기능별 **개선 및 수정 제안** 섹션이 있다. 초기 분석에서 도출한 **P0(정확성/버그/누수)** 항목은 대부분 코드 또는 문서 정정으로 해결되었다. 아래는 현재 상태 요약이다.
-
-### 해결됨 (P0)
-
-| 영역 | 핵심 이슈 | 위치 | 해결 방식 | 문서 |
-|------|-----------|------|-----------|------|
-| 데이터 | KOSDAQ 종목이 `.KS`로 강제 변환되어 수집 실패 | `data/fetch_real_data.py:44-53` | KRX 매핑 우선 + `.KS`/`.KQ` 폴백 | [02](02_data.md) |
-| 데이터 | `load_ohlcv_csv` BOM 미처리 | `data/loaders.py:12` | `encoding="utf-8-sig"` 적용 | [02](02_data.md) |
-| 데이터 | 미조정(unadjusted) 가격 → 분할/증자 시 가짜 급등락 | `fetch_real_data.py:104`, `external_features.py:46` | `auto_adjust=True` + 극단 수익률 플래그 | [02](02_data.md) |
-| 피처 | 미국 지수 "당일" 조인으로 미래정보 누수 | `external_features.py:162` | 해외 관측치 1일 지연(`shift(1)`) | [03](03_features.md) |
-| 피처 | 외부 피처 `bfill()`이 미래값을 과거로 역채움 | `external_features.py:208` | `ffill()`만 허용, `bfill` 금지 | [03](03_features.md) |
-| 피처 | 문서 오류: `vol_ratio_20`은 변동성이 아닌 거래량 비율 | `price_features.py` | 문서 정정 | [03](03_features.md) |
-| 모델 | 분위수 교차 미보정 → `uncertainty_width` 음수 가능 | `inference/predict.py:37` | 분위수 정렬 + `max(width, 0)` 클립 | [04](04_model.md) |
-| 검증 | 문서가 약속한 `min_signal_score` 필터 미적용 | `validation/backtest.py` | 문서 정정(필터 미적용 명시) | [05](05_validation.md) |
-| 검증 | 선택 기준이 문서(signal_score)와 달리 predicted_return | `backtest.py:130` | 문서 정정(`predicted_return` 우선) | [05](05_validation.md) |
-| 검증 | `result_validity` 검사가 문서 주장보다 약함 | `validation/result_validity.py` | 문서 정정(실제 검사 범위 명시) | [05](05_validation.md) |
-| 시그널 | 최신 예측 경로에서 이벤트 부스트 **이중 적용** | `domain/signal_policy.py` | `vectorized_event_signal_boost` idempotent화 | [06](06_signal_policy.md) |
-| 뉴스 | LLM 판정 키 문서가 실제 스키마와 불일치 | `news_impact/impact_judge.py:12` | `LLM_REQUIRED_KEYS` 기준으로 문서 정합 | [08](08_news_impact.md) |
-| 설정 | 문서의 `load_app_config` 시그니처 불일치 | `config/settings.py:269` | 문서 정정(현 시그니처 반영) | [10](10_config.md) |
+각 문서 하단에 기능별 **개선 및 수정 제안** 섹션이 있다. 초기 분석에서 도출한 **P0(정확성/버그/누수)** 항목은 대부분 코드 또는 문서 정정으로 해결되어 제거했다. 아래는 아직 남아 있는 우선 과제 요약이다.
 
 ### 남은 우선 과제
 

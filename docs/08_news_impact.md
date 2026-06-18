@@ -185,23 +185,6 @@ stock-news-impact `
 
 ## 개선 및 수정 진행 현황 (2026-06-17)
 
-### 완료: P0 문서 인코딩·계약 정리
-
-- 깨진 본문을 UTF-8 한국어 문서로 재작성했다.
-- 실제 `LLM_REQUIRED_KEYS`와 `ImpactEvent` 필드 기준으로 설명을 맞췄다.
-- 뉴스 임팩트가 표시 전용이며 `predicted_return`, 추천, 순위를 바꾸면 안 된다는 정책을 명시했다.
-
-### 완료: P1 프롬프트 인젝션 방어 보강
-
-- 기사 본문을 `<untrusted_article_text>` 블록으로 격리하는 구조를 문서화했다.
-- 한국어 인젝션 문구 감지 테스트를 추가했다.
-- `detect_prompt_injection()`에 한국어 위험 문구를 추가했다.
-
-### 완료: P2 표시 전용 feature guard 강화
-
-- `select_feature_columns()`가 `news_impact_` 접두어 컬럼을 전부 제외하도록 강화했다.
-- `news_impact_*_missing` 같은 신규 파생 컬럼도 모델 입력에서 제외되는 회귀 테스트를 추가했다.
-
 ### 남은 제안
 
 - `FileLLMResponseCache` 캐시 메타데이터에 프롬프트 파일 해시와 모델 alias를 명시적으로 저장한다.
