@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import src.models.lgbm_heads as lgbm_heads
 from src.models.lgbm_heads import MODEL_ARTIFACT_VERSION, MultiHeadStockModel
 
 
@@ -225,3 +226,76 @@ def test_feature_importance_frame_exports_available_heads():
         set(frame["head"])
     )
     assert frame["importance"].notna().all()
+
+
+def test_metadata_records_lightgbm_training_controls():
+    model = MultiHeadStockModel(
+        random_state=7,
+        n_jobs=1,
+        early_stopping_rounds=25,
+        reg_alpha=0.1,
+        reg_lambda=0.2,
+        min_child_samples=7,
+    )
+    model._feature_columns = ["f1"]
+
+    metadata = model.metadata()
+
+    assert metadata["early_stopping_rounds"] == 25
+    assert metadata["reg_alpha"] == pytest.approx(0.1)
+    assert metadata["reg_lambda"] == pytest.approx(0.2)
+    assert metadata["min_child_samples"] == 7
+
+
+def test_metadata_warns_when_using_sklearn_fallback():
+    model = MultiHeadStockModel(random_state=7)
+    model.backend = "sklearn"
+    model._feature_columns = ["f1"]
+
+    metadata = model.metadata()
+
+    assert any("sklearn fallback" in warning for warning in metadata["warnings"])
+
+
+def test_lightgbm_fit_uses_eval_frame_for_early_stopping(monkeypatch):
+    fitted: list[tuple[dict, dict]] = []
+
+    class _FakeLgbEstimator:
+        def __init__(self, **params):
+            self.params = params
+
+        def fit(self, _x, _y, **kwargs):
+            fitted.append((self.params, kwargs))
+            return self
+
+    class _FakeLgbModule:
+        LGBMRegressor = _FakeLgbEstimator
+        LGBMClassifier = _FakeLgbEstimator
+
+        @staticmethod
+        def early_stopping(rounds, verbose=False):
+            return ("early_stopping", rounds, verbose)
+
+    monkeypatch.setattr(lgbm_heads, "LIGHTGBM_AVAILABLE", True)
+    monkeypatch.setattr(lgbm_heads, "lgb", _FakeLgbModule)
+
+    train = _make_training_frame(n=20, feature_cols=["f1", "f2"])
+    eval_df = _make_training_frame(n=8, feature_cols=["f1", "f2"])
+    model = MultiHeadStockModel(
+        random_state=7,
+        n_jobs=1,
+        early_stopping_rounds=5,
+        reg_alpha=0.1,
+        reg_lambda=0.2,
+        min_child_samples=9,
+    )
+
+    model.fit(train, ["f1", "f2"], quantiles=[0.1, 0.5, 0.9], eval_df=eval_df)
+
+    assert len(fitted) == 5
+    for params, kwargs in fitted:
+        assert params["reg_alpha"] == pytest.approx(0.1)
+        assert params["reg_lambda"] == pytest.approx(0.2)
+        assert params["min_child_samples"] == 9
+        assert kwargs["eval_set"]
+        assert kwargs["callbacks"] == [("early_stopping", 5, False)]

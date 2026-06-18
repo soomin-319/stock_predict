@@ -773,6 +773,10 @@ def _predict_pipeline_latest(
         n_jobs=cfg.training.model_n_jobs,
         use_gpu=cfg.training.use_gpu,
         head_n_jobs=cfg.training.model_head_n_jobs,
+        early_stopping_rounds=cfg.training.early_stopping_rounds,
+        reg_alpha=cfg.training.reg_alpha,
+        reg_lambda=cfg.training.reg_lambda,
+        min_child_samples=cfg.training.min_child_samples,
     )
     model.fit(train_df, feature_columns, cfg.training.quantiles)
 
@@ -822,6 +826,12 @@ def _predict_pipeline_latest(
     pred_df["권고"] = pred_df["recommendation"]
     oof_diagnostics = _compute_oof_diagnostics(scored_oof)
     return pred_df, latest, oof_diagnostics, model
+
+
+def _record_model_metadata_warnings(diagnostics: PipelineDiagnostics, model_metadata: dict[str, Any]) -> None:
+    for warning in model_metadata.get("warnings", []):
+        if warning:
+            diagnostics.warn(str(warning))
 
 
 def _write_pipeline_artifacts(
@@ -942,6 +952,7 @@ def _write_pipeline_artifacts(
         final_model.feature_importance_frame(),
     )
     model_metadata = final_model.metadata()
+    _record_model_metadata_warnings(diagnostics, model_metadata)
 
     coverage_report_summary = {
         "external_coverage_ratio": external_coverage_ratio,

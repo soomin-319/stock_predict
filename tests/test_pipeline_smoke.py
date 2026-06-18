@@ -163,6 +163,42 @@ def test_pipeline_diagnostics_records_stage_status_and_warnings():
     assert any("missing stage status" in warning for warning in report["warnings"])
 
 
+def test_training_config_accepts_lightgbm_regularization_overrides(tmp_path):
+    from src.config.settings import load_app_config
+
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(
+        json.dumps(
+            {
+                "training": {
+                    "early_stopping_rounds": 12,
+                    "reg_alpha": 0.1,
+                    "reg_lambda": 0.2,
+                    "min_child_samples": 9,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_app_config(cfg_path)
+
+    assert cfg.training.early_stopping_rounds == 12
+    assert cfg.training.reg_alpha == pytest.approx(0.1)
+    assert cfg.training.reg_lambda == pytest.approx(0.2)
+    assert cfg.training.min_child_samples == 9
+
+
+def test_record_model_metadata_warnings_adds_sklearn_warning():
+    from src.pipeline import _record_model_metadata_warnings
+
+    diagnostics = PipelineDiagnostics()
+
+    _record_model_metadata_warnings(diagnostics, {"warnings": ["Model backend is sklearn fallback; install LightGBM"]})
+
+    assert any("sklearn fallback" in warning for warning in diagnostics.to_report({})["warnings"])
+
+
 def test_run_pipeline_generates_report_without_graph_artifacts(tmp_path):
     inp = Path("data/sample_ohlcv.csv")
     out = tmp_path / "predictions.csv"
