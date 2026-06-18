@@ -1,8 +1,10 @@
 # 08. 뉴스 임팩트 모듈
 
-`src/news_impact/`는 vendored `stock-news-impact` 패키지를 현재 저장소에 통합한 선택 기능이다. 단독 CLI(`stock-news-impact`)로 리포트를 만들 수 있고, 메인 파이프라인은 생성된 값을 **표시 전용 문맥**으로만 붙인다.
+`src/news_impact/`는 vendored `stock-news-impact` 패키지를 통합한 선택 기능이다. 단독 CLI
+(`stock-news-impact`)로 리포트를 만들 수 있고, 메인 파이프라인은 생성된 값을 **표시 전용 컨텍스트**로만 붙인다.
 
-> 핵심 정책: 매수/매도/보유 결정과 순위는 `predicted_return`만 사용한다. 뉴스/공시/LLM 결과는 화면 표시와 검토 보조용이며 기대수익률, 추천, 신호를 바꾸면 안 된다.
+> 핵심 정책: 매수/매도/보유 결정과 순위는 `predicted_return`만 사용한다. 뉴스/공시/LLM 결과는 화면 표시와
+> 검토 보조용이며 기대수익률, 추천, 신호를 바꾸지 않는다.
 
 ---
 
@@ -10,22 +12,23 @@
 
 | 모듈 | 역할 |
 |---|---|
-| `pipeline.py` | 뉴스 임팩트 파이프라인 진입점 |
-| `run.py` | CLI 실행 래퍼 |
-| `collectors.py` | 뉴스/공시 수집 |
-| `article_fetcher.py` | 기사 본문 가져오기 |
-| `deduper.py` | 중복 제거 |
-| `mapper.py` | 뉴스-종목 매핑 |
+| `pipeline.py` / `run.py` | 뉴스 임팩트 파이프라인 진입점과 CLI 래퍼 |
+| `collectors.py` / `article_fetcher.py` | 뉴스/공시 수집, 기사 본문 가져오기 |
+| `deduper.py` / `mapper.py` | 중복 제거, 뉴스-종목 매핑 |
 | `news_filter.py` / `safety_filter.py` | 관련성·안전 필터 |
 | `impact_judge.py` | LLM 기반 임팩트 판정, 프롬프트 안전 검사 |
-| `llm_client.py` / `llm_config.py` | LLM API 클라이언트와 설정 |
-| `scorer.py` | 임팩트 점수 집계 |
+| `llm_client.py` / `llm_config.py` / `env_config.py` | LLM 클라이언트, 설정, 환경변수 설정 |
+| `llm_smoke.py` | LLM 연결 스모크 테스트 |
+| `scorer.py` / `ranking.py` / `weight_tuning.py` | 임팩트 점수 집계, 순위, 가중치 튜닝 |
 | `semantic_clusterer.py` | 의미 기반 클러스터링 |
-| `ranking.py` | 리포트용 순위 계산 |
-| `report.py` | CSV/JSON 리포트 출력 |
-| `schema.py` | 데이터 클래스 정의 |
-| `backtester.py` / `backtest_snapshots.py` | 뉴스 점수 검증·백테스트 유틸리티 |
-| `stock_factors/` | 뉴스-주식 팩터 분류 서브패키지 |
+| `event_taxonomy.py` / `sector_keywords.py` | 이벤트 분류 체계, 섹터 키워드 |
+| `market_clock.py` | 한국 시장 개장/마감 시각 처리 |
+| `global_market_collector.py` / `global_proxy_loader.py` / `global_proxy_adjuster.py` | 글로벌 프록시 수집·로드·보정 |
+| `data_cache.py` | 수집/응답 데이터 캐시 |
+| `report.py` / `schema.py` | CSV/JSON 리포트 출력, 데이터 클래스 정의 |
+| `backtester.py` / `backtest_snapshots.py` / `performance_validation.py` | 뉴스 점수 검증·백테스트 유틸리티 |
+| `operations.py` | 운영 보조 |
+| `stock_factors/` | 뉴스-주식 팩터 분류 서브패키지(classifier, factor_taxonomy, impact_rules, freshness, output_schema) |
 
 ---
 
@@ -33,32 +36,18 @@
 
 ```text
 watchlist.csv + company_master.csv
-  -> collectors.py
-  -> article_fetcher.py
-  -> deduper.py
-  -> mapper.py
-  -> news_filter.py / safety_filter.py
-  -> impact_judge.py
-  -> scorer.py
-  -> semantic_clusterer.py
-  -> ranking.py
-  -> report.py
+  -> collectors.py -> article_fetcher.py -> deduper.py -> mapper.py
+  -> news_filter.py / safety_filter.py -> impact_judge.py
+  -> scorer.py -> semantic_clusterer.py -> ranking.py -> report.py
 ```
 
-한국 종목에는 한국 뉴스와 공시를 우선 사용한다. 해외 매체나 비한국어 소스는 명시적으로 필요한 경우에만 보조로 쓴다.
+한국 종목에는 한국 뉴스/공시를 우선 사용하고, 해외 매체/비한국어 소스는 명시적으로 필요한 경우에만 보조로 쓴다.
 
 ---
 
 ## LLM 판정 (`impact_judge.py`)
 
-공개 API:
-
-```python
-def build_system_prompt() -> str
-def build_news_user_prompt(analysis_input: NewsAnalysisInput, summary: str | None = None) -> str
-def detect_prompt_injection(text: str) -> tuple[str, ...]
-def judgment_to_impact_event(...) -> ImpactEvent
-```
+공개 API: `build_system_prompt()`, `build_news_user_prompt()`, `detect_prompt_injection()`, `judgment_to_impact_event()`.
 
 `LLM_REQUIRED_KEYS`:
 
@@ -70,61 +59,44 @@ def judgment_to_impact_event(...) -> ImpactEvent
 | `impact_strength` | 0.0 ~ 1.0 이벤트 강도 |
 | `confidence` | 0.0 ~ 1.0 판정 신뢰도 |
 | `time_horizon` | 영향 시간 범위 |
-| `reason` | 근거 |
-| `why_may_be_wrong` | 반대 시나리오 |
+| `reason` / `why_may_be_wrong` | 근거 / 반대 시나리오 |
 | `risk_flags` | 위험 플래그 목록 |
 
 누락 키가 있으면 `judgment_to_impact_event()`는 `ValueError`를 발생시킨다.
 
-시스템 프롬프트 본문은 `docs/NEWS_IMPACT_LLM_PROMPT.md`에서 읽는다. `build_system_prompt()`는 이 파일 내용에 안전 가드(`PROMPT_SOURCE`, JSON-only, 매수/매도 추천 금지)를 덧붙여 반환하므로, 프롬프트를 수정할 때는 이 파일을 편집한다. 파일에는 `LLM_REQUIRED_KEYS`의 모든 키와 허용값·범위가 명시돼 있어야 한다.
+시스템 프롬프트 본문은 `docs/NEWS_IMPACT_LLM_PROMPT.md`에서 읽는다. `build_system_prompt()`는 이 파일 내용에
+안전 가드(`PROMPT_SOURCE`, JSON-only, 매수/매도 추천 금지)를 덧붙인다. 프롬프트 수정 시 이 파일을 편집한다.
 
 ### 프롬프트 안전
 
 - 기사 본문은 `build_news_user_prompt()`에서 `<untrusted_article_text>` 블록 안에 넣는다.
 - 시스템 프롬프트는 기사/공시 내부 지시를 따르지 말고 JSON만 반환하도록 요구한다.
-- `detect_prompt_injection()`은 영어와 한국어 인젝션 문구(예: 이전 지시 무시, 시스템 프롬프트, 매수/매도 추천)를 감지하면 `prompt_injection_risk`를 붙인다.
-- 이 플래그는 LLM 판단의 참고·감사용이다. 뉴스 문맥이 예측값이나 추천을 바꾸면 안 된다.
+- `detect_prompt_injection()`은 영/한 인젝션 문구(이전 지시 무시, 시스템 프롬프트, 매수/매도 추천 등)를
+  감지하면 `prompt_injection_risk`를 붙인다. 이 플래그는 참고·감사용이며 예측값/추천을 바꾸지 않는다.
 
 ---
 
-## LLM 클라이언트 (`llm_client.py`)
+## LLM 클라이언트와 재현성 (`llm_client.py`)
 
 | 구성 | 설명 |
 |---|---|
 | `LlamaCppClient` | OpenAI 호환 `/chat/completions` 호출 클라이언트 |
 | `FileLLMResponseCache` | 파일 기반 JSON 응답 캐시 |
-| `LLMResponseError` | 응답 shape/JSON 오류 |
-| `LLMModelAliasError` | 설정 모델이 런타임에 없을 때 |
-
-지원 설정:
+| `LLMResponseError` / `LLMModelAliasError` | 응답 오류 / 설정 모델 부재 오류 |
 
 | Provider | 설정 |
 |---|---|
 | 로컬 Gemma/Llama | `llm_provider: "llama_cpp"` |
 | OpenAI | `llm_provider: "openai"` + `OPENAI_API_KEY` |
 
-예시:
-
-```json
-{
-  "llm_provider": "llama_cpp",
-  "llm_base_url": "http://localhost:8001/v1",
-  "llm_model": "gemma-4-26b-a4b",
-  "temperature": 0.1,
-  "max_retries": 2,
-  "json_schema_required": true,
-  "timeout_seconds": 60
-}
-```
-
-캐시 키는 요청 payload와 required key 목록의 sha256으로 생성한다. 캐시 파일은 `stock-news-impact.llm_cache.v1` 봉투 포맷으로 저장되며, `metadata`에 재현성 정보를 함께 남긴다.
+캐시 키는 요청 payload + required key 목록의 sha256으로 생성한다. 캐시 파일은
+`stock-news-impact.llm_cache.v1` 봉투 포맷으로 저장되며 재현성 메타데이터를 함께 남긴다.
 
 ```json
 {
   "schema": "stock-news-impact.llm_cache.v1",
   "metadata": {
-    "model": "gemma-4-26b-a4b",
-    "temperature": 0.1,
+    "model": "...", "temperature": 0.1,
     "prompt_hash": "<시스템 프롬프트 sha256>",
     "article_hash": "<유저 프롬프트 sha256>",
     "required_keys": ["confidence", "direction", "..."]
@@ -133,13 +105,12 @@ def judgment_to_impact_event(...) -> ImpactEvent
 }
 ```
 
-`prompt_hash`는 시스템 프롬프트 문자열, `article_hash`는 기사가 포함된 유저 프롬프트의 해시다(`sha256_text()`로 통일). `FileLLMResponseCache.get()`은 봉투면 `response`만 돌려주고, 봉투가 아닌 레거시 파일은 그대로 읽어 하위호환을 유지한다.
-
-런 단위 재현성은 `audit.json`에 남는다. `RunAudit`는 `llm_model_requested`/`llm_model_returned`에 더해 `llm_temperature`, `llm_prompt_hash`(시스템 프롬프트 sha256)를 기록하고, `replay` 블록에도 노출한다. 기사 단위 해시(`article_hash`)는 런 단위 단일값이 없으므로 위 LLM 캐시 메타데이터에 귀속된다.
+런 단위 재현성은 `audit.json`에 남는다. `RunAudit`는 `llm_model_requested`/`llm_model_returned`에 더해
+`llm_temperature`, `llm_prompt_hash`를 기록하고 `replay` 블록에도 노출한다. 봉투가 아닌 레거시 캐시 파일도 하위호환으로 읽는다.
 
 ---
 
-## 메인 파이프라인 통합
+## 메인 파이프라인 통합과 보호 장치
 
 ```python
 if news_impact_report:
@@ -148,28 +119,11 @@ elif news_impact_llm_config:
     pred_df = append_llm_news_impact_context(...)
 ```
 
-`--news-impact-report result/news_impact_report.json` 또는 `--news-impact-llm-config ...`를 쓰면 `result_detail.csv`에 `news_impact_*` 표시 컬럼이 추가된다.
+`--news-impact-report` 또는 `--news-impact-llm-config`를 쓰면 `result_detail.csv`에 `news_impact_*` 표시 컬럼이 추가된다.
 
-보호 장치:
-
-- `src.features.feature_selection.DISPLAY_ONLY_CONTEXT_COLUMNS`는 기존 뉴스/공시 컬럼을 모델 입력에서 제외한다.
-- `select_feature_columns()`는 `news_impact_` 접두어 컬럼을 전부 제외한다. 새 `news_impact_*` 컬럼이나 `_missing` 파생 컬럼이 생겨도 모델 feature로 들어가지 않는다.
-- 정책 테스트는 추천, 순위, `predicted_return`이 뉴스 문맥으로 바뀌지 않는지 확인한다.
-
----
-
-## 백테스트 유틸리티
-
-`backtester.py` 공개 함수:
-
-```python
-def match_signal_returns(...)
-def calculate_metrics(...)
-def summarize_by_bucket(...)
-def compare_score_variants(...)
-```
-
-`BacktestSignal`과 `PriceBar`를 매칭해 거래비용 반영 수익률을 만들고 IC, rank IC, hit ratio, top-bottom spread 등을 계산한다. 백테스트 결과는 연구 검증용이며 자동 매매 신호가 아니다.
+- `feature_selection.DISPLAY_ONLY_CONTEXT_PREFIXES = ("news_impact_",)`로 모든 `news_impact_*` 컬럼이
+  모델 입력에서 제외된다. `_missing` 파생 컬럼이 생겨도 피처로 들어가지 않는다.
+- 정책 테스트가 추천, 순위, `predicted_return`이 뉴스 문맥으로 바뀌지 않는지 확인한다.
 
 ---
 
@@ -177,41 +131,24 @@ def compare_score_variants(...)
 
 ```powershell
 Copy-Item configs/news_impact.example.json configs/news_impact.json
-
 stock-news-impact --help
-
 stock-news-impact `
   --watchlist data/news_impact/watchlist.csv `
   --company-master data/news_impact/company_master.csv `
   --output result/news_impact_report.json
 ```
 
----
-
-## 관련 설정·샘플 파일
-
-| 파일 | 용도 |
-|---|---|
-| `configs/news_impact.example.json` | 기본 로컬 LLM 설정 예시 (OpenAI는 `llm_provider`를 `openai`로 변경) |
-| `configs/news_impact.gemma.example.json` | Gemma/Llama 설정 예시 |
-| `data/news_impact/watchlist.example.csv` | 모니터링 종목 샘플 |
-| `data/news_impact/company_master.example.csv` | 기업 마스터 샘플 |
-| `data/news_impact/company_aliases.example.csv` | 기업 별칭 샘플 |
-| `data/news_impact/sector_keywords.example.csv` | 섹터 키워드 샘플 |
-| `data/news_impact/company_relationships.example.csv` | 기업 관계도 샘플 |
-| `data/news_impact/global_market_proxy.example.csv` | 글로벌 프록시 샘플 |
+관련 샘플: `configs/news_impact.example.json`(OpenAI 기본), `configs/news_impact.gemma.example.json`(로컬 LLM),
+`data/news_impact/*.example.csv`(watchlist, company_master, aliases, sector_keywords, relationships, global_market_proxy).
 
 ---
 
-## 개선 및 수정 진행 현황 (2026-06-18)
+## 개선 및 수정 제안
 
-### 완료
+> 우선순위: **P2(운영)**.
 
-- **(버그 수정)** `build_system_prompt()`가 읽는 `docs/NEWS_IMPACT_LLM_PROMPT.md`가 저장소에 없어 LLM 판정 경로가 `FileNotFoundError`로 죽던 문제를 수정했다. 문서화된 계약(필수 키·범위·JSON-only·untrusted 기사·매수/매도 추천 금지)에 맞춰 프롬프트 파일을 추가했다.
-- `FileLLMResponseCache`를 `stock-news-impact.llm_cache.v1` 봉투 포맷으로 확장해 `model`, `temperature`, `prompt_hash`, `article_hash`, `required_keys`를 메타데이터로 저장한다(레거시 파일 하위호환 유지).
-- `RunAudit`에 `llm_temperature`, `llm_prompt_hash`를 추가하고 `audit.json`의 `replay` 블록에도 노출했다(`llm_model`은 기존 `llm_model_requested/returned`로 커버).
-- `stock-news-impact` 단독 실행 경로와 메인 파이프라인 통합 경로 다이어그램을 README "News Impact Scoring Module" 섹션에 추가했다.
+### P2 — LLM 응답 캐시 수명 관리
 
-### 남은 제안
-
-- LLM 캐시 디렉터리 정리(만료/버전 무효화) 정책 정의.
+- **문제**: `FileLLMResponseCache`는 만료/버전 무효화 정책이 없어 캐시 디렉터리가 무한히 증가하고,
+  프롬프트/모델 변경 후에도 옛 응답이 남을 수 있다.
+- **제안**: 캐시 정리(TTL/최대 크기) 및 `prompt_hash`/`model` 불일치 시 무효화 규칙을 정의한다.
