@@ -127,6 +127,58 @@ def _cost_breakdown(top: pd.DataFrame, cfg: BacktestConfig, turnover: float) -> 
     return dyn_penalty, static_cost, dynamic_cost
 
 
+def _capacity_weights(top: pd.DataFrame, cfg: BacktestConfig) -> pd.Series:
+    if top.empty:
+        return pd.Series(dtype=float)
+
+    index = top.index
+    target = pd.Series(1.0 / len(top), index=index, dtype=float)
+    if "max_capacity_notional" not in top.columns or float(cfg.portfolio_value) <= 0:
+        return target
+
+    caps = pd.to_numeric(top["max_capacity_notional"], errors="coerce").fillna(0.0).astype(float)
+    caps = (caps / float(cfg.portfolio_value)).clip(lower=0.0, upper=1.0)
+    weights = pd.Series(0.0, index=index, dtype=float)
+    remaining = 1.0
+    available = set(index)
+    while available and remaining > 1e-12:
+        per_name = remaining / len(available)
+        progressed = False
+        for row_index in list(available):
+            room = float(caps.loc[row_index] - weights.loc[row_index])
+            add = min(per_name, max(0.0, room))
+            if add <= 1e-12:
+                available.remove(row_index)
+                continue
+            weights.loc[row_index] += add
+            remaining -= add
+            progressed = True
+            if weights.loc[row_index] >= caps.loc[row_index] - 1e-12:
+                available.remove(row_index)
+        if not progressed:
+            break
+    return weights
+
+
+def _weighted_simple_return(top: pd.DataFrame, weights: pd.Series) -> float:
+    simple_returns = np.expm1(pd.to_numeric(top["target_log_return"], errors="coerce").fillna(0.0))
+    return float((simple_returns * weights.reindex(top.index).fillna(0.0)).sum())
+
+
+def _scenario_daily_cost(
+    cfg: BacktestConfig,
+    dyn_penalty: float,
+    turnover: float,
+    invested_weight: float,
+    slippage_multiplier: float,
+) -> float:
+    return (
+        float(cfg.fee_bps)
+        + float(cfg.slippage_bps) * slippage_multiplier
+        + float(cfg.dynamic_slippage_bps) * (slippage_multiplier * dyn_penalty + turnover)
+    ) / 10000.0 * invested_weight
+
+
 def run_long_only_topk_backtest(pred_df: pd.DataFrame, cfg: BacktestConfig) -> dict:
     required = {"Date", "Symbol", "predicted_return", "up_probability", "target_log_return"}
     missing = required - set(pred_df.columns)
@@ -135,6 +187,8 @@ def run_long_only_topk_backtest(pred_df: pd.DataFrame, cfg: BacktestConfig) -> d
     df = pred_df.copy().sort_values(["Date", "predicted_return", "signal_score"], ascending=[True, False, False])
 
     daily_returns = []
+    daily_gross_returns = []
+    daily_cost_inputs = []
     benchmark_returns = []
     holdings_history: list[set[str]] = []
     selected_count = []
@@ -147,6 +201,8 @@ def run_long_only_topk_backtest(pred_df: pd.DataFrame, cfg: BacktestConfig) -> d
         if _coverage_halt(grp, cfg):
             halted_days += 1
             daily_returns.append((pd.to_datetime(dt), 0.0))
+            daily_gross_returns.append((pd.to_datetime(dt), 0.0))
+            daily_cost_inputs.append((pd.to_datetime(dt), 0.0, 0.0, 0.0))
             benchmark_returns.append((pd.to_datetime(dt), _benchmark_return(grp)))
             holdings_history.append(set())
             selected_count.append(0)
@@ -158,6 +214,8 @@ def run_long_only_topk_backtest(pred_df: pd.DataFrame, cfg: BacktestConfig) -> d
         if top.empty:
             liquidity_blocked_days += 1
             daily_returns.append((pd.to_datetime(dt), 0.0))
+            daily_gross_returns.append((pd.to_datetime(dt), 0.0))
+            daily_cost_inputs.append((pd.to_datetime(dt), 0.0, 0.0, 0.0))
             benchmark_returns.append((pd.to_datetime(dt), _benchmark_return(grp)))
             holdings_history.append(set())
             selected_count.append(0)
@@ -169,11 +227,15 @@ def run_long_only_topk_backtest(pred_df: pd.DataFrame, cfg: BacktestConfig) -> d
         denom = max(1, len(prev_symbols | current_symbols))
         turnover = 0.0 if not prev_symbols else len(prev_symbols.symmetric_difference(current_symbols)) / denom
 
-        gross = float(pd.to_numeric(top["target_log_return"], errors="coerce").fillna(0.0).mean())
+        weights = _capacity_weights(top, cfg)
+        invested_weight = float(weights.sum())
+        gross = _weighted_simple_return(top, weights)
         dyn_penalty, static_cost, dynamic_cost = _cost_breakdown(top, cfg, turnover)
-        net = gross - static_cost - dynamic_cost
+        net = gross - (static_cost + dynamic_cost) * invested_weight
 
         daily_returns.append((pd.to_datetime(dt), net))
+        daily_gross_returns.append((pd.to_datetime(dt), gross))
+        daily_cost_inputs.append((pd.to_datetime(dt), dyn_penalty, turnover, invested_weight))
         benchmark_returns.append((pd.to_datetime(dt), _benchmark_return(grp)))
         prev_symbols = current_symbols
         holdings_history.append(prev_symbols)
@@ -201,6 +263,7 @@ def run_long_only_topk_backtest(pred_df: pd.DataFrame, cfg: BacktestConfig) -> d
         }
 
     series = pd.Series({d: r for d, r in daily_returns}).sort_index()
+    gross_series = pd.Series({d: r for d, r in daily_gross_returns}).reindex(series.index).fillna(0.0)
     benchmark = pd.Series({d: r for d, r in benchmark_returns}).sort_index() if benchmark_returns else pd.Series(dtype=float)
     equity = (1 + series).cumprod()
     benchmark_equity = (1 + benchmark).cumprod() if not benchmark.empty else pd.Series(dtype=float)
@@ -234,45 +297,25 @@ def run_long_only_topk_backtest(pred_df: pd.DataFrame, cfg: BacktestConfig) -> d
         }
     )
 
-    avg_dyn_penalty = 0.0
-    if "uncertainty_score" in df.columns or "vol_ratio_20" in df.columns:
-        dyn_components = []
-        if "uncertainty_score" in df.columns:
-            dyn_components.append(pd.to_numeric(df["uncertainty_score"], errors="coerce").fillna(0.0).mean())
-        if "vol_ratio_20" in df.columns:
-            dyn_components.append(
-                (pd.to_numeric(df["vol_ratio_20"], errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(1.0) - 1.0)
-                .clip(lower=0)
-                .mean()
-            )
-        avg_dyn_penalty = float(np.mean(dyn_components)) if dyn_components else 0.0
-
     avg_turnover = float(np.mean(turnovers))
-    gross_daily_mean = float(series.mean()) + (cfg.fee_bps + cfg.slippage_bps) / 10000.0
-    scenario_costs = {
-        "conservative": (
-            cfg.fee_bps
-            + cfg.slippage_bps * cfg.conservative_slippage_multiplier
-            + cfg.dynamic_slippage_bps * (cfg.conservative_slippage_multiplier * avg_dyn_penalty + avg_turnover)
-        )
-        / 10000.0,
-        "neutral": (
-            cfg.fee_bps
-            + cfg.slippage_bps
-            + cfg.dynamic_slippage_bps * (avg_dyn_penalty + avg_turnover)
-        )
-        / 10000.0,
-        "aggressive": (
-            cfg.fee_bps
-            + cfg.slippage_bps * cfg.aggressive_slippage_multiplier
-            + cfg.dynamic_slippage_bps * (cfg.aggressive_slippage_multiplier * avg_dyn_penalty + avg_turnover)
-        )
-        / 10000.0,
+    cost_frame = pd.DataFrame(
+        daily_cost_inputs,
+        columns=["Date", "dyn_penalty", "turnover", "invested_weight"],
+    ).set_index("Date")
+    cost_frame = cost_frame.reindex(series.index).fillna(0.0)
+    scenario_multipliers = {
+        "conservative": float(cfg.conservative_slippage_multiplier),
+        "neutral": 1.0,
+        "aggressive": float(cfg.aggressive_slippage_multiplier),
     }
-    scenario_results = {
-        name: float((1 + pd.Series([gross_daily_mean - scenario_cost] * max(1, len(series)))).cumprod().iloc[-1] - 1)
-        for name, scenario_cost in scenario_costs.items()
-    }
+    scenario_results = {}
+    for name, multiplier in scenario_multipliers.items():
+        costs = [
+            _scenario_daily_cost(cfg, row.dyn_penalty, row.turnover, row.invested_weight, multiplier)
+            for row in cost_frame.itertuples()
+        ]
+        scenario_series = gross_series - pd.Series(costs, index=series.index)
+        scenario_results[name] = float((1 + scenario_series).cumprod().iloc[-1] - 1)
     benchmark_cum_return = float(benchmark_equity.iloc[-1] - 1) if not benchmark_equity.empty else 0.0
 
     return {

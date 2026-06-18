@@ -4,7 +4,7 @@ import os
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import Dict, List, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 import pandas as pd
 
@@ -25,6 +25,10 @@ class FoldResult:
 
 FoldInput = Tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp, pd.DataFrame, pd.DataFrame]
 NumberedFoldInput = Tuple[int, pd.Timestamp, pd.Timestamp, pd.Timestamp, pd.DataFrame, pd.DataFrame]
+FoldWindow = Tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp]
+NumberedFoldWindow = Tuple[int, pd.Timestamp, pd.Timestamp, pd.Timestamp]
+
+_WORKER_DF: pd.DataFrame | None = None
 
 
 @dataclass
@@ -35,6 +39,14 @@ class WalkForwardResult:
 
 
 def _iter_folds(df: pd.DataFrame, cfg: TrainingConfig):
+    for train_end_date, valid_start_date, valid_end_date in _iter_fold_windows(df, cfg):
+        train_df, valid_df = _slice_fold_window(df, train_end_date, valid_start_date, valid_end_date, cfg)
+        if valid_df.empty:
+            continue
+        yield train_end_date, valid_start_date, valid_end_date, train_df, valid_df
+
+
+def _iter_fold_windows(df: pd.DataFrame, cfg: TrainingConfig):
     dates = sorted(df["Date"].dropna().unique())
     # Purge gap prevents rows whose forward target overlaps the validation
     # window from entering training (look-ahead bias on multi-horizon targets).
@@ -52,16 +64,29 @@ def _iter_folds(df: pd.DataFrame, cfg: TrainingConfig):
         valid_end_date = dates[valid_end_idx]
         valid_start_date = dates[valid_start_idx]
 
-        train_df = df[df["Date"] <= train_end_date]
-        lookback = max(0, int(getattr(cfg, "walk_forward_lookback_days", 0) or 0))
-        if lookback > 0:
-            train_dates = sorted(pd.Series(train_df["Date"].dropna().unique()))
-            cutoff_dates = train_dates[-lookback:]
-            train_df = train_df[train_df["Date"].isin(cutoff_dates)]
-        valid_df = df[(df["Date"] >= valid_start_date) & (df["Date"] <= valid_end_date)]
-        if valid_df.empty:
-            continue
-        yield train_end_date, valid_start_date, valid_end_date, train_df, valid_df
+        yield train_end_date, valid_start_date, valid_end_date
+
+
+def _slice_fold_window(
+    df: pd.DataFrame,
+    train_end_date: pd.Timestamp,
+    valid_start_date: pd.Timestamp,
+    valid_end_date: pd.Timestamp,
+    cfg: TrainingConfig,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    train_df = df[df["Date"] <= train_end_date]
+    lookback = max(0, int(getattr(cfg, "walk_forward_lookback_days", 0) or 0))
+    if lookback > 0:
+        train_dates = sorted(pd.Series(train_df["Date"].dropna().unique()))
+        cutoff_dates = train_dates[-lookback:]
+        train_df = train_df[train_df["Date"].isin(cutoff_dates)]
+    valid_df = df[(df["Date"] >= valid_start_date) & (df["Date"] <= valid_end_date)]
+    return train_df, valid_df
+
+
+def _init_fold_worker(df: pd.DataFrame) -> None:
+    global _WORKER_DF
+    _WORKER_DF = df
 
 
 
@@ -121,6 +146,44 @@ def _run_fold(fold: NumberedFoldInput, feature_columns: List[str], cfg: Training
     oof["valid_start"] = valid_start_date
     oof["valid_end"] = valid_end_date
     return result, oof
+
+
+def _run_fold_window(
+    fold: NumberedFoldWindow,
+    feature_columns: List[str],
+    cfg: TrainingConfig,
+    df: pd.DataFrame | None = None,
+) -> tuple[FoldResult, pd.DataFrame]:
+    source_df = df if df is not None else _WORKER_DF
+    if source_df is None:
+        raise RuntimeError("walk-forward worker DataFrame is not initialized")
+    fold_id, train_end_date, valid_start_date, valid_end_date = fold
+    train_df, valid_df = _slice_fold_window(source_df, train_end_date, valid_start_date, valid_end_date, cfg)
+    return _run_fold((fold_id, train_end_date, valid_start_date, valid_end_date, train_df, valid_df), feature_columns, cfg)
+
+
+def _execute_fold_windows(
+    df: pd.DataFrame,
+    windows: Iterable[FoldWindow],
+    feature_columns: List[str],
+    cfg: TrainingConfig,
+) -> list[tuple[FoldResult, pd.DataFrame]]:
+    fold_windows = list(windows)
+    if not fold_windows:
+        return []
+
+    n_jobs = int(getattr(cfg, "walk_forward_n_jobs", 1) or 1)
+    cpu_count = os.cpu_count() or 1
+    worker_count = min(cpu_count if n_jobs == -1 else max(1, n_jobs), len(fold_windows))
+
+    numbered_windows = [(fold_id, *window) for fold_id, window in enumerate(fold_windows)]
+    if worker_count == 1:
+        return [_run_fold_window(fold, feature_columns, cfg, df=df) for fold in numbered_windows]
+
+    parallel_cfg = replace(cfg, model_n_jobs=1, model_head_n_jobs=1)
+    run_fold = partial(_run_fold_window, feature_columns=feature_columns, cfg=parallel_cfg)
+    with ProcessPoolExecutor(max_workers=worker_count, initializer=_init_fold_worker, initargs=(df,)) as executor:
+        return list(executor.map(run_fold, numbered_windows))
 
 
 
@@ -227,7 +290,7 @@ def walk_forward_validate_with_oof(df: pd.DataFrame, feature_columns: List[str],
 
 
 def walk_forward_validate_result(df: pd.DataFrame, feature_columns: List[str], cfg: TrainingConfig) -> WalkForwardResult:
-    executed = _execute_folds(list(_iter_folds(df, cfg)), feature_columns, cfg)
+    executed = _execute_fold_windows(df, _iter_fold_windows(df, cfg), feature_columns, cfg)
     if not executed:
         empty, diagnostics = aggregate_oof_predictions(pd.DataFrame())
         return WalkForwardResult([], empty, diagnostics)

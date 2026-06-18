@@ -121,4 +121,57 @@ def test_backtest_ranks_by_predicted_return_not_signal_score_or_news_columns():
     out = run_long_only_topk_backtest(pred, cfg)
 
     assert out["avg_daily_return"] > 0.0
-    assert out["series"][0]["daily_return"] == pytest.approx(0.30 - 0.0015)
+    assert out["series"][0]["daily_return"] == pytest.approx(np.expm1(0.30) - 0.0015)
+
+
+def test_backtest_converts_log_returns_and_caps_capacity_weight():
+    pred = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2024-01-01", "2024-01-01"]),
+            "Symbol": ["A", "B"],
+            "signal_score": [0.9, 0.8],
+            "predicted_return": [2.0, 1.0],
+            "up_probability": [0.9, 0.9],
+            "target_log_return": [np.log1p(0.10), np.log1p(0.30)],
+            "value_traded": [5_000_000_000.0, 20_000_000_000.0],
+        }
+    )
+
+    cfg = BacktestConfig(
+        top_k=2,
+        portfolio_value=1_000_000_000.0,
+        max_daily_participation=0.10,
+        fee_bps=0.0,
+        slippage_bps=0.0,
+        dynamic_slippage_bps=0.0,
+    )
+    out = run_long_only_topk_backtest(pred, cfg)
+
+    # A can carry at most 50% of the portfolio; B carries the other 50%.
+    assert out["series"][0]["daily_return"] == pytest.approx(0.5 * 0.10 + 0.5 * 0.30)
+
+
+def test_cost_scenarios_replay_daily_path_instead_of_flat_mean():
+    pred = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+            "Symbol": ["A", "A"],
+            "signal_score": [0.9, 0.9],
+            "predicted_return": [2.0, 2.0],
+            "up_probability": [0.9, 0.9],
+            "target_log_return": [np.log1p(0.50), np.log1p(-0.40)],
+        }
+    )
+
+    cfg = BacktestConfig(
+        top_k=1,
+        fee_bps=0.0,
+        slippage_bps=0.0,
+        dynamic_slippage_bps=0.0,
+    )
+    out = run_long_only_topk_backtest(pred, cfg)
+
+    path_cum = (1 + 0.50) * (1 - 0.40) - 1
+    flat_mean_cum = (1 + ((0.50 - 0.40) / 2)) ** 2 - 1
+    assert out["cost_scenarios"]["neutral"] == pytest.approx(path_cum)
+    assert out["cost_scenarios"]["neutral"] != pytest.approx(flat_mean_cum)
