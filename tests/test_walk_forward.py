@@ -5,7 +5,15 @@ import pytest
 
 from src.config.settings import TrainingConfig
 import src.validation.walk_forward as wf
-from src.validation.walk_forward import FoldResult, _execute_folds, _iter_folds, _run_fold, aggregate_oof_predictions
+from src.validation.walk_forward import (
+    FoldResult,
+    _execute_fold_windows,
+    _execute_folds,
+    _iter_fold_windows,
+    _iter_folds,
+    _run_fold,
+    aggregate_oof_predictions,
+)
 
 
 @pytest.fixture
@@ -95,6 +103,44 @@ def test_iter_folds_can_limit_training_to_recent_lookback_window(trading_dates):
     assert train_df["Date"].max() == train_end
     assert train_df["Date"].nunique() == 60
     assert train_df["Date"].min() == sorted(df[df["Date"] <= train_end]["Date"].unique())[-60]
+
+
+def test_iter_fold_windows_yields_boundaries_without_materialized_slices(trading_dates):
+    df = _make_df(trading_dates)
+    window = next(_iter_fold_windows(df, _small_cfg()))
+
+    assert len(window) == 3
+    assert all(isinstance(value, pd.Timestamp) for value in window)
+
+
+def test_execute_fold_windows_slices_inside_worker(monkeypatch, trading_dates):
+    seen = []
+
+    def _fake_run_fold(fold, feature_columns, cfg):
+        fold_id, train_end, valid_start, valid_end, train_df, valid_df = fold
+        seen.append(
+            (
+                fold_id,
+                train_df["Date"].min(),
+                train_df["Date"].max(),
+                valid_df["Date"].min(),
+                valid_df["Date"].max(),
+            )
+        )
+        result = FoldResult(train_end=train_end, valid_start=valid_start, valid_end=valid_end, metrics={"rmse": 0.0})
+        return result, valid_df[["Date", "Symbol"]].copy()
+
+    df = _make_df(trading_dates)
+    windows = list(_iter_fold_windows(df, _small_cfg()))[:2]
+    monkeypatch.setattr(wf, "_run_fold", _fake_run_fold)
+
+    executed = _execute_fold_windows(df, windows, ["value"], _small_cfg(walk_forward_n_jobs=1))
+
+    assert len(executed) == 2
+    assert seen[0][0] == 0
+    assert seen[0][2] == windows[0][0]
+    assert seen[0][3] == windows[0][1]
+    assert seen[0][4] == windows[0][2]
 
 
 def test_execute_folds_caps_nested_model_parallelism(monkeypatch):
