@@ -136,5 +136,4 @@ Colab 통합 코드는 `colab/stock_predict_colab.py`에 있다.
 
 ### P2 — CLI 사용성/문서
 
-- `--add-symbols`로 추가한 KOSDAQ 종목이 `.KS`로 강제 변환되는 문제(자세한 내용은 `02_data.md` 참고)를 진입점 문서에도 교차 링크.
 - 종료 코드 규약(정상 0 / 검증 경고 / 데이터 실패)을 표로 문서화하면 Colab·CI 자동화에서 분기하기 쉽다.
