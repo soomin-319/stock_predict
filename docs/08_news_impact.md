@@ -172,9 +172,8 @@ stock-news-impact `
 
 | 파일 | 용도 |
 |---|---|
-| `configs/news_impact.example.json` | 기본 로컬 LLM 설정 예시 |
+| `configs/news_impact.example.json` | 기본 로컬 LLM 설정 예시 (OpenAI는 `llm_provider`를 `openai`로 변경) |
 | `configs/news_impact.gemma.example.json` | Gemma/Llama 설정 예시 |
-| `configs/news_impact.openai.example.json` | OpenAI 설정 예시 |
 | `data/news_impact/watchlist.example.csv` | 모니터링 종목 샘플 |
 | `data/news_impact/company_master.example.csv` | 기업 마스터 샘플 |
 | `data/news_impact/company_aliases.example.csv` | 기업 별칭 샘플 |

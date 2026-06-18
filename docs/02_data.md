@@ -53,9 +53,9 @@ def clean_ohlcv(df: pd.DataFrame) -> pd.DataFrame
 
 ```python
 # src/data/fetch_real_data.py
-def save_real_ohlcv_csv(path: str, symbols: list[str], start: str) -> None
-def append_real_ohlcv_csv(path: str, symbols: list[str], start: str) -> None
-def normalize_user_symbols(symbols: list[str]) -> list[str]
+def save_real_ohlcv_csv(path, symbols, start=DEFAULT_REAL_START_DATE, end=None) -> Path
+def append_real_ohlcv_csv(path, symbols, start=DEFAULT_REAL_START_DATE, end=None) -> Path
+def normalize_user_symbols(symbol_inputs: Iterable[str]) -> list[str]
 ```
 
 - yfinance API를 사용하여 KOSPI/KOSDAQ 종목 데이터 수집

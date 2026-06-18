@@ -44,7 +44,7 @@ stock-predict-kakao
 python src/chatbot/kakao_colab_bot.py
 ```
 
-Flask 서버가 기본 포트 5000에서 시작되며 `/webhook` 엔드포인트를 노출한다.
+Flask 서버가 기본 포트 5000에서 시작되며 `/kakao/webhook` 엔드포인트(및 `/health`)를 노출한다.
 
 ### 핵심 클래스
 
@@ -215,9 +215,9 @@ Colab 런타임은 재시작 시 상태가 초기화되므로, 결과 파일을 
 
 > 우선순위: **P0(보안) > P1(견고성/UX) > P2(문서)**.
 
-### P0 — `/webhook` 엔드포인트 인증 부재
+### P0 — `/kakao/webhook` 엔드포인트 인증 부재
 
-- **문제**: Flask `/webhook`은 `request.get_json()`만 받고(`kakao_colab_bot.py:1878`) **요청 검증이 없다**. 코드의 `auth_token`은 **ngrok 토큰**(`:1985`)이지 웹훅 인증이 아니다. ngrok URL이 노출되면 누구나 예측 잡(서브프로세스)을 제출해 **자원 고갈(DoS)**·로그/캐시 오염을 유발할 수 있다.
+- **문제**: Flask `/kakao/webhook`은 `request.get_json(silent=True)`만 받고(`kakao_colab_bot.py:1889-1891`) **요청 검증이 없다**. 코드의 `auth_token`은 **ngrok 토큰**(`:1998`)이지 웹훅 인증이 아니다. ngrok URL이 노출되면 누구나 예측 잡(서브프로세스)을 제출해 **자원 고갈(DoS)**·로그/캐시 오염을 유발할 수 있다.
 - **제안**: 공유 시크릿 헤더 검증(예: `X-Webhook-Secret` 상수시간 비교) 또는 카카오 요청 서명/허용 IP 검증을 추가. 시크릿은 환경변수로 주입.
 
 ### P0 — 잡 제출 레이트리밋/동시성 상한

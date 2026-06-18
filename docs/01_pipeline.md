@@ -26,7 +26,7 @@
 ### `run_pipeline()`
 
 ```python
-# src/pipeline.py:940
+# src/pipeline.py:972
 def run_pipeline(
     input_csv: str,
     output_csv: str,
@@ -42,7 +42,7 @@ def run_pipeline(
 ### `build_cli_parser()`
 
 ```python
-# src/pipeline.py:1119
+# src/pipeline.py:1166
 def build_cli_parser() -> argparse.ArgumentParser
 ```
 
@@ -78,7 +78,7 @@ stock-predict --add-symbols 005930 000660.KS
 ## PipelineDiagnostics
 
 ```python
-# src/pipeline.py:320
+# src/pipeline.py:327
 @dataclass(slots=True)
 class PipelineDiagnostics:
     timings_seconds: dict[str, float]
@@ -116,7 +116,7 @@ Colab 통합 코드는 `colab/stock_predict_colab.py`에 있다.
 
 ### P1 — `cfg.signal` 전역 in-place 변형 (재현성/직렬화 오염)
 
-- **문제**: 튜닝 단계에서 `cfg.signal.return_weight = tuned[...]` 식으로 **공유 `AppConfig`를 직접 변형**한다(`src/pipeline.py:581-584`). 이후 `app_config_to_dict(cfg)`로 리포트에 직렬화되는 값이 "사용자가 준 설정"이 아니라 "튜닝 후 값"이 되어, 리포트만 보고 재현이 어렵다. 동일 프로세스에서 파이프라인을 2회 호출하면 1회차 튜닝값이 2회차 기본값으로 새어든다.
+- **문제**: 튜닝 단계에서 `cfg.signal.return_weight = tuned[...]` 식으로 **공유 `AppConfig`를 직접 변형**한다(`src/pipeline.py:591-594`). 이후 `app_config_to_dict(cfg)`로 리포트에 직렬화되는 값이 "사용자가 준 설정"이 아니라 "튜닝 후 값"이 되어, 리포트만 보고 재현이 어렵다. 동일 프로세스에서 파이프라인을 2회 호출하면 1회차 튜닝값이 2회차 기본값으로 새어든다.
 - **제안**: 튜닝 결과는 `dataclasses.replace(cfg.signal, **tuned)`로 **새 객체**를 만들어 지역 변수로 전달하고, 리포트에는 `config_input`(원본)과 `signal_weights_tuned`(결과)를 **분리**해 기록.
 
 ### P1 — 단계별 실패 격리 부재
@@ -126,7 +126,7 @@ Colab 통합 코드는 `colab/stock_predict_colab.py`에 있다.
 
 ### P1 — 적응형 재시도 조건이 "폴드 0개"에만 동작
 
-- **문제**: `_adaptive_training_cfg`는 walk-forward가 **폴드를 전혀 못 만들 때만** 재시도한다(`src/pipeline.py:135` 부근). 폴드가 1~2개로 과소 생성되어도 그대로 진행되어 통계적으로 빈약한 검증 결과가 나온다.
+- **문제**: `_adaptive_training_cfg`는 walk-forward가 **폴드를 전혀 못 만들 때만** 재시도한다(`src/pipeline.py:141` 부근). 폴드가 1~2개로 과소 생성되어도 그대로 진행되어 통계적으로 빈약한 검증 결과가 나온다.
 - **제안**: `len(folds) < min_required_folds`(예: 3) 조건에서도 적응형 설정으로 재시도하고, 최종 폴드 수를 `diagnostics`에 노출.
 
 ### P2 — `PipelineDiagnostics` 타이밍 커버리지 검증
