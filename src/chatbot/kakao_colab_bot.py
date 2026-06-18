@@ -90,6 +90,7 @@ class PipelineRuntimeConfig:
     async_issue_summary_on_demand: bool = True
     real_start: str = "2018-01-01"
     prewarm_default_predictions: bool = True
+    runtime_dir: str = "result/runtime"
     extra_args: tuple[str, ...] = ()
     kakao_webhook_secret: str | None = None
     max_concurrent_prediction_jobs: int = 2
@@ -194,10 +195,16 @@ class KakaoColabPredictionBot:
         self.result_detail_path = self.project_root / "result" / "result_detail.csv"
         self.result_news_path = self.project_root / "result" / "result_news.csv"
         self.result_disclosure_path = self.project_root / "result" / "result_disclosure.csv"
-        self.state_path = self.project_root / (state_path or "result/runtime/chatbot_jobs.json")
-        self.session_path = self.project_root / (session_path or "result/runtime/chatbot_sessions.json")
-        self.prewarm_meta_path = self.project_root / "result" / "runtime" / "prewarm_cache_meta.json"
-        self.log_dir = self.project_root / "result" / "runtime" / "logs"
+        runtime_dir = Path(self.runtime_config.runtime_dir)
+        if not runtime_dir.is_absolute():
+            runtime_dir = self.project_root / runtime_dir
+        self.runtime_dir = runtime_dir
+        self.state_path = self._resolve_project_path(state_path) if state_path is not None else runtime_dir / "chatbot_jobs.json"
+        self.session_path = (
+            self._resolve_project_path(session_path) if session_path is not None else runtime_dir / "chatbot_sessions.json"
+        )
+        self.prewarm_meta_path = runtime_dir / "prewarm_cache_meta.json"
+        self.log_dir = runtime_dir / "logs"
         legacy_state_path = self.project_root / "result" / "chatbot_jobs.json"
         legacy_session_path = self.project_root / "result" / "chatbot_sessions.json"
         state_load_path = legacy_state_path if state_path is None and not self.state_path.exists() and legacy_state_path.exists() else self.state_path
@@ -229,7 +236,28 @@ class KakaoColabPredictionBot:
         self._state_lock = threading.RLock()
         self._legacy_formatter_patched = False
         self._bootstrap_all_symbols_done = False
+        self._cleanup_stale_running_jobs_on_startup()
         self._bootstrap_formatter_guard()
+
+    def _resolve_project_path(self, value: str | Path) -> Path:
+        path = Path(value)
+        return path if path.is_absolute() else self.project_root / path
+
+    def _cleanup_stale_running_jobs_on_startup(self) -> None:
+        changed = False
+        now = datetime.now(timezone.utc).isoformat()
+        with self._state_lock:
+            for state in self._job_registry.values():
+                if state.get("status") != "running":
+                    continue
+                state["status"] = "failed"
+                state["exit_code"] = -2
+                state["completed_at"] = now
+                state["note"] = "stale_after_restart"
+                state.pop("pid", None)
+                changed = True
+            if changed:
+                self._save_registry(self.state_path, self._job_registry)
 
     def _load_latest_manifest(self) -> dict[str, Any] | None:
         pointer_path = self.result_root / "latest_manifest.json"

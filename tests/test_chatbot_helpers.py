@@ -34,6 +34,39 @@ def make_test_bot(tmp_path, **kwargs):
     )
 
 
+def test_runtime_dir_derives_default_state_session_logs(tmp_path):
+    runtime_dir = tmp_path / "drive_runtime"
+    cfg = PipelineRuntimeConfig(runtime_dir=str(runtime_dir))
+    bot = KakaoColabPredictionBot(runtime_config=cfg)
+
+    assert bot.state_path == runtime_dir / "chatbot_jobs.json"
+    assert bot.session_path == runtime_dir / "chatbot_sessions.json"
+    assert bot.prewarm_meta_path == runtime_dir / "prewarm_cache_meta.json"
+    assert bot.log_dir == runtime_dir / "logs"
+
+
+def test_startup_marks_stale_running_jobs_failed(tmp_path):
+    state_path = tmp_path / "jobs.json"
+    state_path.write_text(
+        '{"005930.KS":{"symbol":"005930.KS","display_code":"005930.KS",'
+        '"command":[],"log_path":"result/runtime/logs/old.log",'
+        '"submitted_at":"2026-06-18T00:00:00+00:00","status":"running"}}',
+        encoding="utf-8",
+    )
+
+    bot = KakaoColabPredictionBot(
+        result_simple_path=tmp_path / "missing.csv",
+        state_path=state_path,
+        session_path=tmp_path / "sessions.json",
+    )
+
+    state = bot._job_registry["005930.KS"]
+    assert state["status"] == "failed"
+    assert state["exit_code"] == -2
+    assert state["note"] == "stale_after_restart"
+    assert state["completed_at"]
+
+
 def test_intents_match_phrases_and_punctuation():
     assert is_help_utterance("도움말 좀 알려줘!")
     assert is_status_utterance("결과 확인 부탁")
