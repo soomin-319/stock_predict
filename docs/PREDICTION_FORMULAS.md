@@ -320,10 +320,9 @@ any automated buy/sell/hold decision.
 - `uncertainty_width = quantile_high - quantile_low`
 - `uncertainty_score = uncertainty_width의 percentile score`
 
-### 9.3 정규화된 상대 강도
+### 9.3 정규화된 수익률 점수
 
-- `norm_return = zscore(predicted_log_return)`
-- `rel_strength = zscore(predicted_log_return)`
+- `norm_return = predicted_log_return의 percentile score (0~1)`
 
 ---
 
@@ -335,15 +334,13 @@ any automated buy/sell/hold decision.
 signal_score =
     return_weight * norm_return
   + up_prob_weight * up_probability
-  + rel_strength_weight * rel_strength
   - uncertainty_penalty * uncertainty_score
 ```
 
 기본값은:
 
-- `return_weight = 0.45`
+- `return_weight = 0.65`
 - `up_prob_weight = 0.35`
-- `rel_strength_weight = 0.20`
 - `uncertainty_penalty = 0.25`
 
 그리고 `signal_label`은 `signal_score`를 구간으로 나눠:
@@ -364,18 +361,16 @@ signal_score =
 
 탐색 방식은:
 
-- `rw ∈ {0.3, 0.45, 0.6}`
-- `uw ∈ {0.15, 0.25, 0.35}`
-- `w_prob = 0.30`
-- `w_rel = 1.0 - rw - w_prob`
+- `rw ∈ {0.3, 0.45, 0.6, 0.65}` (return_weight)
+- `w_prob ∈ {0.20, 0.35, 0.50}` (up_prob_weight)
+- `uw ∈ {0.15, 0.25, 0.35}` (uncertainty_penalty)
 
 각 조합에 대해:
 
 ```text
 score =
     rw * norm_return
-  + 0.30 * up_probability
-  + w_rel * rel_strength
+  + w_prob * up_probability
   - uw * uncertainty_score
 ```
 

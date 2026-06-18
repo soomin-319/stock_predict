@@ -47,7 +47,7 @@ def test_config_unknown_key_without_close_match_has_plain_error():
         ({"feature": {"volatility_windows": [5, 5]}}, "feature.volatility_windows"),
         ({"feature": {"rsi_period": 0}}, "feature.rsi_period"),
         ({"signal": {"return_weight": -0.1}}, "signal.return_weight"),
-        ({"signal": {"return_weight": 0.0, "up_prob_weight": 0.0, "rel_strength_weight": 0.0}}, "signal weights"),
+        ({"signal": {"return_weight": 0.0, "up_prob_weight": 0.0}}, "signal weights"),
         ({"signal": {"uncertainty_penalty": -0.1}}, "signal.uncertainty_penalty"),
         ({"investment_criteria": {"rsi_buy_watch_low": 40.0, "rsi_buy_watch_high": 35.0}}, "investment_criteria.rsi_buy_watch"),
         ({"investment_criteria": {"rsi_overbought": 101.0}}, "investment_criteria.rsi_overbought"),

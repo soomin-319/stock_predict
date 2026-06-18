@@ -656,7 +656,6 @@ def _run_pipeline_validation(
         out["signal_score"] = (
             tuned_signal_cfg.return_weight * out["norm_return"]
             + tuned_signal_cfg.up_prob_weight * out["up_probability"]
-            + tuned_signal_cfg.rel_strength_weight * out["rel_strength"]
             - tuned_signal_cfg.uncertainty_penalty * out["uncertainty_score"]
             + out["event_boost_score"].fillna(0.0)
         )

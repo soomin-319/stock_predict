@@ -6,9 +6,8 @@ import pandas as pd
 
 
 DEFAULT_WEIGHTS = {
-    "return_weight": 0.45,
+    "return_weight": 0.65,
     "up_prob_weight": 0.35,
-    "rel_strength_weight": 0.20,
     "uncertainty_penalty": 0.25,
 }
 
@@ -19,7 +18,6 @@ def _top_decile_return(df: pd.DataFrame, weights: dict[str, float]) -> float:
     score = (
         weights["return_weight"] * df["norm_return"]
         + weights["up_prob_weight"] * df["up_probability"]
-        + weights["rel_strength_weight"] * df["rel_strength"]
         - weights["uncertainty_penalty"] * df["uncertainty_score"]
     )
     tmp = df.assign(score=score)
@@ -51,7 +49,6 @@ def _simplicity_key(weights: dict[str, float]) -> tuple[float, float]:
     total_weight = (
         weights["return_weight"]
         + weights["up_prob_weight"]
-        + weights["rel_strength_weight"]
         + weights["uncertainty_penalty"]
     )
     return distance_from_default, total_weight
@@ -71,17 +68,13 @@ def tune_signal_weights(pred_df: pd.DataFrame) -> dict:
     train_df, valid_df = _time_split(pred_df)
     candidates = []
     for rw, w_prob, uw in product(
-        [0.3, 0.45, 0.6],
+        [0.3, 0.45, 0.6, 0.65],
         [0.20, 0.35, 0.50],
         [0.15, 0.25, 0.35],
     ):
-        w_rel = round(max(0.0, 1.0 - rw - w_prob), 10)
-        if rw + w_prob > 1.0:
-            continue
         weights = {
             "return_weight": rw,
             "up_prob_weight": w_prob,
-            "rel_strength_weight": w_rel,
             "uncertainty_penalty": uw,
         }
         train_perf = _top_decile_return(train_df, weights)

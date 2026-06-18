@@ -83,7 +83,7 @@ def compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
     if scored_oof.empty:
         return {}
 
-    req = {"target_log_return", "rel_strength", "norm_return", "predicted_log_return", "uncertainty_score", "uncertainty_width"}
+    req = {"target_log_return", "norm_return", "predicted_log_return", "uncertainty_score", "uncertainty_width"}
     if not req.issubset(set(scored_oof.columns)):
         return {}
 
@@ -93,7 +93,6 @@ def compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
 
     actual_up = (df["target_log_return"] > 0).astype(int)
 
-    rel_dir_acc = float(((df["rel_strength"] > 0).astype(int) == actual_up).mean())
     norm_dir_acc = float(((df["norm_return"] > 0.5).astype(int) == actual_up).mean())
     pred_dir_acc = float(((df["predicted_log_return"] > 0).astype(int) == actual_up).mean())
 
@@ -102,7 +101,6 @@ def compute_oof_diagnostics(scored_oof: pd.DataFrame) -> dict:
     return {
         "direction_accuracy": {
             "predicted_log_return": pred_dir_acc,
-            "rel_strength": rel_dir_acc,
             "norm_return": norm_dir_acc,
         },
         "uncertainty_diagnostics": {

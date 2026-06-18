@@ -47,13 +47,14 @@ def recommendation_from_signal(
 signal_score = (
     return_weight × norm_return
   + up_prob_weight × up_probability
-  + rel_strength_weight × rel_strength
   - uncertainty_penalty × uncertainty_score
   + event_boost_score
 )
 ```
 
 시그널 점수는 종목 **순위**, Top-K 선택, 진단 표시용이다. 추천 라벨(매수/매도/관망)의 근거가 아니다.
+
+> 참고: 과거 `rel_strength` 항은 `norm_return`과 동일한 예측 수익률 백분위라 중복이어서 제거했다. 그 비중(0.20)은 `return_weight`(기본 0.65)에 흡수해 순위는 동일하게 유지된다.
 
 ### 신뢰도 점수 (`confidence_score`)
 
