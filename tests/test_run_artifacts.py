@@ -102,3 +102,20 @@ def test_latest_pointer_resolves_promoted_run_directory(tmp_path: Path):
     manager.finalize()
 
     assert resolve_latest_run_dir(tmp_path) == tmp_path / "runs" / "run-1"
+
+
+def test_manifest_csv_artifacts_include_schema_contract(tmp_path: Path):
+    manager = RunArtifactManager(tmp_path, _metadata("run-1"))
+    _write_required(manager, "one")
+
+    manifest = manager.finalize()
+
+    csv_entries = {
+        item["relative_path"]: item
+        for item in manifest["artifacts"]
+        if str(item["relative_path"]).endswith(".csv")
+    }
+    simple = csv_entries["csv/result_simple.csv"]
+    assert simple["columns"] == ["marker"]
+    assert simple["schema_kind"] == "result_simple"
+    assert simple["schema_version"] == "1.0"

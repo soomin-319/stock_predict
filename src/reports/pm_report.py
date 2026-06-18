@@ -20,6 +20,14 @@ COMMON_METADATA_FIELDS = (
     "status",
     "blocking_reasons",
 )
+PM_REPORT_REQUIRED_FIELDS = (
+    *COMMON_METADATA_FIELDS,
+    "coverage_gate",
+    "pm_summary",
+    "risk_flag_counts",
+    "horizon_summary",
+    "top_buy_candidates",
+)
 
 
 def build_pm_report(pred_df: pd.DataFrame, report: dict) -> dict:
@@ -74,4 +82,15 @@ def save_pm_report(pm_report: dict, out_path: Path) -> Path:
     return out_path
 
 
-__all__ = ["build_pm_report", "save_pm_report"]
+def validate_pm_report_schema(pm_report: dict) -> tuple[bool, list[str]]:
+    missing = [field for field in PM_REPORT_REQUIRED_FIELDS if field not in pm_report]
+    return (len(missing) == 0, missing)
+
+
+__all__ = [
+    "COMMON_METADATA_FIELDS",
+    "PM_REPORT_REQUIRED_FIELDS",
+    "build_pm_report",
+    "save_pm_report",
+    "validate_pm_report_schema",
+]

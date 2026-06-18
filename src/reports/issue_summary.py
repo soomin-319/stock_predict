@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from hashlib import sha256
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 OpenAI = None
+DEFAULT_MAX_LLM_SYMBOLS = 20
+ISSUE_SUMMARY_CACHE_VERSION = "issue-summary-v1"
 
 
 @dataclass
@@ -20,6 +24,36 @@ class SymbolIssueSummary:
     caution: str
     source_count: int
     key_sources: list[str]
+
+
+def _summary_to_cache_payload(summary: SymbolIssueSummary) -> dict[str, Any]:
+    return asdict(summary)
+
+
+def _summary_from_cache_payload(payload: dict[str, Any]) -> SymbolIssueSummary | None:
+    try:
+        key_sources = payload.get("key_sources", [])
+        return SymbolIssueSummary(
+            one_line_summary=str(payload.get("one_line_summary", "")),
+            disclosure_summary=str(payload.get("disclosure_summary", "")),
+            news_summary=str(payload.get("news_summary", "")),
+            overall_judgment=str(payload.get("overall_judgment", "중립")),
+            caution=str(payload.get("caution", "")),
+            source_count=int(payload.get("source_count", 0)),
+            key_sources=[str(value) for value in key_sources] if isinstance(key_sources, list) else [],
+        )
+    except Exception:
+        return None
+
+
+def _issue_summary_cache_key(*, model: str, symbol: str, symbol_name: str, events: pd.DataFrame) -> str:
+    payload = {
+        "version": ISSUE_SUMMARY_CACHE_VERSION,
+        "model": model,
+        "structured_events": _build_structured_events(symbol, symbol_name, events),
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    return sha256(raw).hexdigest()
 
 
 DISCLOSURE_SUMMARY_PROMPT = """너는 한국 상장사의 공시를 투자 전문가에게 전달하기 위해 정리하는 AI다.
@@ -593,6 +627,8 @@ def append_issue_summary_columns(
     openai_model: str | None = None,
     summarize_symbols: list[str] | set[str] | None = None,
     summary_n_jobs: int = 1,
+    max_llm_symbols: int | None = DEFAULT_MAX_LLM_SYMBOLS,
+    llm_cache_dir: str | Path | None = None,
 ) -> pd.DataFrame:
     if pred_df.empty:
         return _append_issue_summary_columns_sequential(
@@ -616,6 +652,15 @@ def append_issue_summary_columns(
     resolved_model = openai_model or ("gpt-5-mini" if openai_api_key else None)
     use_llm = bool(openai_api_key and resolved_model and context is not None and "source_type" in context.columns)
     target_symbols = {str(s) for s in (summarize_symbols or []) if str(s).strip()}
+    row_symbols = [str(row.get("Symbol", "")) for _, row in out.iterrows()]
+    llm_limit = len(row_symbols) if max_llm_symbols is None else max(0, int(max_llm_symbols))
+    llm_candidates = [symbol for symbol in row_symbols if (not target_symbols or symbol in target_symbols)]
+    llm_symbol_budget = set(llm_candidates[:llm_limit])
+    llm_cache = None
+    if use_llm and llm_cache_dir is not None:
+        from src.news_impact.llm_client import FileLLMResponseCache
+
+        llm_cache = FileLLMResponseCache(llm_cache_dir)
 
     def _summarize_row(row_series: pd.Series) -> SymbolIssueSummary:
         symbol = str(row_series.get("Symbol", ""))
@@ -623,8 +668,22 @@ def append_issue_summary_columns(
             return _disabled_summary_from_row(row_series)
 
         events = context_by_symbol.get(symbol, pd.DataFrame())
-        if use_llm and not events.empty:
+        if use_llm and not events.empty and symbol in llm_symbol_budget:
             symbol_name = str(row_series.get("symbol_name") or row_series.get("Name") or symbol)
+            cache_key = (
+                _issue_summary_cache_key(model=str(resolved_model), symbol=symbol, symbol_name=symbol_name, events=events)
+                if llm_cache is not None
+                else None
+            )
+            if cache_key is not None:
+                try:
+                    cached = llm_cache.get(cache_key)
+                    if cached is not None:
+                        cached_summary = _summary_from_cache_payload(cached)
+                        if cached_summary is not None:
+                            return cached_summary
+                except Exception as exc:
+                    print(f"[ISSUE SUMMARY] LLM 캐시 읽기 실패 ({symbol}): {type(exc).__name__}: {exc}")
             llm_summary = _llm_symbol_issue_summary(
                 symbol=symbol,
                 symbol_name=symbol_name,
@@ -633,6 +692,11 @@ def append_issue_summary_columns(
                 model=str(resolved_model),
             )
             if llm_summary is not None:
+                if cache_key is not None:
+                    try:
+                        llm_cache.set(cache_key, _summary_to_cache_payload(llm_summary))
+                    except Exception as exc:
+                        print(f"[ISSUE SUMMARY] LLM 캐시 쓰기 실패 ({symbol}): {type(exc).__name__}: {exc}")
                 return llm_summary
         if not events.empty:
             return _rule_based_event_issue_summary(symbol, events)
@@ -658,4 +722,9 @@ def append_issue_summary_columns(
     return out
 
 
-__all__ = ["append_issue_summary_columns", "summarize_symbol_issue", "SymbolIssueSummary"]
+__all__ = [
+    "DEFAULT_MAX_LLM_SYMBOLS",
+    "SymbolIssueSummary",
+    "append_issue_summary_columns",
+    "summarize_symbol_issue",
+]

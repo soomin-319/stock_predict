@@ -152,6 +152,127 @@ def test_append_issue_summary_columns_uses_llm_for_summary_only(monkeypatch):
     assert out.loc[0, "predicted_return"] == base.loc[0, "predicted_return"]
 
 
+def test_append_issue_summary_columns_limits_default_llm_work(monkeypatch):
+    base = pd.DataFrame(
+        [
+            {
+                "Symbol": "005930.KS",
+                "symbol_name": "삼성전자",
+                "predicted_return": 0.5,
+                "predicted_close": 70000.0,
+                "up_probability": 0.61,
+            },
+            {
+                "Symbol": "000660.KS",
+                "symbol_name": "SK하이닉스",
+                "predicted_return": 0.4,
+                "predicted_close": 120000.0,
+                "up_probability": 0.59,
+            },
+        ]
+    )
+    events = pd.DataFrame(
+        [
+            {
+                "Date": "2026-03-24",
+                "Symbol": symbol,
+                "source_type": "news",
+                "title": f"{name} 신규 수주",
+                "published_at": "2026-03-24T00:00:00",
+            }
+            for symbol, name in [("005930.KS", "삼성전자"), ("000660.KS", "SK하이닉스")]
+        ]
+    )
+    calls: list[str] = []
+
+    def _fake_llm(**kwargs):
+        calls.append(kwargs["symbol"])
+        return SymbolIssueSummary(
+            one_line_summary=f"{kwargs['symbol']} LLM",
+            disclosure_summary="[공시 요약]\n- 없음",
+            news_summary="[뉴스 요약]\n- LLM 뉴스",
+            overall_judgment="중립",
+            caution="참고용",
+            source_count=1,
+            key_sources=["news"],
+        )
+
+    monkeypatch.setattr("src.reports.issue_summary._llm_symbol_issue_summary", _fake_llm)
+
+    out = append_issue_summary_columns(
+        base,
+        context_raw_df=events,
+        openai_api_key="sk-test",
+        openai_model="gpt-4o-mini",
+        max_llm_symbols=1,
+    )
+
+    assert calls == ["005930.KS"]
+    assert out.loc[0, "오늘 종목 이슈 한줄 요약"] == "005930.KS LLM"
+    assert "기준 당일 공시" in out.loc[1, "오늘 종목 이슈 한줄 요약"]
+    assert out.loc[1, "predicted_return"] == base.loc[1, "predicted_return"]
+
+
+def test_append_issue_summary_columns_reuses_llm_cache(monkeypatch, tmp_path):
+    base = pd.DataFrame(
+        [
+            {
+                "Symbol": "005930.KS",
+                "symbol_name": "삼성전자",
+                "predicted_return": 0.5,
+                "predicted_close": 70000.0,
+                "up_probability": 0.61,
+            }
+        ]
+    )
+    events = pd.DataFrame(
+        [
+            {
+                "Date": "2026-03-24",
+                "Symbol": "005930.KS",
+                "source_type": "news",
+                "title": "삼성전자 신규 수주",
+                "published_at": "2026-03-24T00:00:00",
+            }
+        ]
+    )
+    calls = 0
+
+    def _fake_llm(**kwargs):
+        nonlocal calls
+        calls += 1
+        return SymbolIssueSummary(
+            one_line_summary="cached LLM",
+            disclosure_summary="[공시 요약]\n- 없음",
+            news_summary="[뉴스 요약]\n- LLM 뉴스",
+            overall_judgment="중립",
+            caution="참고용",
+            source_count=1,
+            key_sources=["news"],
+        )
+
+    monkeypatch.setattr("src.reports.issue_summary._llm_symbol_issue_summary", _fake_llm)
+
+    first = append_issue_summary_columns(
+        base,
+        context_raw_df=events,
+        openai_api_key="sk-test",
+        openai_model="gpt-4o-mini",
+        llm_cache_dir=tmp_path / "issue-cache",
+    )
+    second = append_issue_summary_columns(
+        base,
+        context_raw_df=events,
+        openai_api_key="sk-test",
+        openai_model="gpt-4o-mini",
+        llm_cache_dir=tmp_path / "issue-cache",
+    )
+
+    assert calls == 1
+    assert first.loc[0, "오늘 종목 이슈 한줄 요약"] == "cached LLM"
+    assert second.loc[0, "오늘 종목 이슈 한줄 요약"] == "cached LLM"
+
+
 def test_build_structured_events_clusters_news_and_categorizes_disclosures():
     events = pd.DataFrame(
         [
