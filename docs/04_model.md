@@ -1,31 +1,47 @@
-# 04. Model Training - LightGBM Multi-Head
+# 04. 모델 학습 - LightGBM 멀티 헤드
 
-`src/models/lgbm_heads.py` owns model training, prediction, persistence, and feature-importance export for the prediction pipeline. Outputs are research and operations support only; they are not investment advice or an automated trading system.
+`src/models/lgbm_heads.py`는 예측 파이프라인의 모델 학습, 예측, 영속화, 피처 중요도 내보내기를 담당합니다. 산출물은 리서치 및 운영 보조 용도일 뿐이며, 투자 자문이나 자동 매매 시스템이 아닙니다.
 
-## Core guardrails
+## 핵심 가드레일
 
-- Buy/sell/hold decisions must use next-day expected return only: `predicted_return`.
-- `signal_score`, `up_probability`, `uncertainty_score`, news, disclosures, and issue summaries must not change the recommendation label.
-- News and disclosures are display-only context. They must not change model features, expected returns, rankings, recommendations, or signals.
-- `src.features.feature_selection.DISPLAY_ONLY_CONTEXT_COLUMNS` excludes news/disclosure context columns from model features.
+- 매수/매도/보유 판단은 익일 기대수익률(`predicted_return`)만 사용해야 합니다.
+- `signal_score`, `up_probability`, `uncertainty_score`, 뉴스, 공시, 이슈 요약은 추천 라벨을 변경해서는 안 됩니다.
+- 뉴스와 공시는 표시 전용 컨텍스트입니다. 모델 피처, 기대수익률, 랭킹, 추천, 시그널을 변경해서는 안 됩니다.
+- `src.features.feature_selection.DISPLAY_ONLY_CONTEXT_COLUMNS`는 뉴스/공시 컨텍스트 컬럼을 모델 피처에서 제외합니다.
 
-## Main classes
+## 주요 클래스
 
 ### `MultiHeadStockModel`
 
 ```python
 class MultiHeadStockModel:
-    def __init__(self, random_state=42, n_jobs=-1, use_gpu=False, head_n_jobs=1)
-    def fit(self, df: pd.DataFrame, feature_columns: list[str], quantiles: list[float]) -> None
+    def __init__(
+        self,
+        random_state=42,
+        n_jobs=-1,
+        use_gpu=False,
+        head_n_jobs=1,
+        early_stopping_rounds=0,
+        reg_alpha=0.0,
+        reg_lambda=0.0,
+        min_child_samples=20,
+    )
+    def fit(
+        self,
+        df: pd.DataFrame,
+        feature_columns: list[str],
+        quantiles: list[float],
+        eval_df: pd.DataFrame | None = None,
+    ) -> None
     def predict(self, df: pd.DataFrame) -> MultiHeadPrediction
     def feature_importance_frame(self) -> pd.DataFrame
     def save(self, path: str | Path) -> Path
     def load(cls, path: str | Path) -> MultiHeadStockModel
 ```
 
-The model trains one regression head, one binary direction classifier, and quantile regression heads.
+이 모델은 회귀 헤드 1개, 이진 방향 분류기 1개, 그리고 분위수 회귀 헤드들을 학습합니다.
 
-If LightGBM is unavailable, the code falls back to scikit-learn `GradientBoostingClassifier` / `GradientBoostingRegressor`. The fallback is not speed- or accuracy-equivalent to LightGBM; check `model.backend` in `pipeline_report.json`.
+LightGBM을 사용할 수 없는 경우, 코드는 scikit-learn의 `GradientBoostingClassifier` / `GradientBoostingRegressor`로 폴백합니다. 이 폴백은 LightGBM과 속도나 정확도가 동등하지 않으므로, `pipeline_report.json`의 `model.backend`를 확인하세요.
 
 ### `MultiHeadPrediction`
 
@@ -39,21 +55,21 @@ class MultiHeadPrediction:
     quantile_high: np.ndarray      # upper configured quantile
 ```
 
-`predicted_return` inside the model is log return. Display percentage return is computed as `np.expm1(predicted_log_return) * 100`.
+모델 내부의 `predicted_return`은 로그 수익률입니다. 표시용 퍼센트 수익률은 `np.expm1(predicted_log_return) * 100`으로 계산됩니다.
 
-## Model heads
+## 모델 헤드
 
-| Head | Algorithm | Target | Output |
+| 헤드 | 알고리즘 | 타깃 | 출력 |
 |------|-----------|--------|--------|
-| Regression | LGBMRegressor, `objective=regression` | `target_log_return` | `predicted_return` |
-| Direction | LGBMClassifier, `objective=binary` | `target_up` | `up_probability` |
-| Lower quantile | LGBMRegressor, `objective=quantile` | `target_log_return` | `quantile_low` |
-| Middle quantile | LGBMRegressor, `objective=quantile` | `target_log_return` | `quantile_mid` |
-| Upper quantile | LGBMRegressor, `objective=quantile` | `target_log_return` | `quantile_high` |
+| 회귀 | LGBMRegressor, `objective=regression` | `target_log_return` | `predicted_return` |
+| 방향 | LGBMClassifier, `objective=binary` | `target_up` | `up_probability` |
+| 하위 분위수 | LGBMRegressor, `objective=quantile` | `target_log_return` | `quantile_low` |
+| 중간 분위수 | LGBMRegressor, `objective=quantile` | `target_log_return` | `quantile_mid` |
+| 상위 분위수 | LGBMRegressor, `objective=quantile` | `target_log_return` | `quantile_high` |
 
-Quantiles come from `TrainingConfig.quantiles`. The default is `[0.1, 0.5, 0.9]`. Low/mid/high mean the lower, middle, and upper configured values, not hard-coded 10/50/90 labels.
+분위수는 `TrainingConfig.quantiles`에서 가져옵니다. 기본값은 `[0.1, 0.5, 0.9]`입니다. low/mid/high는 하드코딩된 10/50/90 라벨이 아니라 설정된 하위·중간·상위 값을 의미합니다.
 
-## Training configuration
+## 학습 설정
 
 ```python
 @dataclass
@@ -67,27 +83,33 @@ class TrainingConfig:
     model_head_n_jobs: int = 1
     walk_forward_n_jobs: int = -1
     use_gpu: bool = False
+    early_stopping_rounds: int = 0
+    reg_alpha: float = 0.0
+    reg_lambda: float = 0.0
+    min_child_samples: int = 20
     purge_gap_days: int = 1
     embargo_days: int = 0
     final_model_lookback_days: int = 252 * 3
     walk_forward_lookback_days: int = 0
 ```
 
-- `final_model_lookback_days`: recent trading days used for the final prediction model. `0` means full history.
-- `walk_forward_lookback_days`: recent trading days used per walk-forward fold. `0` keeps the expanding-window policy; positive values use a rolling window.
+- `final_model_lookback_days`: 최종 예측 모델에 사용하는 최근 거래일 수입니다. `0`은 전체 이력을 의미합니다.
+- `walk_forward_lookback_days`: 워크 포워드 폴드별로 사용하는 최근 거래일 수입니다. `0`은 확장 윈도우 정책을 유지하고, 양수 값은 롤링 윈도우를 사용합니다.
+- `early_stopping_rounds`: LightGBM 조기 종료 라운드입니다. `0`이면 비활성화합니다.
+- `reg_alpha`, `reg_lambda`, `min_child_samples`: LightGBM 정규화와 최소 리프 샘플 설정입니다. sklearn 폴백에서는 모델 metadata에 값만 기록되고 학습 파라미터로 쓰이지 않습니다.
 
-## Walk-forward training vs final training
+## 워크 포워드 학습 vs 최종 학습
 
-### Walk-forward validation
+### 워크 포워드 검증
 
-- Each fold creates and trains a fresh `MultiHeadStockModel`.
-- Default training data is all history up to `train_end_date`.
-- `purge_gap_days` prevents target leakage near the validation window.
-- `embargo_days` can shift validation start forward.
-- `walk_forward_lookback_days > 0` limits each fold to the most recent N trading dates before `train_end_date`.
-- Fold metrics such as MAE, RMSE, and AUC are stored in `FoldResult`.
+- 각 폴드는 새로운 `MultiHeadStockModel`을 생성하고 학습합니다.
+- 기본 학습 데이터는 `train_end_date`까지의 전체 이력입니다.
+- `purge_gap_days`는 검증 윈도우 근처의 타깃 누수를 방지합니다.
+- `embargo_days`는 검증 시작 시점을 앞으로 이동시킬 수 있습니다.
+- `walk_forward_lookback_days > 0`이면 각 폴드를 `train_end_date` 이전 최근 N개 거래일로 제한합니다.
+- MAE, RMSE, AUC 같은 폴드 지표는 `FoldResult`에 저장됩니다.
 
-### Final prediction model
+### 최종 예측 모델
 
 ```python
 train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
@@ -95,38 +117,38 @@ if cfg.training.final_model_lookback_days > 0:
     cutoff_dates = sorted(train_df["Date"].unique())[-cfg.training.final_model_lookback_days:]
     train_df = train_df[train_df["Date"].isin(cutoff_dates)]
 model = MultiHeadStockModel(...)
-model.fit(train_df, feature_columns, cfg.training.quantiles)
+model.fit(train_df, feature_columns, cfg.training.quantiles, eval_df=None)
 latest = feat.sort_values("Date").groupby("Symbol", as_index=False).tail(1)
 latest_pred = model.predict(latest)
 ```
 
-The final model trains on the configured final window, then predicts the latest row for each symbol.
+최종 모델은 설정된 최종 윈도우로 학습한 뒤, 각 종목의 최신 행을 예측합니다.
 
-## Missing feature handling
+## 결측 피처 처리
 
-`predict()` no longer applies unconditional `fillna(0)`.
+`predict()`는 더 이상 무조건적인 `fillna(0)`을 적용하지 않습니다.
 
-- `fit()` stores per-feature imputer values.
-- Default imputer value is the training median.
-- Oscillator-like features use neutral defaults where defined: `rsi_14=50`, `stoch_k=50`, `stoch_d=50`, `cci_20=0`.
-- `save()` and `load()` persist and restore imputer values.
+- `fit()`은 피처별 임퓨터 값을 저장합니다.
+- 기본 임퓨터 값은 학습 데이터의 중앙값입니다.
+- 오실레이터 계열 피처는 정의된 경우 중립 기본값을 사용합니다: `rsi_14=50`, `stoch_k=50`, `stoch_d=50`, `cci_20=0`.
+- `save()`와 `load()`는 임퓨터 값을 영속화하고 복원합니다.
 
-Training validation raises clear `ValueError`s for:
+학습 검증은 다음 경우에 대해 명확한 `ValueError`를 발생시킵니다:
 
-- empty `feature_columns`,
-- missing target or feature columns,
-- no usable training rows,
-- single-class `target_up`.
+- 빈 `feature_columns`,
+- 누락된 타깃 또는 피처 컬럼,
+- 사용 가능한 학습 행 없음,
+- 단일 클래스 `target_up`.
 
-## Quantile monotonicity and uncertainty
+## 분위수 단조성과 불확실성
 
-Quantile heads are trained independently, so raw outputs can cross. `predict()` sorts the selected quantile outputs row-wise before returning:
+분위수 헤드는 독립적으로 학습되므로 원시 출력이 교차할 수 있습니다. `predict()`는 반환하기 전에 선택된 분위수 출력을 행 단위로 정렬합니다:
 
 ```text
 quantile_low <= quantile_mid <= quantile_high
 ```
 
-Uncertainty width is computed with a second safety clip:
+불확실성 폭은 두 번째 안전 클립과 함께 계산됩니다:
 
 ```python
 uncertainty_width = max(quantile_high - quantile_low, 0)
@@ -134,59 +156,63 @@ uncertainty_score = percentile_score(uncertainty_width)
 confidence_score = 1 - uncertainty_score
 ```
 
-`uncertainty_score` is a cross-sectional percentile score in `[0, 1]`. Larger means relatively higher uncertainty.
+`uncertainty_score`는 `[0, 1]` 범위의 횡단면 백분위 점수입니다. 값이 클수록 상대적으로 불확실성이 높음을 의미합니다.
 
-## Probability calibration
+## 확률 보정
 
-Walk-forward OOF `up_probability` values are raw model probabilities and are calibrated before use.
+워크 포워드 OOF `up_probability` 값은 원시 모델 확률이며, 사용 전에 보정됩니다.
 
 ```python
 def fit_up_probability_calibrator(tune_df: pd.DataFrame) -> UpProbabilityCalibrator
 def calibrate_up_probability(oof_df, up_probs) -> pd.Series
 ```
 
-- OOF predictions are split into tuning and evaluation partitions.
-- The tuning partition fits isotonic or fallback calibration.
-- Final predictions apply `probability_calibrator.transform(up_probability)`.
+- OOF 예측은 튜닝과 평가 파티션으로 분할됩니다.
+- 튜닝 파티션은 isotonic 또는 폴백 보정을 학습합니다.
+- 최종 예측은 `probability_calibrator.transform(up_probability)`를 적용합니다.
 
-## Model persistence and artifacts
+## 모델 영속화와 아티팩트
 
 ```python
 model.save("result/model.pkl")
 loaded = MultiHeadStockModel.load("result/model.pkl")
 ```
 
-- joblib serialization is used.
+- joblib 직렬화를 사용합니다.
 - `MODEL_ARTIFACT_VERSION = 2`.
-- Artifact version and feature hash are checked.
-- Imputer values are included in the artifact.
+- 아티팩트 버전과 피처 해시를 검증합니다.
+- 임퓨터 값이 아티팩트에 포함됩니다.
 
-The default pipeline saves final model artifacts under the run directory:
+기본 파이프라인은 최종 모델 아티팩트를 실행 디렉터리 아래에 저장합니다:
 
 - `result/runs/<run_id>/model/model.pkl`
 - `result/runs/<run_id>/model/model.pkl.meta.json`
 - `result/runs/<run_id>/csv/model_feature_importance.csv`
 
-`pipeline_report.json` includes a `model` section and `artifacts.model_*` paths.
+`pipeline_report.json`에는 `model` 섹션과 `artifacts.model_*` 경로가 포함됩니다.
 
-## Feature importance
+`model.backend == "sklearn"`이면 LightGBM 대비 속도와 정확도가 동등하지 않다는 경고가 `model.warnings`와 `diagnostics.warnings`에 기록됩니다.
 
-`MultiHeadStockModel.feature_importance_frame()` returns long-form feature importance data.
+## 피처 중요도
 
-| Column | Meaning |
+`MultiHeadStockModel.feature_importance_frame()`은 롱 폼(long-form) 피처 중요도 데이터를 반환합니다.
+
+| 컬럼 | 의미 |
 |--------|---------|
-| `head` | `regression`, `classification`, `quantile_0.1`, etc. |
-| `feature` | feature name |
-| `importance` | model-provided importance value |
+| `head` | `regression`, `classification`, `quantile_0.1` 등 |
+| `feature` | 피처 이름 |
+| `importance` | 모델이 제공하는 중요도 값 |
 
-Heads or backends without `feature_importances_` are omitted.
+`feature_importances_`가 없는 헤드나 백엔드는 생략됩니다.
 
-## Remaining improvement candidates
+## 구현된 개선
 
-### P1 - Early stopping and regularization
+### P1 - 조기 종료와 정규화
 
-LightGBM still uses fixed `n_estimators=400`, and the current model API does not accept validation frames. A future change can add `fit(..., eval_df=None)`, fold-internal validation splits, `early_stopping_rounds`, `reg_alpha`, `reg_lambda`, and `min_child_samples` in `TrainingConfig`.
+`TrainingConfig`는 `early_stopping_rounds`, `reg_alpha`, `reg_lambda`, `min_child_samples`를 제공합니다. `MultiHeadStockModel.fit(..., eval_df=None)`는 LightGBM backend에서 검증 프레임이 있고 `early_stopping_rounds > 0`일 때 `lgb.early_stopping(..., verbose=False)` 콜백을 사용합니다.
 
-### P2 - Fallback warning severity
+기본값은 기존 동작을 보존하도록 `early_stopping_rounds=0`이며, 고정 `n_estimators=400`은 유지됩니다. 워크 포워드/최종 모델 생성부는 새 설정을 모델에 전달합니다.
 
-If `model.backend == "sklearn"`, the report can expose a stronger warning because sklearn fallback is not equivalent to LightGBM.
+### P2 - 폴백 경고 심각도
+
+`model.backend == "sklearn"`인 경우, sklearn 폴백은 LightGBM과 동등하지 않다는 경고를 모델 metadata와 파이프라인 diagnostics에 노출합니다.

@@ -73,6 +73,10 @@ def _run_fold(fold: NumberedFoldInput, feature_columns: List[str], cfg: Training
         n_jobs=cfg.model_n_jobs,
         use_gpu=cfg.use_gpu,
         head_n_jobs=getattr(cfg, "model_head_n_jobs", 1),
+        early_stopping_rounds=getattr(cfg, "early_stopping_rounds", 0),
+        reg_alpha=getattr(cfg, "reg_alpha", 0.0),
+        reg_lambda=getattr(cfg, "reg_lambda", 0.0),
+        min_child_samples=getattr(cfg, "min_child_samples", 20),
     )
     model.fit(train_df, feature_columns, cfg.quantiles)
     pred = model.predict(valid_df)

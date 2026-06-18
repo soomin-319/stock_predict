@@ -43,6 +43,10 @@ class TrainingConfig:
     model_head_n_jobs: int = 1
     walk_forward_n_jobs: int = -1
     use_gpu: bool = False
+    early_stopping_rounds: int = 0
+    reg_alpha: float = 0.0
+    reg_lambda: float = 0.0
+    min_child_samples: int = 20
     # Gap between train end and validation start to prevent look-ahead leakage
     # from the next-day target overlapping the validation window.
     purge_gap_days: int = 1
@@ -202,8 +206,17 @@ def _validate_app_config(cfg: AppConfig) -> None:
             "training.step_size must be less than or equal to training.test_size, "
             f"got {cfg.training.step_size!r} > {cfg.training.test_size!r}"
         )
-    for name in ("purge_gap_days", "embargo_days", "final_model_lookback_days", "walk_forward_lookback_days"):
+    for name in (
+        "purge_gap_days",
+        "embargo_days",
+        "final_model_lookback_days",
+        "walk_forward_lookback_days",
+        "early_stopping_rounds",
+    ):
         _validate_positive_int(getattr(cfg.training, name), f"training.{name}", allow_zero=True)
+    _validate_positive_int(cfg.training.min_child_samples, "training.min_child_samples")
+    for name in ("reg_alpha", "reg_lambda"):
+        _validate_number(getattr(cfg.training, name), f"training.{name}", allow_zero=True)
     quantiles = cfg.training.quantiles
     valid_quantile_values = isinstance(quantiles, list) and all(
         isinstance(q, (int, float)) and not isinstance(q, bool) and 0 < q < 1 for q in quantiles

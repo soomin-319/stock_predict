@@ -11,6 +11,10 @@ import numpy as np
 import pandas as pd
 
 MODEL_ARTIFACT_VERSION = 2
+SKLEARN_BACKEND_WARNING = (
+    "Model backend is sklearn fallback; install LightGBM for production-grade speed/accuracy. "
+    "The sklearn fallback is not equivalent to LightGBM."
+)
 NEUTRAL_FEATURE_DEFAULTS: dict[str, float] = {
     "rsi_14": 50.0,
     "stoch_k": 50.0,
@@ -34,8 +38,8 @@ def _validate_quantiles(quantiles: List[float]) -> list[float]:
 
 def _fit_one(task):
     """joblib Parallel 호환을 위한 모듈 수준 헬퍼."""
-    model, x, y = task
-    model.fit(x, y)
+    model, x, y, fit_kwargs = task
+    model.fit(x, y, **fit_kwargs)
     return model
 
 try:
@@ -87,11 +91,19 @@ class MultiHeadStockModel:
         n_jobs: int | None = None,
         use_gpu: bool = False,
         head_n_jobs: int | None = 1,
+        early_stopping_rounds: int = 0,
+        reg_alpha: float = 0.0,
+        reg_lambda: float = 0.0,
+        min_child_samples: int = 20,
     ):
         self.random_state = random_state
         self.n_jobs = n_jobs
         self.use_gpu = use_gpu
         self.head_n_jobs = 1 if head_n_jobs is None else int(head_n_jobs or 1)
+        self.early_stopping_rounds = max(0, int(early_stopping_rounds or 0))
+        self.reg_alpha = float(reg_alpha or 0.0)
+        self.reg_lambda = float(reg_lambda or 0.0)
+        self.min_child_samples = int(min_child_samples)
         self._feature_columns: List[str] = []
         self._feature_imputer_values: Dict[str, float] = {}
         self.reg_model = None
@@ -107,6 +119,9 @@ class MultiHeadStockModel:
             num_leaves=31,
             subsample=0.8,
             colsample_bytree=0.8,
+            reg_alpha=self.reg_alpha,
+            reg_lambda=self.reg_lambda,
+            min_child_samples=self.min_child_samples,
             verbose=-1,
         )
         if self.n_jobs is not None:
@@ -168,7 +183,32 @@ class MultiHeadStockModel:
             x[column] = pd.to_numeric(x[column], errors="coerce").fillna(self._feature_imputer_values.get(column, 0.0))
         return x
 
-    def fit(self, df: pd.DataFrame, feature_columns: List[str], quantiles: List[float]):
+    def _fit_kwargs_for_target(self, eval_df: pd.DataFrame | None, target_column: str) -> dict[str, Any]:
+        if not LIGHTGBM_AVAILABLE or self.early_stopping_rounds <= 0 or eval_df is None or eval_df.empty:
+            return {}
+        required = [*self._feature_columns, target_column]
+        if any(column not in eval_df.columns for column in required):
+            return {}
+        eval_ready = eval_df.dropna(subset=[target_column]).copy()
+        usable_mask = eval_ready[self._feature_columns].notna().any(axis=1)
+        eval_ready = eval_ready[usable_mask]
+        if eval_ready.empty:
+            return {}
+
+        kwargs: dict[str, Any] = {
+            "eval_set": [(self._impute_features(eval_ready), eval_ready[target_column])],
+        }
+        if hasattr(lgb, "early_stopping"):
+            kwargs["callbacks"] = [lgb.early_stopping(self.early_stopping_rounds, verbose=False)]
+        return kwargs
+
+    def fit(
+        self,
+        df: pd.DataFrame,
+        feature_columns: List[str],
+        quantiles: List[float],
+        eval_df: pd.DataFrame | None = None,
+    ):
         quantiles = _validate_quantiles(quantiles)
         if not feature_columns:
             raise ValueError("feature_columns must contain at least one feature.")
@@ -198,9 +238,17 @@ class MultiHeadStockModel:
 
         # 모든 독립 모델 학습 태스크를 수집한다.
         tasks: list[tuple] = [
-            (self._build_regressor(), x, y_reg),
-            (self._build_classifier(), x, y_cls),
-            *[(self._build_regressor(loss="quantile", alpha=q), x, y_reg) for q in quantiles],
+            (self._build_regressor(), x, y_reg, self._fit_kwargs_for_target(eval_df, "target_log_return")),
+            (self._build_classifier(), x, y_cls, self._fit_kwargs_for_target(eval_df, "target_up")),
+            *[
+                (
+                    self._build_regressor(loss="quantile", alpha=q),
+                    x,
+                    y_reg,
+                    self._fit_kwargs_for_target(eval_df, "target_log_return"),
+                )
+                for q in quantiles
+            ],
         ]
 
         # ③: LightGBM은 C++ 구간에서 GIL을 해제하므로 스레드 병렬로 실질적인 속도 향상이 가능하다.
@@ -267,10 +315,15 @@ class MultiHeadStockModel:
             "n_jobs": self.n_jobs,
             "head_n_jobs": self.head_n_jobs,
             "use_gpu": self.use_gpu,
+            "early_stopping_rounds": self.early_stopping_rounds,
+            "reg_alpha": self.reg_alpha,
+            "reg_lambda": self.reg_lambda,
+            "min_child_samples": self.min_child_samples,
             "feature_count": len(self._feature_columns),
             "feature_hash": self._feature_columns_hash() if self._feature_columns else None,
             "imputer_feature_count": len(self._feature_imputer_values),
             "quantiles": sorted(self.quantile_models.keys()),
+            "warnings": [SKLEARN_BACKEND_WARNING] if self.backend == "sklearn" else [],
         }
 
     def feature_importance_frame(self) -> pd.DataFrame:
@@ -313,6 +366,10 @@ class MultiHeadStockModel:
             "n_jobs": self.n_jobs,
             "head_n_jobs": self.head_n_jobs,
             "use_gpu": self.use_gpu,
+            "early_stopping_rounds": self.early_stopping_rounds,
+            "reg_alpha": self.reg_alpha,
+            "reg_lambda": self.reg_lambda,
+            "min_child_samples": self.min_child_samples,
             "feature_columns": list(self._feature_columns),
             "feature_imputer_values": dict(self._feature_imputer_values),
             "feature_hash": self._feature_columns_hash(),
@@ -343,6 +400,10 @@ class MultiHeadStockModel:
             n_jobs=payload.get("n_jobs"),
             use_gpu=payload.get("use_gpu", False),
             head_n_jobs=payload.get("head_n_jobs", 1),
+            early_stopping_rounds=payload.get("early_stopping_rounds", 0),
+            reg_alpha=payload.get("reg_alpha", 0.0),
+            reg_lambda=payload.get("reg_lambda", 0.0),
+            min_child_samples=payload.get("min_child_samples", 20),
         )
         model.backend = payload.get("backend", model.backend)
         model._feature_columns = list(payload["feature_columns"])
