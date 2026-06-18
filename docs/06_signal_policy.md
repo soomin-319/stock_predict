@@ -176,6 +176,16 @@ class RealTimeCloseBettingRecommendationService:
 
 `risk_flag`는 `value_traded < min_liquidity_threshold`이면 `LOW_LIQUIDITY`를 붙인다. `min_liquidity_threshold`가 없거나 0 이하이면 백테스트 기본값 `BacktestConfig().min_value_traded`(기본 30억)를 사용한다.
 
+### 벡터화된 정책 프레임
+
+`build_prediction_policy_frame`은 행 단위 `apply` 대신 벡터화 헬퍼를 사용한다.
+
+- `_pm_summary_frame`: 추천, 리스크 플래그, 포지션 크기, PM 액션, 거래 게이트, 신뢰도 라벨 생성
+- `_jongbae_score_series`: 종배 점수 일괄 계산
+- `_prediction_reason_series`: 표시용 예측 이유 일괄 생성
+
+기존 단일 행 함수(`build_pm_summary_fields`, `_jongbae_score`, `prediction_reason`)는 호환성과 테스트 비교용으로 유지한다.
+
 ---
 
 ## 중요 제약사항
@@ -190,7 +200,8 @@ class RealTimeCloseBettingRecommendationService:
 
 > 우선순위: **P0(버그) > P1(정합성) > P2(문서/품질)**.
 
-### 향후 과제 — P2 행 단위 `apply` 성능
+### 완료 — P2 행 단위 `apply` 성능
 
-- `build_prediction_policy_frame`의 `prediction_reason`, `_jongbae_score`, `build_pm_summary_fields`는 아직 행 단위 `apply`를 사용한다.
-- 종목 수가 많아 병목이 확인되면 벡터화하거나, 표시용 사유 텍스트 생성을 상위 노출 종목으로 제한한다.
+- `build_prediction_policy_frame`의 `build_pm_summary_fields`, `_jongbae_score`, `prediction_reason` 경로를 벡터화했다.
+- 추천 정책은 변경하지 않았다. 매수/매도/관망은 계속 `predicted_return`만 사용한다.
+- `min_liquidity_threshold`가 결측(`NaN`)인 경우도 미설정으로 보고 백테스트 기본 유동성 기준을 사용한다.
