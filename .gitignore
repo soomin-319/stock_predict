@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.pytest_basetemp/
 .pytest_tmp/
 *.egg-info/
 
@@ -22,6 +23,7 @@ data/dart_corp_map.csv
 result/
 figures/
 figures_*/
+models/
 *.log
 
 # IDE / OS
