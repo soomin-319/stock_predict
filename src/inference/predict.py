@@ -37,9 +37,7 @@ def build_prediction_frame(
     out["uncertainty_width"] = np.maximum(pred.quantile_high - pred.quantile_low, 0.0)
     out["uncertainty_band"] = pd.Series(pred.quantile_low, index=out.index).map(lambda v: f"{float(v):.3f}") + " ~ " + pd.Series(pred.quantile_high, index=out.index).map(lambda v: f"{float(v):.3f}")
 
-    out["rel_strength"] = percentile_score(out["predicted_log_return"]) - 0.5
-    # z-score 방식은 범위가 무한하여 signal_score 임계값(0.25/0.55)과 스케일이 맞지 않아
-    # uncertainty_score와 동일하게 0~1 분위 백분위 점수로 치환한다.
+    # uncertainty_score는 signal_score 임계값(0.25/0.55) 스케일에 맞춰 0~1 분위 백분위로 둔다.
     out["uncertainty_score"] = percentile_score(out["uncertainty_width"])
     out["norm_return"] = percentile_score(out["predicted_log_return"])
     out["event_boost_score"] = 0.0
@@ -47,7 +45,6 @@ def build_prediction_frame(
     out["signal_score"] = (
         signal_cfg.return_weight * out["norm_return"]
         + signal_cfg.up_prob_weight * out["up_probability"]
-        + signal_cfg.rel_strength_weight * out["rel_strength"]
         - signal_cfg.uncertainty_penalty * out["uncertainty_score"]
     )
     out["signal_label"] = signal_label_series(out["signal_score"])

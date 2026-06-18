@@ -200,7 +200,6 @@ OOF tune 분할에서 시그널 점수의 가중치를 최적화한다:
 ```
 signal_score = return_weight × norm_return
              + up_prob_weight × up_probability
-             + rel_strength_weight × rel_strength
              - uncertainty_penalty × uncertainty_score
              + event_boost_score
 ```
@@ -209,9 +208,8 @@ signal_score = return_weight × norm_return
 
 | 가중치 | 기본값 |
 |--------|--------|
-| `return_weight` | 0.45 |
+| `return_weight` | 0.65 |
 | `up_prob_weight` | 0.35 |
-| `rel_strength_weight` | 0.20 |
 | `uncertainty_penalty` | 0.25 |
 
 ---

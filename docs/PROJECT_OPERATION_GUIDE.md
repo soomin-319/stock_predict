@@ -238,7 +238,6 @@ target_up = target_log_return > 0
 signal_score =
     return_weight × norm_return
   + up_prob_weight × up_probability
-  + rel_strength_weight × rel_strength
   - uncertainty_penalty × uncertainty_score
 ```
 

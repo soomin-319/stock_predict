@@ -100,14 +100,13 @@ class TrainingConfig:
 ```python
 @dataclass
 class SignalConfig:
-    return_weight: float = 0.45
+    return_weight: float = 0.65
     up_prob_weight: float = 0.35
-    rel_strength_weight: float = 0.20
     uncertainty_penalty: float = 0.25
 ```
 
 - 모든 값은 0 이상이어야 한다.
-- `return_weight + up_prob_weight + rel_strength_weight > 0`이어야 한다.
+- `return_weight + up_prob_weight > 0`이어야 한다.
 - 학습 split에서 signal tuning을 수행하면 런타임에 값이 조정될 수 있다.
 - 뉴스/공시/LLM 결과는 이 가중치나 `predicted_return`을 변경하면 안 된다.
 

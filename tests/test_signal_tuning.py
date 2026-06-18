@@ -12,7 +12,6 @@ def test_tune_signal_weights_uses_time_split_and_reports_in_out_performance():
                 "Date": dt,
                 "norm_return": 1.0 if idx < 8 else 0.0,
                 "up_probability": 0.0 if idx < 8 else 1.0,
-                "rel_strength": 0.0,
                 "uncertainty_score": 0.0,
                 "target_log_return": 0.10 if idx < 8 else 0.20,
             }
@@ -22,7 +21,6 @@ def test_tune_signal_weights_uses_time_split_and_reports_in_out_performance():
                 "Date": dt,
                 "norm_return": 0.0 if idx < 8 else 1.0,
                 "up_probability": 1.0 if idx < 8 else 0.0,
-                "rel_strength": 0.0,
                 "uncertainty_score": 0.0,
                 "target_log_return": 0.01 if idx < 8 else -0.20,
             }

@@ -60,9 +60,8 @@ class TrainingConfig:
 
 @dataclass
 class SignalConfig:
-    return_weight: float = 0.45
+    return_weight: float = 0.65  # 과거 rel_strength_weight(0.20)는 norm_return 중복이라 여기로 흡수
     up_prob_weight: float = 0.35
-    rel_strength_weight: float = 0.20
     uncertainty_penalty: float = 0.25
 
 
@@ -229,9 +228,9 @@ def _validate_app_config(cfg: AppConfig) -> None:
     ):
         raise ValueError(f"training.quantiles must contain at least 3 unique increasing values in (0, 1), got {quantiles!r}")
 
-    for name in ("return_weight", "up_prob_weight", "rel_strength_weight", "uncertainty_penalty"):
+    for name in ("return_weight", "up_prob_weight", "uncertainty_penalty"):
         _validate_number(getattr(cfg.signal, name), f"signal.{name}", allow_zero=True)
-    primary_weight_sum = cfg.signal.return_weight + cfg.signal.up_prob_weight + cfg.signal.rel_strength_weight
+    primary_weight_sum = cfg.signal.return_weight + cfg.signal.up_prob_weight
     if primary_weight_sum <= 0:
         raise ValueError("signal weights must include at least one positive primary weight")
 

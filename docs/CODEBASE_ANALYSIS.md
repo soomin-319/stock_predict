@@ -93,7 +93,7 @@ LightGBM이 설치되어 있으면 LightGBM을 쓰고, 없으면 sklearn `Gradie
 
 ### `src/inference`와 `src/domain`
 
-`src/inference/predict.py`는 예측값을 사람이 읽을 수 있는 프레임으로 바꾼다. `predicted_return`, `predicted_close`, `up_probability`, `uncertainty_score`, `norm_return`, `rel_strength`, `signal_score`, horizon별 예측값을 계산한다.
+`src/inference/predict.py`는 예측값을 사람이 읽을 수 있는 프레임으로 바꾼다. `predicted_return`, `predicted_close`, `up_probability`, `uncertainty_score`, `norm_return`, `signal_score`, horizon별 예측값을 계산한다.
 
 `src/domain/signal_policy.py`는 모델 출력에 정책을 더한다. 운영 기준의 기본 추천은 예측 수익률 임계값만 사용한다. `signal_score`, 상승 확률, 불확실성, Nasdaq headwind, RSI 과열, 데이터 coverage, 유동성, 히스토리 정확도 등은 risk flag, portfolio action, 진단 정보로 표시할 수 있지만 매수/매도/관망 라벨을 바꾸는 근거로 쓰지 않는다. 공시/뉴스는 이슈 요약으로 표시만 한다.
 
