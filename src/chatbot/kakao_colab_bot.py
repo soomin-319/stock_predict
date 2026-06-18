@@ -2233,6 +2233,8 @@ def main():
     parser.add_argument("--kakao-webhook-secret", default=None)
     parser.add_argument("--max-concurrent-prediction-jobs", type=int, default=None)
     parser.add_argument("--refresh-cooldown-seconds", type=int, default=None)
+    parser.add_argument("--runtime-dir", default=None)
+    parser.add_argument("--allowed-webhook-cidrs", default=None)
     parser.add_argument("--use-pyngrok", action="store_true")
     parser.add_argument("--ngrok-auth-token", default=None)
     parser.add_argument("--ngrok-domain", default=None)
@@ -2258,6 +2260,8 @@ def main():
             if args.refresh_cooldown_seconds is not None
             else int(os.getenv("PREDICTION_REFRESH_COOLDOWN_SECONDS", "60"))
         ),
+        runtime_dir=args.runtime_dir or os.getenv("CHATBOT_RUNTIME_DIR", "result/runtime"),
+        allowed_webhook_cidrs=_parse_csv_tuple(args.allowed_webhook_cidrs or os.getenv("KAKAO_ALLOWED_WEBHOOK_CIDRS")),
     )
     if args.use_pyngrok:
         launched = launch_colab_kakao_bot(
