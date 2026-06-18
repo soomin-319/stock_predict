@@ -34,3 +34,33 @@ def attach_quick_replies(response: dict[str, Any], quick_replies: list[tuple[str
     if quick_replies:
         response["template"]["quickReplies"] = [quick_reply(label, message_text) for label, message_text in quick_replies]
     return response
+
+
+def list_card_response(
+    header_title: str,
+    items: list[dict[str, str]],
+    quick_replies: list[tuple[str, str]] | None = None,
+) -> dict[str, Any]:
+    safe_items = []
+    for item in items[:5]:
+        title = str(item.get("title") or "").strip()
+        description = str(item.get("description") or "").strip()
+        if not title:
+            continue
+        safe_items.append({"title": title, "description": description})
+    if not safe_items:
+        return simple_text_response(header_title)
+    response = {
+        "version": "2.0",
+        "template": {
+            "outputs": [
+                {
+                    "listCard": {
+                        "header": {"title": str(header_title or "추천 목록")},
+                        "items": safe_items,
+                    }
+                }
+            ]
+        },
+    }
+    return attach_quick_replies(response, quick_replies[:10] if quick_replies else None)

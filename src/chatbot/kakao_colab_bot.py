@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import hmac
+import ipaddress
 import json
 import logging
 import re
@@ -31,7 +32,7 @@ from src.data.investor_context import collect_context_raw_events
 from src.data.krx_universe import find_symbol_candidates_by_name, get_symbol_name_map
 from src.data.fetch_real_data import normalize_user_symbols
 from src.chatbot.intent import is_help_utterance, is_status_utterance, normalize_utterance
-from src.chatbot.responses import attach_quick_replies, simple_text_response
+from src.chatbot.responses import attach_quick_replies, list_card_response, simple_text_response
 from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.news_impact_context import append_generated_news_impact_context
 from src.reports.result_formatter import validate_result_simple_schema
@@ -90,10 +91,12 @@ class PipelineRuntimeConfig:
     async_issue_summary_on_demand: bool = True
     real_start: str = "2018-01-01"
     prewarm_default_predictions: bool = True
+    runtime_dir: str = "result/runtime"
     extra_args: tuple[str, ...] = ()
     kakao_webhook_secret: str | None = None
     max_concurrent_prediction_jobs: int = 2
     refresh_cooldown_seconds: int = 60
+    allowed_webhook_cidrs: tuple[str, ...] = ()
 
     def build_command(
         self,
@@ -194,10 +197,16 @@ class KakaoColabPredictionBot:
         self.result_detail_path = self.project_root / "result" / "result_detail.csv"
         self.result_news_path = self.project_root / "result" / "result_news.csv"
         self.result_disclosure_path = self.project_root / "result" / "result_disclosure.csv"
-        self.state_path = self.project_root / (state_path or "result/runtime/chatbot_jobs.json")
-        self.session_path = self.project_root / (session_path or "result/runtime/chatbot_sessions.json")
-        self.prewarm_meta_path = self.project_root / "result" / "runtime" / "prewarm_cache_meta.json"
-        self.log_dir = self.project_root / "result" / "runtime" / "logs"
+        runtime_dir = Path(self.runtime_config.runtime_dir)
+        if not runtime_dir.is_absolute():
+            runtime_dir = self.project_root / runtime_dir
+        self.runtime_dir = runtime_dir
+        self.state_path = self._resolve_project_path(state_path) if state_path is not None else runtime_dir / "chatbot_jobs.json"
+        self.session_path = (
+            self._resolve_project_path(session_path) if session_path is not None else runtime_dir / "chatbot_sessions.json"
+        )
+        self.prewarm_meta_path = runtime_dir / "prewarm_cache_meta.json"
+        self.log_dir = runtime_dir / "logs"
         legacy_state_path = self.project_root / "result" / "chatbot_jobs.json"
         legacy_session_path = self.project_root / "result" / "chatbot_sessions.json"
         state_load_path = legacy_state_path if state_path is None and not self.state_path.exists() and legacy_state_path.exists() else self.state_path
@@ -229,7 +238,28 @@ class KakaoColabPredictionBot:
         self._state_lock = threading.RLock()
         self._legacy_formatter_patched = False
         self._bootstrap_all_symbols_done = False
+        self._cleanup_stale_running_jobs_on_startup()
         self._bootstrap_formatter_guard()
+
+    def _resolve_project_path(self, value: str | Path) -> Path:
+        path = Path(value)
+        return path if path.is_absolute() else self.project_root / path
+
+    def _cleanup_stale_running_jobs_on_startup(self) -> None:
+        changed = False
+        now = datetime.now(timezone.utc).isoformat()
+        with self._state_lock:
+            for state in self._job_registry.values():
+                if state.get("status") != "running":
+                    continue
+                state["status"] = "failed"
+                state["exit_code"] = -2
+                state["completed_at"] = now
+                state["note"] = "stale_after_restart"
+                state.pop("pid", None)
+                changed = True
+            if changed:
+                self._save_registry(self.state_path, self._job_registry)
 
     def _load_latest_manifest(self) -> dict[str, Any] | None:
         pointer_path = self.result_root / "latest_manifest.json"
@@ -355,7 +385,7 @@ class KakaoColabPredictionBot:
                 quick_replies=[("도움말", "도움말")],
             )
         try:
-            recommendations = self.recommendation_service.get_recommendations(top_n=None, min_final_score=200)
+            recommendations = list(self.recommendation_service.get_recommendations(top_n=None, min_final_score=200))
             message = format_recommendation_message(recommendations)
             self._write_recommendation_log(
                 submitted_at=submitted_at,
@@ -363,6 +393,9 @@ class KakaoColabPredictionBot:
                 recommendations=recommendations,
                 response_text=message,
             )
+            rich_response = self._recommendation_list_card_response(recommendations)
+            if rich_response is not None:
+                return rich_response
             return self._build_response(
                 message,
                 quick_replies=[("다시 추천", "추천"), ("도움말", "도움말")],
@@ -379,6 +412,27 @@ class KakaoColabPredictionBot:
                 "데이터 수집 또는 네트워크 상태를 확인한 뒤 다시 '추천'을 입력해주세요.",
                 quick_replies=[("다시 추천", "추천"), ("도움말", "도움말")],
             )
+
+    def _recommendation_list_card_response(self, recommendations: list[Any] | tuple[Any, ...]) -> dict[str, Any] | None:
+        items = []
+        for item in list(recommendations)[:5]:
+            rank = getattr(item, "rank", None)
+            name = str(getattr(item, "name", "") or "").strip()
+            symbol = str(getattr(item, "symbol", "") or "").strip()
+            score = getattr(item, "final_score", None)
+            if not name:
+                continue
+            title = f"{rank}. {name}" if rank not in (None, "") else name
+            score_text = f"점수 {score:g}" if isinstance(score, (int, float)) else ""
+            desc_parts = [part for part in (symbol, score_text) if part]
+            items.append({"title": title, "description": " | ".join(desc_parts)})
+        if not items:
+            return None
+        return list_card_response(
+            "실시간 추천",
+            items,
+            quick_replies=[("다시 추천", "추천"), ("도움말", "도움말")],
+        )
 
     def _write_recommendation_log(
         self,
@@ -1897,6 +1951,27 @@ class KakaoColabPredictionBot:
         return attach_quick_replies(simple_text_response(str(text or "")), quick_replies[:10] if quick_replies else None)
 
 
+def _parse_csv_tuple(value: str | None) -> tuple[str, ...]:
+    return tuple(part.strip() for part in str(value or "").split(",") if part.strip())
+
+
+def _is_remote_addr_allowed(remote_addr: str | None, cidrs: tuple[str, ...]) -> bool:
+    if not cidrs:
+        return True
+    try:
+        ip = ipaddress.ip_address(str(remote_addr or ""))
+    except ValueError:
+        return False
+    for cidr in cidrs:
+        try:
+            network = ipaddress.ip_network(cidr, strict=False)
+        except ValueError:
+            continue
+        if ip in network:
+            return True
+    return False
+
+
 def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: PipelineRuntimeConfig | None = None):
     from flask import Flask, jsonify, request
 
@@ -1910,6 +1985,8 @@ def create_app(bot: KakaoColabPredictionBot | None = None, runtime_config: Pipel
 
     @app.post("/kakao/webhook")
     def kakao_webhook():
+        if not _is_remote_addr_allowed(request.remote_addr, effective_config.allowed_webhook_cidrs):
+            return jsonify({"error": "forbidden"}), 403
         secret = str(effective_config.kakao_webhook_secret or "").strip()
         if secret:
             provided = request.headers.get("X-Webhook-Secret", "")
@@ -2156,6 +2233,8 @@ def main():
     parser.add_argument("--kakao-webhook-secret", default=None)
     parser.add_argument("--max-concurrent-prediction-jobs", type=int, default=None)
     parser.add_argument("--refresh-cooldown-seconds", type=int, default=None)
+    parser.add_argument("--runtime-dir", default=None)
+    parser.add_argument("--allowed-webhook-cidrs", default=None)
     parser.add_argument("--use-pyngrok", action="store_true")
     parser.add_argument("--ngrok-auth-token", default=None)
     parser.add_argument("--ngrok-domain", default=None)
@@ -2181,6 +2260,8 @@ def main():
             if args.refresh_cooldown_seconds is not None
             else int(os.getenv("PREDICTION_REFRESH_COOLDOWN_SECONDS", "60"))
         ),
+        runtime_dir=args.runtime_dir or os.getenv("CHATBOT_RUNTIME_DIR", "result/runtime"),
+        allowed_webhook_cidrs=_parse_csv_tuple(args.allowed_webhook_cidrs or os.getenv("KAKAO_ALLOWED_WEBHOOK_CIDRS")),
     )
     if args.use_pyngrok:
         launched = launch_colab_kakao_bot(
