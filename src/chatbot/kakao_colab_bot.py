@@ -31,7 +31,7 @@ from src.data.investor_context import collect_context_raw_events
 from src.data.krx_universe import find_symbol_candidates_by_name, get_symbol_name_map
 from src.data.fetch_real_data import normalize_user_symbols
 from src.chatbot.intent import is_help_utterance, is_status_utterance, normalize_utterance
-from src.chatbot.responses import attach_quick_replies, simple_text_response
+from src.chatbot.responses import attach_quick_replies, list_card_response, simple_text_response
 from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.news_impact_context import append_generated_news_impact_context
 from src.reports.result_formatter import validate_result_simple_schema
@@ -383,7 +383,7 @@ class KakaoColabPredictionBot:
                 quick_replies=[("도움말", "도움말")],
             )
         try:
-            recommendations = self.recommendation_service.get_recommendations(top_n=None, min_final_score=200)
+            recommendations = list(self.recommendation_service.get_recommendations(top_n=None, min_final_score=200))
             message = format_recommendation_message(recommendations)
             self._write_recommendation_log(
                 submitted_at=submitted_at,
@@ -391,6 +391,9 @@ class KakaoColabPredictionBot:
                 recommendations=recommendations,
                 response_text=message,
             )
+            rich_response = self._recommendation_list_card_response(recommendations)
+            if rich_response is not None:
+                return rich_response
             return self._build_response(
                 message,
                 quick_replies=[("다시 추천", "추천"), ("도움말", "도움말")],
@@ -407,6 +410,27 @@ class KakaoColabPredictionBot:
                 "데이터 수집 또는 네트워크 상태를 확인한 뒤 다시 '추천'을 입력해주세요.",
                 quick_replies=[("다시 추천", "추천"), ("도움말", "도움말")],
             )
+
+    def _recommendation_list_card_response(self, recommendations: list[Any] | tuple[Any, ...]) -> dict[str, Any] | None:
+        items = []
+        for item in list(recommendations)[:5]:
+            rank = getattr(item, "rank", None)
+            name = str(getattr(item, "name", "") or "").strip()
+            symbol = str(getattr(item, "symbol", "") or "").strip()
+            score = getattr(item, "final_score", None)
+            if not name:
+                continue
+            title = f"{rank}. {name}" if rank not in (None, "") else name
+            score_text = f"점수 {score:g}" if isinstance(score, (int, float)) else ""
+            desc_parts = [part for part in (symbol, score_text) if part]
+            items.append({"title": title, "description": " | ".join(desc_parts)})
+        if not items:
+            return None
+        return list_card_response(
+            "실시간 추천",
+            items,
+            quick_replies=[("다시 추천", "추천"), ("도움말", "도움말")],
+        )
 
     def _write_recommendation_log(
         self,

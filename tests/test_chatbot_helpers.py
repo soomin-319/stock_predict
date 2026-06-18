@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from src.chatbot.intent import is_help_utterance, is_status_utterance, normalize_utterance
 from src.chatbot.responses import simple_text_response
 from src.chatbot.kakao_colab_bot import (
@@ -23,6 +25,55 @@ def test_simple_text_response_shape():
         "version": "2.0",
         "template": {"outputs": [{"simpleText": {"text": "hello"}}]},
     }
+
+
+def test_list_card_response_shape_and_quick_replies():
+    from src.chatbot.responses import list_card_response
+
+    response = list_card_response(
+        header_title="실시간 추천",
+        items=[
+            {"title": "1. 삼성전자", "description": "005930.KS | 점수 250"},
+            {"title": "2. SK하이닉스", "description": "000660.KS | 점수 240"},
+        ],
+        quick_replies=[("다시 추천", "추천")],
+    )
+
+    assert response["version"] == "2.0"
+    card = response["template"]["outputs"][0]["listCard"]
+    assert card["header"]["title"] == "실시간 추천"
+    assert card["items"][0]["title"] == "1. 삼성전자"
+    assert response["template"]["quickReplies"][0]["messageText"] == "추천"
+
+
+@dataclass
+class _RecommendationItem:
+    rank: int
+    name: str
+    symbol: str
+    final_score: float
+    grade: str = "후보"
+    first_buy_ratio: float = 0.5
+    reasons: tuple[str, ...] = ("테스트",)
+
+
+class _RecommendationService:
+    def get_recommendations(self, **kwargs):
+        return [
+            _RecommendationItem(1, "삼성전자", "005930.KS", 250.5),
+            _RecommendationItem(2, "SK하이닉스", "000660.KS", 240.0),
+        ]
+
+
+def test_recommendation_request_uses_list_card_when_items_available(tmp_path):
+    bot = make_test_bot(tmp_path, recommendation_service=_RecommendationService())
+    bot._load_latest_manifest = lambda: None
+
+    response = bot.handle_utterance("추천")
+
+    assert "listCard" in response["template"]["outputs"][0]
+    card = response["template"]["outputs"][0]["listCard"]
+    assert card["items"][0]["title"] == "1. 삼성전자"
 
 
 def make_test_bot(tmp_path, **kwargs):
