@@ -130,6 +130,25 @@ Example files:
 
 Use Korean company names, industry keywords, and Korean search queries by default. Keep Korean news first; include English or overseas media only when explicitly needed. News-impact outputs remain display/review context in this project and must not change `predicted_return`, recommendation, or automated signal policy.
 
+### Two execution paths
+
+```text
+Standalone (research report)                 Integrated (display context)
+─────────────────────────────               ──────────────────────────────
+stock-news-impact CLI                        run_pipeline (main prediction)
+  -> src.news_impact.pipeline                  |
+  -> report.json / report.csv                  +- --news-impact-report  ─┐
+     + audit.json                              |                         |
+     (reproducibility metadata:                +- --news-impact-llm-config ┘
+      llm_model, llm_temperature,                |
+      llm_prompt_hash; per-article              -> append_news_impact_context
+      hashes live in the LLM cache)            -> result_detail.csv `news_impact_*`
+                                                  (display-only; excluded from
+                                                   model features and signals)
+```
+
+Both paths are review-only. The integrated path attaches `news_impact_*` columns for display; `select_feature_columns()` drops every `news_impact_` column so they never become model inputs, and `predicted_return` stays the sole signal.
+
 ```powershell
 Copy-Item configs/news_impact.example.json configs/news_impact.json
 stock-news-impact --help

@@ -150,6 +150,8 @@ class RunAudit:
     llm_provider: str
     llm_model_requested: str
     llm_model_returned: str
+    llm_temperature: float
+    llm_prompt_hash: str
     scoring_version: str
     backtest_version: str
 

@@ -35,11 +35,19 @@ class JsonTransport(Protocol):
         ...
 
 
+LLM_CACHE_SCHEMA = "stock-news-impact.llm_cache.v1"
+
+
 class LLMResponseCache(Protocol):
     def get(self, key: str) -> dict[str, Any] | None:
         ...
 
-    def set(self, key: str, value: dict[str, Any]) -> None:
+    def set(
+        self,
+        key: str,
+        value: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         ...
 
 
@@ -55,13 +63,30 @@ class FileLLMResponseCache:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise LLMResponseError("Cached LLM response must be an object")
+        if payload.get("schema") == LLM_CACHE_SCHEMA and isinstance(
+            payload.get("response"), dict
+        ):
+            return payload["response"]
         return payload
 
-    def set(self, key: str, value: dict[str, Any]) -> None:
+    def set(
+        self,
+        key: str,
+        value: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         path = self._path(key)
+        if metadata is None:
+            stored: dict[str, Any] = value
+        else:
+            stored = {
+                "schema": LLM_CACHE_SCHEMA,
+                "metadata": dict(metadata),
+                "response": value,
+            }
         atomic_write_text(
             path,
-            json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            json.dumps(stored, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
 
@@ -180,7 +205,13 @@ class LlamaCppClient:
                 parsed = _parse_assistant_json(response)
                 _validate_required_keys(parsed, required_keys)
                 if self._cache is not None:
-                    self._cache.set(cache_key, parsed)
+                    self._cache.set(
+                        cache_key,
+                        parsed,
+                        metadata=self._cache_metadata(
+                            system_prompt, user_prompt, required_keys
+                        ),
+                    )
                 return parsed
             except LLMResponseError as error:
                 last_error = error
@@ -191,6 +222,20 @@ class LlamaCppClient:
         if last_error is not None:
             raise last_error
         raise LLMResponseError("LLM request was not attempted")
+
+    def _cache_metadata(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        required_keys: Iterable[str] | None,
+    ) -> dict[str, Any]:
+        return {
+            "model": self._config.model,
+            "temperature": self._config.temperature,
+            "prompt_hash": sha256_text(system_prompt),
+            "article_hash": sha256_text(user_prompt),
+            "required_keys": sorted(required_keys or ()),
+        }
 
 
 def _extract_assistant_content(response: dict[str, Any]) -> str:
@@ -241,6 +286,10 @@ def _validate_required_keys(
     missing = [key for key in required_keys if key not in parsed]
     if missing:
         raise LLMResponseError(f"Assistant JSON missing required keys: {', '.join(missing)}")
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _cache_key(payload: dict[str, Any], required_keys: Iterable[str] | None) -> str:
