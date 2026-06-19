@@ -1,6 +1,7 @@
 # 07. 리포트 및 산출물
 
 `src/reports/`와 `src/utils/`는 파이프라인 결과를 CSV/JSON으로 저장하고 관리한다.
+뉴스·공시·뉴스 임팩트 컨텍스트는 표시/검토용이며, `predicted_return`, 순위, 추천, 신호를 바꾸지 않는다.
 
 ## 모듈 구성
 
@@ -10,7 +11,7 @@
 | `result_formatter.py` | 숫자/텍스트 포맷팅 |
 | `pm_report.py` | 포트폴리오 매니저 JSON 리포트 |
 | `run_artifacts.py` | 실행별 아티팩트 디렉터리 관리 |
-| `report_metadata.py` | 실행 메타데이터 생성, KRX 영업일 계산 |
+| `report_metadata.py` | 실행 메타데이터 생성, KRX 영업일/캘린더 커버리지 계산, 산출물 스키마 버전 관리 |
 | `issue_summary.py` | 뉴스/공시 이슈 요약 (OpenAI) |
 | `news_impact_context.py` | 뉴스 임팩트 컨텍스트 병합 |
 | `context_policy.py` | 컨텍스트 날짜 유효성 정책 |
@@ -77,6 +78,7 @@ class RunArtifactManager:
 
 각 실행마다 `result/runs/<run_id>/`를 생성하고, 운영/실데이터 실행만 `latest/`로 승격한다.
 매니페스트의 CSV 항목에는 `row_count`, `columns`, `schema_kind`, `schema_version`이 포함된다.
+`schema_version`은 `report_metadata.ARTIFACT_SCHEMA_VERSIONS`의 산출물별 계약 값을 사용한다.
 
 ## 실행 메타데이터 (`report_metadata.py`)
 
@@ -84,11 +86,16 @@ class RunArtifactManager:
 def generate_run_id() -> str
 def build_report_metadata(run_id, environment, data_mode, ...) -> dict
 def next_krx_business_day(date_str) -> str
+def evaluate_krx_calendar_coverage(reference_date) -> dict
+def artifact_schema_version(schema_kind) -> str
 ```
 
 - `environment`: 샘플 입력이면 `"smoke"`, 실데이터면 `"production"`.
 - `prediction_for_date`: `input_as_of_date`의 다음 KRX 영업일.
 - KRX 영업일 계산은 주말 + 내장 공휴일 표를 사용한다.
+- 메타데이터는 `calendar_status`, `calendar_coverage_end`, `calendar_warnings`를 포함한다.
+- 예측일이 내장 공휴일 표 종료일을 넘으면 `calendar_status="expired"`가 되고, 기존 상태가 `pass`이면 `warning`으로 승격한다.
+- 예측일이 공휴일 표 종료 60일 이내면 `calendar_status="near_expiry"` 경고를 남긴다.
 
 ## PM 리포트 (`pm_report.py`)
 
@@ -138,17 +145,18 @@ def evaluate_context_policy(input_as_of_date, context_date) -> PolicyResult
 
 ---
 
-## 개선 및 수정 제안
+## 반영된 운영 보강
 
-> 우선순위: **P2(운영/유지보수)**.
+> 우선순위: **P2(운영/유지보수)**. 기존 개선 제안은 코드와 테스트에 반영됨.
 
-### P2 — KRX 영업일/공휴일 표 하드코딩
+### P2 — KRX 영업일/공휴일 표 커버리지 경고
 
-- **문제**: `report_metadata.py`의 공휴일 목록이 **2025–2026만** 하드코딩되어 있다. 이 범위를 넘어 운영하면
-  `prediction_for_date`(다음 영업일) 계산이 공휴일을 영업일로 오인할 수 있다.
-- **제안**: KRX 캘린더 패키지나 관리형 거래일 테이블로 이전하고, 표 종료 시점 도달 시 경고를 남긴다.
+- **반영**: `report_metadata.py`가 내장 KRX 공휴일 표 종료일(`calendar_coverage_end`)을 메타데이터에 기록한다.
+- **반영**: 예측일이 종료일을 넘으면 `calendar_status="expired"`, 종료 60일 이내면 `calendar_status="near_expiry"` 경고를 남긴다.
+- **운영 규칙**: `calendar_warnings`가 있으면 공휴일 표를 갱신하거나 관리형 거래일 테이블/외부 KRX 캘린더로 이전한다.
 
 ### P2 — 스키마 버전 변경 시 소비자 동기화
 
-- **제안**: `result_simple.csv`/`pm_report.json` 계약을 바꿀 때 `schema_version`을 올리고 챗봇·BI 소비자 테스트를
-  함께 갱신한다. 신규 소비자는 `latest/`(호환 복사본) 대신 `latest_manifest.json → runs/<run_id>/...`를 우선 사용한다.
+- **반영**: CSV 매니페스트는 `schema_kind`별 `schema_version`을 `ARTIFACT_SCHEMA_VERSIONS`에서 기록한다.
+- **반영**: 테스트가 `result_simple.csv`, `result_detail.csv`, `result_news.csv`, `result_disclosure.csv`의 스키마 계약 기록을 검증한다.
+- **운영 규칙**: `result_simple.csv`/`pm_report.json` 계약을 바꿀 때 관련 `schema_version`을 올리고 챗봇·BI 소비자 테스트를 함께 갱신한다. 신규 소비자는 `latest/`(호환 복사본) 대신 `latest_manifest.json → runs/<run_id>/...`를 우선 사용한다.

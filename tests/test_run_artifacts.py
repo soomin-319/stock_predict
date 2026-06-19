@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from src.reports.report_metadata import ARTIFACT_SCHEMA_VERSIONS
 from src.reports.run_artifacts import RunArtifactManager, resolve_latest_run_dir
 
 
@@ -115,7 +116,15 @@ def test_manifest_csv_artifacts_include_schema_contract(tmp_path: Path):
         for item in manifest["artifacts"]
         if str(item["relative_path"]).endswith(".csv")
     }
-    simple = csv_entries["csv/result_simple.csv"]
-    assert simple["columns"] == ["marker"]
-    assert simple["schema_kind"] == "result_simple"
-    assert simple["schema_version"] == "1.0"
+    expected_schema_kinds = {
+        "csv/result_simple.csv": "result_simple",
+        "csv/result_detail.csv": "result_detail",
+        "csv/result_news.csv": "result_news",
+        "csv/result_disclosure.csv": "result_disclosure",
+    }
+    assert set(csv_entries) == set(expected_schema_kinds)
+    for relative_path, schema_kind in expected_schema_kinds.items():
+        entry = csv_entries[relative_path]
+        assert entry["columns"] == ["marker"]
+        assert entry["schema_kind"] == schema_kind
+        assert entry["schema_version"] == ARTIFACT_SCHEMA_VERSIONS[schema_kind]

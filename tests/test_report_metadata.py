@@ -4,7 +4,12 @@ import json
 from pathlib import Path
 
 from src.reports.pm_report import save_pm_report, validate_pm_report_schema
-from src.reports.report_metadata import build_report_metadata, generate_run_id, next_krx_business_day
+from src.reports.report_metadata import (
+    build_report_metadata,
+    evaluate_krx_calendar_coverage,
+    generate_run_id,
+    next_krx_business_day,
+)
 
 
 def test_report_metadata_contains_required_identity_fields():
@@ -73,3 +78,29 @@ def test_next_krx_business_day_skips_weekends():
 
 def test_next_krx_business_day_skips_korean_holiday_cluster():
     assert next_krx_business_day("2025-10-02") == "2025-10-10"
+
+
+def test_report_metadata_warns_when_krx_calendar_coverage_expired():
+    metadata = build_report_metadata(
+        run_id="run-calendar-expired",
+        environment="production",
+        data_mode="real",
+        input_as_of_date="2026-12-31",
+        prediction_for_date="2027-01-01",
+        context_as_of_date=None,
+        config_payload={},
+    )
+
+    assert metadata["calendar_status"] == "expired"
+    assert metadata["calendar_coverage_end"] == "2026-12-31"
+    assert metadata["calendar_warnings"] == ["krx_calendar_coverage_expired:2026-12-31"]
+    assert metadata["status"] == "warning"
+    assert "krx_calendar_coverage_expired:2026-12-31" in metadata["blocking_reasons"]
+
+
+def test_krx_calendar_coverage_warns_near_expiry():
+    coverage = evaluate_krx_calendar_coverage("2026-12-15")
+
+    assert coverage["status"] == "near_expiry"
+    assert coverage["coverage_end"] == "2026-12-31"
+    assert coverage["warnings"] == ["krx_calendar_coverage_near_expiry:2026-12-31"]
