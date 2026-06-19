@@ -79,7 +79,8 @@ def annotate_market_regime(df) -> pd.DataFrame
 ```
 
 `close_to_ma_20`(추세)과 `vol_20`(변동성)으로 `{uptrend|downtrend|sideways}_{high_vol|low_vol}` 라벨을 만든다.
-이 컬럼(`market_regime`)은 표시·진단용이며 모델 피처가 아니다.
+`Symbol`/`Date`가 있으면 변동성 기준은 종목별 과거+현재 행만 사용하는 확장 75분위이며, 현재 `vol_20`이
+그 기준을 초과하면 `high_vol`로 표시한다. 이 컬럼(`market_regime`)은 표시·진단용이며 모델 피처가 아니다.
 
 ## 투자 지원 플래그 (`investment_signals.py`)
 
@@ -119,22 +120,21 @@ def display_context_columns(df) -> list[str]
 
 ---
 
-## 개선 및 수정 제안
+## 반영 완료된 개선 및 수정
 
-> 우선순위: **P2(성능/명확성)**. 정확성·누수 관련 항목은 현재 코드에서 발견되지 않았다.
+> 우선순위: **P2(성능/명확성)**. 2026-06-19에 아래 두 항목을 반영했다.
 
-### P2 — `_leader_confirmation` 날짜별 파이썬 루프
+### P2 — `_leader_confirmation` 날짜별 파이썬 루프 제거
 
-- **문제**: `investment_signals._leader_confirmation`은 날짜 그룹마다 정렬 후 `.loc` 행 단위 대입으로
-  리더 수익률/확인 플래그를 채운다(`investment_signals.py:42-58`). 종목·일수가 많은 전체 유니버스에서
-  파이썬 루프 오버헤드가 누적된다. (`price_features.build_features`의 `leader_confirmation_flag`는 이미
-  벡터화되어 있어 두 경로의 정의가 중복된다.)
-- **제안**: 날짜 그룹 벡터화(`groupby(...).transform`)로 통일하거나, 빌더에서 이미 만든 값을 재사용해 중복 계산을 제거한다.
+- **반영**: `investment_signals._leader_confirmation`을 안정 정렬 + 날짜별 `groupby` 집계/조인 방식으로
+  벡터화했다. 입력 행 순서는 보존하며 `leader_1/2/3_return`과 `leader_confirmation_flag` 의미는 유지한다.
+- **검증**: `tests/test_investment_signal_features.py`가 행 루프 제거와 날짜 그룹별 리더 값 전파를 확인한다.
 
-### P2 — `market_regime` 변동성 분위수 기준
+### P2 — `market_regime` 변동성 분위수 기준 시점화
 
-- **문제**: `annotate_market_regime`의 `high_vol` 경계가 **전체 프레임의 `vol_20` 75분위**를 사용한다
-  (`regime_features.py:16`). 전 기간/전 종목을 한꺼번에 보는 기준이라 시점별(point-in-time) 국면이 아니다.
-- **영향**: `market_regime`은 모델 피처가 아니라 표시·진단용이므로 예측 누수는 아니다. 다만 라벨 해석 시
-  "현재 시점 기준"이 아님을 유념해야 한다.
-- **제안**: 국면 라벨을 시점 기준으로 쓰려면 롤링 분위수 또는 일자 횡단면 분위수로 정의한다.
+- **반영**: `annotate_market_regime`의 `high_vol` 경계를 전체 프레임 분위수에서 종목별 확장 75분위로
+  바꿨다. `Symbol`/`Date`가 없으면 단일 시계열 확장 75분위를 사용한다.
+- **영향**: `market_regime`은 여전히 표시·진단용이며 모델 피처가 아니다. 다만 라벨은 이제 과거+현재 기준으로
+  해석할 수 있다.
+- **검증**: `tests/test_regime_features.py`가 미래의 큰 변동성 값이 과거 라벨을 바꾸지 않고, 종목별 기준이
+  섞이지 않음을 확인한다.
