@@ -58,4 +58,29 @@ def test_fetch_flow_returns_empty_without_krx_source(monkeypatch):
     out, cov = ic._fetch_flow(["005930.KS"], "2024-01-01", "2024-01-31")
 
     assert out.empty
-    assert cov == {"requested": 1, "successful": 0, "failed": 1}
+    assert cov == {
+        "requested": 1,
+        "successful": 0,
+        "failed": 0,
+        "status": "not_configured",
+        "source": "input_csv_only",
+        "message": "Investor flow source is not configured; using input CSV values only.",
+    }
+
+
+def test_investor_context_preserves_input_flow_columns_and_reports_source():
+    import src.data.investor_context as ic
+
+    df = _sample_df()
+    df["foreign_net_buy"] = [1000, 2000]
+    df["institution_net_buy"] = [3000, 4000]
+
+    out, cov = ic.add_investor_context_with_coverage(
+        df,
+        InvestorContextConfig(enabled=True, enable_disclosure=False),
+    )
+
+    assert out["foreign_net_buy"].tolist() == [1000, 2000]
+    assert out["institution_net_buy"].tolist() == [3000, 4000]
+    assert cov["flow"]["status"] == "not_configured"
+    assert cov["flow"]["source"] == "input_csv_only"

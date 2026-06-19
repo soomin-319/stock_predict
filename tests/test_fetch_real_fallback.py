@@ -1,6 +1,7 @@
 import pandas as pd
 
 from src import pipeline
+from src.data import cli_refresh
 from src.data import fetch_real_data
 from src.data import universe as universe_module
 
@@ -55,15 +56,36 @@ def test_resolve_incremental_fetch_start_respects_later_requested_start(tmp_path
 
 
 def test_resolve_fetch_symbols_uses_universe_csv_when_provided(monkeypatch):
-    monkeypatch.setattr(pipeline, "load_universe_symbols", lambda _p: ["A.KS", "B.KS"])
+    monkeypatch.setattr(pipeline, "load_universe_symbols_list", lambda _p: ["A.KS", "B.KS"])
 
     symbols = pipeline._resolve_fetch_symbols(None, "dummy_universe.csv", "data/real_ohlcv.csv")
 
     assert symbols == ["A.KS", "B.KS"]
 
 
+def test_data_resolve_fetch_symbols_preserves_universe_csv_order(tmp_path):
+    ordered_symbols = [
+        "000018.KS",
+        "000011.KS",
+        "000066.KS",
+        "000009.KS",
+        "009420.KS",
+        "005930.KS",
+        "000660.KS",
+        "035420.KS",
+        "352820.KS",
+        "247540.KS",
+    ]
+    universe_csv = tmp_path / "universe.csv"
+    pd.DataFrame({"Symbol": ordered_symbols}).to_csv(universe_csv, index=False, encoding="utf-8-sig")
+
+    symbols = cli_refresh.resolve_fetch_symbols(None, str(universe_csv), "data/real_ohlcv.csv")
+
+    assert symbols == ordered_symbols
+
+
 def test_resolve_fetch_symbols_falls_back_to_default_when_universe_load_fails(monkeypatch):
-    monkeypatch.setattr(pipeline, "load_universe_symbols", lambda _p: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(pipeline, "load_universe_symbols_list", lambda _p: (_ for _ in ()).throw(RuntimeError("boom")))
     monkeypatch.setattr(pipeline, "_fallback_symbols_from_input_or_default", lambda _p: ["005930.KS"])
 
     symbols = pipeline._resolve_fetch_symbols(None, "dummy_universe.csv", "data/real_ohlcv.csv")

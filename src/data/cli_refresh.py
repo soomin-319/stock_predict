@@ -6,7 +6,7 @@ from typing import Callable
 
 import pandas as pd
 
-from src.data.universe import load_default_universe_symbols, load_universe_symbols
+from src.data.universe import load_default_universe_symbols, load_universe_symbols_list
 
 
 def fallback_symbols_from_input_or_default(input_csv: str, limit: int = 0) -> list[str]:
@@ -23,7 +23,7 @@ def resolve_fetch_symbols(
     universe_csv: str | None,
     input_csv: str,
     *,
-    universe_loader: Callable[[str], list[str]] = load_universe_symbols,
+    universe_loader: Callable[[str], list[str]] = load_universe_symbols_list,
     fallback_loader: Callable[[str], list[str]] = fallback_symbols_from_input_or_default,
 ) -> list[str]:
     symbols = real_symbols
