@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Protocol
 from urllib import error as urlerror, request
@@ -39,7 +40,11 @@ LLM_CACHE_SCHEMA = "stock-news-impact.llm_cache.v1"
 
 
 class LLMResponseCache(Protocol):
-    def get(self, key: str) -> dict[str, Any] | None:
+    def get(
+        self,
+        key: str,
+        expected_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         ...
 
     def set(
@@ -52,11 +57,22 @@ class LLMResponseCache(Protocol):
 
 
 class FileLLMResponseCache:
-    def __init__(self, root: str | Path) -> None:
+    def __init__(
+        self,
+        root: str | Path,
+        ttl_seconds: float | None = None,
+        max_entries: int | None = None,
+    ) -> None:
         self._root = Path(root)
+        self._ttl_seconds = ttl_seconds
+        self._max_entries = max_entries
         self._root.mkdir(parents=True, exist_ok=True)
 
-    def get(self, key: str) -> dict[str, Any] | None:
+    def get(
+        self,
+        key: str,
+        expected_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         path = self._path(key)
         if not path.exists():
             return None
@@ -66,7 +82,14 @@ class FileLLMResponseCache:
         if payload.get("schema") == LLM_CACHE_SCHEMA and isinstance(
             payload.get("response"), dict
         ):
+            metadata = payload.get("metadata")
+            if self._is_expired(metadata):
+                return None
+            if not self._metadata_matches(metadata, expected_metadata):
+                return None
             return payload["response"]
+        if expected_metadata:
+            return None
         return payload
 
     def set(
@@ -79,9 +102,11 @@ class FileLLMResponseCache:
         if metadata is None:
             stored: dict[str, Any] = value
         else:
+            metadata = dict(metadata)
+            metadata.setdefault("cached_at", datetime.now(timezone.utc).isoformat())
             stored = {
                 "schema": LLM_CACHE_SCHEMA,
-                "metadata": dict(metadata),
+                "metadata": metadata,
                 "response": value,
             }
         atomic_write_text(
@@ -89,9 +114,51 @@ class FileLLMResponseCache:
             json.dumps(stored, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        self._prune_entries()
 
     def _path(self, key: str) -> Path:
         return self._root / f"{key}.json"
+
+    def _prune_entries(self) -> None:
+        if self._max_entries is None:
+            return
+        files = sorted(
+            self._root.glob("*.json"),
+            key=lambda path: (path.stat().st_mtime_ns, path.name),
+        )
+        overflow_count = len(files) - self._max_entries
+        if overflow_count <= 0:
+            return
+        for path in files[:overflow_count]:
+            path.unlink(missing_ok=True)
+
+    def _is_expired(self, metadata: object) -> bool:
+        if self._ttl_seconds is None:
+            return False
+        if not isinstance(metadata, dict):
+            return False
+        cached_at = metadata.get("cached_at")
+        if not isinstance(cached_at, str):
+            return False
+        try:
+            cached_at_dt = datetime.fromisoformat(cached_at)
+        except ValueError:
+            return False
+        if cached_at_dt.tzinfo is None:
+            cached_at_dt = cached_at_dt.replace(tzinfo=timezone.utc)
+        age_seconds = (datetime.now(timezone.utc) - cached_at_dt).total_seconds()
+        return age_seconds > self._ttl_seconds
+
+    def _metadata_matches(
+        self,
+        metadata: object,
+        expected_metadata: dict[str, Any] | None,
+    ) -> bool:
+        if not expected_metadata:
+            return True
+        if not isinstance(metadata, dict):
+            return False
+        return all(metadata.get(key) == value for key, value in expected_metadata.items())
 
 
 class UrllibJsonTransport:
@@ -184,8 +251,9 @@ class LlamaCppClient:
             payload["response_format"] = {"type": "json_object"}
 
         cache_key = _cache_key(payload, required_keys)
+        cache_metadata = self._cache_metadata(system_prompt, user_prompt, required_keys)
         if self._cache is not None:
-            cached = self._cache.get(cache_key)
+            cached = self._cache.get(cache_key, expected_metadata=cache_metadata)
             if cached is not None:
                 _validate_required_keys(cached, required_keys)
                 return cached
@@ -208,9 +276,7 @@ class LlamaCppClient:
                     self._cache.set(
                         cache_key,
                         parsed,
-                        metadata=self._cache_metadata(
-                            system_prompt, user_prompt, required_keys
-                        ),
+                        metadata=cache_metadata,
                     )
                 return parsed
             except LLMResponseError as error:

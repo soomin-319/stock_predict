@@ -143,12 +143,14 @@ stock-news-impact `
 
 ---
 
-## 개선 및 수정 제안
+## Improvement and Fix Proposals
 
-> 우선순위: **P2(운영)**.
+> Priority: **P2 (operations)**.
 
-### P2 — LLM 응답 캐시 수명 관리
-
-- **문제**: `FileLLMResponseCache`는 만료/버전 무효화 정책이 없어 캐시 디렉터리가 무한히 증가하고,
-  프롬프트/모델 변경 후에도 옛 응답이 남을 수 있다.
-- **제안**: 캐시 정리(TTL/최대 크기) 및 `prompt_hash`/`model` 불일치 시 무효화 규칙을 정의한다.
+### P2 - LLM response cache lifecycle management
+- **Problem**: `FileLLMResponseCache` previously had no expiration or invalidation policy, so cache directories could grow indefinitely and stale responses could remain after prompt/model changes.
+- **Implemented**:
+  - `ttl_seconds` expires enveloped cache entries from `metadata.cached_at`.
+  - `expected_metadata` treats `prompt_hash`, `article_hash`, `model`, `temperature`, and `required_keys` mismatches as cache misses.
+  - `max_entries` prunes the oldest JSON files when the cache exceeds the configured entry limit.
+  - Legacy bare dict cache entries remain readable when callers do not request `expected_metadata` validation.
