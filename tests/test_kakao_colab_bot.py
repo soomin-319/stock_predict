@@ -2050,14 +2050,14 @@ def test_recommendation_keyword_returns_realtime_recommendations(tmp_path: Path)
     bot.recommendation_service = fake_service
 
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "추천", "user": {"id": "u-rec"}}})
-    text = response["template"]["outputs"][0]["simpleText"]["text"]
+    card = response["template"]["outputs"][0]["listCard"]
 
     assert fake_service.calls == 1
     assert fake_service.last_top_n is None
     assert fake_service.last_min_final_score == 200
-    assert "[실시간 추천]" in text
-    assert "1위 삼성전자(005930)" in text
-    assert "점수: 200" in text
+    assert card["header"]["title"] == "실시간 추천"
+    assert card["items"][0]["title"] == "1. 삼성전자"
+    assert card["items"][0]["description"] == "005930 | 점수 200"
     log_files = list((tmp_path / "result" / "runtime" / "logs").glob("recommendation_*.log"))
     assert len(log_files) == 1
     log_text = log_files[0].read_text(encoding="utf-8")
