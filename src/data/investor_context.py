@@ -49,9 +49,15 @@ def _empty_context(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
 
 def _fetch_flow(symbols: list[str], start: str, end: str) -> tuple[pd.DataFrame, dict]:
-    coverage = {"requested": len(symbols), "successful": 0, "failed": 0}
+    coverage = {
+        "requested": len(symbols),
+        "successful": 0,
+        "failed": 0,
+        "status": "not_configured",
+        "source": "input_csv_only",
+        "message": "Investor flow source is not configured; using input CSV values only.",
+    }
     _ = (start, end)
-    coverage["failed"] = len(symbols)
     return pd.DataFrame(columns=["Date", "Symbol", "foreign_net_buy", "institution_net_buy"]), coverage
 
 

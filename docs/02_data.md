@@ -141,19 +141,17 @@ def collect_context_raw_events(symbols, start, end, ...) -> pd.DataFrame | tuple
 
 > 우선순위: **P0(정확성/버그) > P1(견고성/기능 공백) > P2(품질/결정성)**.
 
-### P1 — 투자자 수급(`_fetch_flow`)이 항상 실패하는 스텁
+### P1 — 투자자 수급(`_fetch_flow`) 외부 소스 미연결 상태 명시
 
-- **문제**: `add_investor_context_with_coverage`가 호출하는 `_fetch_flow`(`investor_context.py:51`)는 인자를
-  무시하고 빈 프레임 + `failed=len(symbols)`를 반환하는 스텁이다. 따라서 외국인/기관 순매수
+- **상태**: 반영됨. `_fetch_flow`는 외부 수급 소스가 아직 연결되지 않았음을
+  `status="not_configured"`, `source="input_csv_only"`로 `investor_context_coverage.flow`에 노출한다.
+- **남은 공백**: 실제 수급 소스(KRX/데이터벤더)는 아직 연결되어 있지 않다. 따라서 외국인/기관 순매수
   (`foreign_net_buy`, `institution_net_buy`)는 **입력 CSV가 직접 제공하지 않는 한 항상 0**이다.
   이 값에 의존하는 피처(`smart_money_*`, `foreign/institution_buy_*`, 고확신 순매수 플래그)와 이벤트 부스트가
   중립으로 고정된다.
-- **제안**: 실제 수급 소스(예: KRX/데이터벤더)를 연결하거나, 연결 전까지 `--fetch-investor-context` 사용 시
-  수급 컬럼이 입력 CSV에서만 채워진다는 점을 리포트 `investor_context_coverage`에 명시적으로 노출한다.
+- **다음 제안**: 실제 수급 소스(예: KRX/데이터벤더)를 연결한다.
 
 ### P2 — 수집 심볼 순서 비결정성
 
-- **문제**: `resolve_fetch_symbols`의 기본 `universe_loader`가 `load_universe_symbols`(=`set` 반환)이다
-  (`cli_refresh.py:26`). 집합은 순서가 비결정적이라 다운로드 순서·로그·부분 실패 재현이 달라질 수 있다.
-  순서를 보존하는 `load_universe_symbols_list`가 이미 존재한다.
-- **제안**: 기본 로더를 `load_universe_symbols_list`로 교체해 수집 순서를 결정적으로 만든다.
+- **상태**: 반영됨. `resolve_fetch_symbols`의 기본 `universe_loader`와 파이프라인 위임 로더를
+  `load_universe_symbols_list`로 교체해 다운로드 순서·로그·부분 실패 재현을 결정적으로 만든다.

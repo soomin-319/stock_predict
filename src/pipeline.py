@@ -39,7 +39,7 @@ from src.data.fetch_real_data import (
 from src.data.krx_universe import get_symbol_name_map
 from src.data.loaders import load_ohlcv_csv
 from src.data.investor_context import InvestorContextConfig, add_investor_context_with_coverage, collect_context_raw_events
-from src.data.universe import filter_by_universe, load_universe_symbols
+from src.data.universe import filter_by_universe, load_universe_symbols_list
 from src.domain.signal_policy import (
     recommendation_from_signal as domain_recommendation_from_signal,
     vectorized_event_signal_boost,
@@ -116,7 +116,7 @@ def _resolve_fetch_symbols(real_symbols: list[str] | None, universe_csv: str | N
         real_symbols,
         universe_csv,
         input_csv,
-        universe_loader=load_universe_symbols,
+        universe_loader=load_universe_symbols_list,
         fallback_loader=_fallback_symbols_from_input_or_default,
     )
 

@@ -175,9 +175,12 @@ Get-Content -Encoding utf8 result/latest/manifest.json
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [Operations](docs/OPERATIONS.md)
+문서는 기능 영역별로 `docs/`에 정리되어 있다. 전체 목록과 모듈 매핑은 [문서 인덱스](docs/INDEX.md)를 참조한다.
+
+- [문서 인덱스](docs/INDEX.md) — 기능별 문서 진입점
+- [파이프라인 흐름](docs/01_pipeline.md) · [데이터](docs/02_data.md) · [피처](docs/03_features.md) · [모델](docs/04_model.md)
+- [검증·백테스트](docs/05_validation.md) · [시그널 정책](docs/06_signal_policy.md) · [리포트·산출물](docs/07_reports.md)
+- [뉴스 임팩트](docs/08_news_impact.md) · [챗봇](docs/09_chatbot.md) · [설정](docs/10_config.md)
 - [Roadmap](docs/ROADMAP.md)
-- [Feature overview](docs/PROJECT_FEATURES_OVERVIEW.md)
-- [External data integration](docs/EXTERNAL_DATA_INTEGRATION_GUIDE.md)
-- [Prediction formulas](docs/PREDICTION_FORMULAS.md)
+
+과거 분석·제안·리뷰 및 numbered 세트로 대체된 구 가이드는 [`docs/archive/`](docs/archive/)에 보관한다.
