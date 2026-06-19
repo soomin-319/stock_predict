@@ -1,6 +1,9 @@
+import inspect
+
 import pandas as pd
 
 from src.config.settings import InvestmentCriteriaConfig
+from src.features import investment_signals
 from src.features.investment_signals import add_investment_signal_features
 
 
@@ -68,3 +71,35 @@ def test_add_investment_signal_features_handles_missing_columns_without_crashing
     assert "is_top_turnover_15" in out.columns
     assert "dual_high_conviction_buy_flag" in out.columns
     assert "nasdaq_headwind_flag" in out.columns
+
+
+def test_leader_confirmation_is_vectorized_without_group_item_loop():
+    source = inspect.getsource(investment_signals._leader_confirmation)
+
+    assert ".groups.items()" not in source
+    assert "for _, idx in out.groupby" not in source
+
+
+def test_leader_confirmation_populates_group_values_without_reordering_rows():
+    cfg = InvestmentCriteriaConfig(leader_top_n=3, leader_min_co_movers=2, leader_min_return=0.02)
+    df = pd.DataFrame(
+        [
+            {"Date": "2026-03-29", "Symbol": "D", "turnover_rank_daily": 4, "daily_return": -0.01},
+            {"Date": "2026-03-28", "Symbol": "B", "turnover_rank_daily": 2, "daily_return": 0.03},
+            {"Date": "2026-03-28", "Symbol": "A", "turnover_rank_daily": 1, "daily_return": 0.08},
+            {"Date": "2026-03-28", "Symbol": "C", "turnover_rank_daily": 3, "daily_return": 0.01},
+            {"Date": "2026-03-29", "Symbol": "E", "turnover_rank_daily": 1, "daily_return": 0.01},
+            {"Date": "2026-03-29", "Symbol": "F", "turnover_rank_daily": 2, "daily_return": 0.04},
+        ]
+    )
+
+    out = add_investment_signal_features(df, cfg)
+
+    assert out["Symbol"].tolist() == df["Symbol"].tolist()
+    day1 = out[out["Date"] == "2026-03-28"]
+    assert day1["leader_1_return"].tolist() == [0.08, 0.08, 0.08]
+    assert day1["leader_2_return"].tolist() == [0.03, 0.03, 0.03]
+    assert day1["leader_3_return"].tolist() == [0.01, 0.01, 0.01]
+    assert day1["leader_confirmation_flag"].tolist() == [1, 1, 1]
+    day2 = out[out["Date"] == "2026-03-29"]
+    assert day2["leader_confirmation_flag"].tolist() == [0, 0, 0]

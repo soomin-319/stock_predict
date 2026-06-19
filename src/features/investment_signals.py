@@ -39,28 +39,30 @@ def _leader_confirmation(df: pd.DataFrame, cfg: InvestmentCriteriaConfig) -> pd.
     min_co_movers = max(1, int(cfg.leader_min_co_movers))
     min_ret = float(cfg.leader_min_return)
 
-    for _, idx in out.groupby("Date").groups.items():
-        date_idx = list(idx)
-        ordered = sorted(date_idx, key=lambda i: (rank.loc[i], -ret.loc[i]))
-        top = ordered[:leader_top_n]
-        if not top:
-            continue
-        top_returns = [float(ret.loc[i]) for i in top]
-        leader_1_ret = top_returns[0]
-        leader_2_ret = top_returns[1] if len(top_returns) > 1 else 0.0
-        leader_3_ret = top_returns[2] if len(top_returns) > 2 else 0.0
-        co_mover_count = sum(1 for r in top_returns if r > min_ret)
-        confirmed = int(leader_1_ret > min_ret and co_mover_count >= min_co_movers)
-        for i in date_idx:
-            leader_1.loc[i] = leader_1_ret
-            leader_2.loc[i] = leader_2_ret
-            leader_3.loc[i] = leader_3_ret
-            leader_confirm.loc[i] = confirmed
+    work = pd.DataFrame({"Date": out["Date"], "ret": ret, "rank": rank}, index=out.index)
+    work = work.sort_values(["Date", "rank", "ret"], ascending=[True, True, False], kind="mergesort")
+    top = work.groupby("Date", sort=False).head(leader_top_n).copy()
+    top["leader_pos"] = top.groupby("Date", sort=False).cumcount() + 1
 
-    out["leader_1_return"] = leader_1
-    out["leader_2_return"] = leader_2
-    out["leader_3_return"] = leader_3
-    out["leader_confirmation_flag"] = leader_confirm
+    leader_returns = top.pivot_table(index="Date", columns="leader_pos", values="ret", aggfunc="first")
+    leader_returns = leader_returns.rename(columns={1: "leader_1_return", 2: "leader_2_return", 3: "leader_3_return"})
+    for col in ("leader_1_return", "leader_2_return", "leader_3_return"):
+        if col not in leader_returns.columns:
+            leader_returns[col] = 0.0
+    leader_returns = leader_returns[["leader_1_return", "leader_2_return", "leader_3_return"]].fillna(0.0)
+
+    co_movers = top.assign(is_co_mover=(top["ret"] > min_ret).astype(int)).groupby("Date", sort=False)[
+        "is_co_mover"
+    ].sum()
+    leader_returns["leader_confirmation_flag"] = (
+        (leader_returns["leader_1_return"] > min_ret) & (co_movers >= min_co_movers)
+    ).astype(int)
+
+    mapped = work[["Date"]].join(leader_returns, on="Date").reindex(out.index)
+    out["leader_1_return"] = mapped["leader_1_return"].fillna(0.0).astype(float)
+    out["leader_2_return"] = mapped["leader_2_return"].fillna(0.0).astype(float)
+    out["leader_3_return"] = mapped["leader_3_return"].fillna(0.0).astype(float)
+    out["leader_confirmation_flag"] = mapped["leader_confirmation_flag"].fillna(0).astype(int)
     return out
 
 
