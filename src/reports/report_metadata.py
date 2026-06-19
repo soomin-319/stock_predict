@@ -4,11 +4,19 @@ import hashlib
 import json
 import subprocess
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = "1.0"
+KRX_CALENDAR_EXPIRY_WARNING_DAYS = 60
+
+ARTIFACT_SCHEMA_VERSIONS = {
+    "result_simple": SCHEMA_VERSION,
+    "result_detail": SCHEMA_VERSION,
+    "result_news": SCHEMA_VERSION,
+    "result_disclosure": SCHEMA_VERSION,
+}
 
 KOREA_MARKET_HOLIDAYS = {
     "2025-01-01",
@@ -43,6 +51,59 @@ KOREA_MARKET_HOLIDAYS = {
     "2026-12-25",
     "2026-12-31",
 }
+KOREA_MARKET_HOLIDAY_COVERAGE_END = max(KOREA_MARKET_HOLIDAYS)
+
+
+def _parse_iso_date(value: str | datetime | None) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw[:10]).date()
+    except ValueError:
+        return None
+
+
+def artifact_schema_version(schema_kind: str) -> str:
+    return ARTIFACT_SCHEMA_VERSIONS.get(str(schema_kind), SCHEMA_VERSION)
+
+
+def evaluate_krx_calendar_coverage(reference_date: str | datetime | None) -> dict[str, Any]:
+    coverage_end = _parse_iso_date(KOREA_MARKET_HOLIDAY_COVERAGE_END)
+    reference = _parse_iso_date(reference_date)
+    if coverage_end is None or reference is None:
+        return {
+            "status": "unknown",
+            "coverage_end": KOREA_MARKET_HOLIDAY_COVERAGE_END,
+            "warnings": [],
+        }
+
+    if reference > coverage_end:
+        warning = f"krx_calendar_coverage_expired:{KOREA_MARKET_HOLIDAY_COVERAGE_END}"
+        return {
+            "status": "expired",
+            "coverage_end": KOREA_MARKET_HOLIDAY_COVERAGE_END,
+            "warnings": [warning],
+        }
+
+    days_remaining = (coverage_end - reference).days
+    if days_remaining <= KRX_CALENDAR_EXPIRY_WARNING_DAYS:
+        warning = f"krx_calendar_coverage_near_expiry:{KOREA_MARKET_HOLIDAY_COVERAGE_END}"
+        return {
+            "status": "near_expiry",
+            "coverage_end": KOREA_MARKET_HOLIDAY_COVERAGE_END,
+            "warnings": [warning],
+        }
+
+    return {
+        "status": "ok",
+        "coverage_end": KOREA_MARKET_HOLIDAY_COVERAGE_END,
+        "warnings": [],
+    }
 
 
 def generate_run_id(now: datetime | None = None) -> str:
@@ -51,19 +112,9 @@ def generate_run_id(now: datetime | None = None) -> str:
 
 
 def next_krx_business_day(input_as_of_date: str | datetime | None) -> str | None:
-    if input_as_of_date is None:
+    current = _parse_iso_date(input_as_of_date)
+    if current is None:
         return None
-    if isinstance(input_as_of_date, datetime):
-        current = input_as_of_date.date()
-    else:
-        raw = str(input_as_of_date).strip()
-        if not raw:
-            return None
-        normalized = raw[:10]
-        try:
-            current = datetime.fromisoformat(normalized).date()
-        except ValueError:
-            return None
     candidate = current + timedelta(days=1)
     while candidate.weekday() >= 5 or candidate.isoformat() in KOREA_MARKET_HOLIDAYS:
         candidate += timedelta(days=1)
@@ -102,6 +153,12 @@ def build_report_metadata(
     project_root: Path | None = None,
 ) -> dict[str, Any]:
     root = project_root or Path(__file__).resolve().parents[2]
+    calendar_coverage = evaluate_krx_calendar_coverage(prediction_for_date or input_as_of_date)
+    calendar_warnings = list(calendar_coverage["warnings"])
+    merged_reasons = list(dict.fromkeys([*blocking_reasons, *calendar_warnings]))
+    report_status = str(status)
+    if report_status == "pass" and calendar_warnings:
+        report_status = "warning"
     return {
         "schema_version": SCHEMA_VERSION,
         "run_id": str(run_id),
@@ -113,15 +170,23 @@ def build_report_metadata(
         "context_as_of_date": context_as_of_date,
         "git_commit": detect_git_commit(root),
         "config_hash": hash_config(config_payload),
-        "status": str(status),
-        "blocking_reasons": list(blocking_reasons),
+        "status": report_status,
+        "blocking_reasons": merged_reasons,
+        "calendar_status": calendar_coverage["status"],
+        "calendar_coverage_end": calendar_coverage["coverage_end"],
+        "calendar_warnings": calendar_warnings,
     }
 
 
 __all__ = [
+    "ARTIFACT_SCHEMA_VERSIONS",
+    "KOREA_MARKET_HOLIDAY_COVERAGE_END",
+    "KRX_CALENDAR_EXPIRY_WARNING_DAYS",
     "SCHEMA_VERSION",
+    "artifact_schema_version",
     "build_report_metadata",
     "detect_git_commit",
+    "evaluate_krx_calendar_coverage",
     "generate_run_id",
     "hash_config",
     "next_krx_business_day",

@@ -12,7 +12,7 @@ from typing import Any
 import pandas as pd
 
 from src.reports.output import safe_to_csv
-from src.reports.report_metadata import SCHEMA_VERSION
+from src.reports.report_metadata import artifact_schema_version
 from src.utils.atomic_files import atomic_write_text
 
 REQUIRED_ARTIFACTS = (
@@ -71,7 +71,7 @@ def _artifact_entries(run_dir: Path) -> list[dict[str, Any]]:
             entry["row_count"] = _csv_row_count(path)
             entry["columns"] = _csv_columns(path) or []
             entry["schema_kind"] = path.stem
-            entry["schema_version"] = SCHEMA_VERSION
+            entry["schema_version"] = artifact_schema_version(path.stem)
         entries.append(entry)
     return entries
 
