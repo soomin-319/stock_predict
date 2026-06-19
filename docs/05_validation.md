@@ -133,8 +133,13 @@ signal_score(점수 산식)
 
 - 튜닝셋 내부를 **시계열로 다시 분할**(`_time_split`, 70:30)해 train에서 점수를 만들고 valid 성능으로 선택한다.
 - 격자: `return_weight ∈ {0.3,0.45,0.6,0.65}`, `up_prob_weight ∈ {0.20,0.35,0.50}`, `uncertainty_penalty ∈ {0.15,0.25,0.35}`.
-- 동률 시 기본값(`return_weight=0.65, up_prob_weight=0.35, uncertainty_penalty=0.25`)에 가까운 단순한 조합을 선호.
+- 목적함수는 상위 10% 평균 로그수익률에 **랭크 IC 보너스**와 **선택 종목 하방 패널티**를 더한 복합 점수다.
+- train/valid 복합 점수 갭이 과도하고 기본값의 valid 점수가 충분히 근접하면
+  기본값(`return_weight=0.65, up_prob_weight=0.35, uncertainty_penalty=0.25`)으로 후퇴한다.
+- 동률 시 기본값에 가까운 단순한 조합을 선호.
 - 결과에 `train/validation_top_decile_return`과 `top_decile_generalization_gap`을 포함해 과적합 정도를 노출한다.
+  또한 `train/validation_rank_ic`, `train/validation_objective_score`, `objective_generalization_gap`,
+  `overfit_fallback_applied`를 함께 노출한다.
 
 ## 백테스트 유효성 (`result_validity.py`)
 
@@ -149,14 +154,11 @@ def evaluate_backtest_validity(backtest, tradable_count) -> dict
 
 ---
 
-## 개선 및 수정 제안
+## 개선 및 수정 반영 현황
 
-> 기존 분석의 P1 항목(시그널 튜닝 과적합/탐색 빈약, 백테스트 로그/단순수익률 혼용·등가중 가정,
-> 비용 시나리오 평탄 복리 근사, 폴드 슬라이스 직렬화 비용)은 모두 현재 코드에 반영되었다. 남은 항목은 다음 한 가지다.
+기존 분석의 P1 항목(시그널 튜닝 과적합/탐색 빈약, 백테스트 로그/단순수익률 혼용·등가중 가정,
+비용 시나리오 평탄 복리 근사, 폴드 슬라이스 직렬화 비용)은 모두 현재 코드에 반영되었다.
 
-### P2 — 튜닝 목적함수의 단순성
-
-- **문제**: `tune_signal_weights`는 valid 분할의 **상위 10% 평균 로그수익률**만 최대화한다. 시계열 분할과
-  일반화 갭 보고로 과적합은 완화됐지만, 거래비용·랭크 IC·하방 리스크는 목적함수에 들어가지 않는다.
-- **제안**: 비용 차감 후 수익률 또는 랭크 IC를 보조 목적으로 추가하고, 선택 가중치의 in/out 성능 차가 큰 경우
-  기본값으로 후퇴하는 가드를 둔다.
+P2 항목(튜닝 목적함수의 단순성)도 반영되었다. `tune_signal_weights`는 이제 상위 10% 평균 로그수익률만 보지 않고,
+랭크 IC와 선택 종목 하방 리스크를 함께 평가한다. 또한 train/valid 복합 점수 갭이 큰 경우 기본 가중치로 후퇴해
+검증 분할에 우연히 맞춘 조합이 운영 가중치로 반영되는 위험을 줄인다.
