@@ -7,18 +7,28 @@ from src.news_impact.llm_config import LLMConfig, load_llm_config
 from src.news_impact.llm_smoke import check_llama_cpp_prerequisites
 
 
-def test_news_impact_llm_default_uses_openai_without_hardcoded_api_key():
+def _openai_config(**overrides) -> LLMConfig:
+    return replace(
+        LLMConfig.default(),
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-5-mini",
+        **overrides,
+    )
+
+
+def test_news_impact_llm_default_uses_local_gemma_without_api_key():
     config = LLMConfig.default()
 
-    assert config.provider == "openai"
-    assert config.base_url == "https://api.openai.com/v1"
-    assert config.model == "gpt-5-mini"
+    assert config.provider == "llama_cpp"
+    assert config.base_url == "http://localhost:8001/v1"
+    assert config.model == "gemma-4-26b-a4b"
     assert config.api_key is None
 
 
 def test_news_impact_llm_config_reads_openai_api_key_from_environment(tmp_path, monkeypatch):
     config_path = tmp_path / "news_impact.json"
-    config_path.write_text(json.dumps({}), encoding="utf-8")
+    config_path.write_text(json.dumps({"llm_provider": "openai"}), encoding="utf-8")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-colab")
 
     config = load_llm_config(config_path)
@@ -50,7 +60,7 @@ def test_news_impact_llm_config_keeps_gemma_as_optional_provider_config(tmp_path
 
 def test_news_impact_openai_api_key_env_has_priority_over_llm_api_key(tmp_path, monkeypatch):
     config_path = tmp_path / "news_impact.json"
-    config_path.write_text(json.dumps({}), encoding="utf-8")
+    config_path.write_text(json.dumps({"llm_provider": "openai"}), encoding="utf-8")
     monkeypatch.setenv("LLM_API_KEY", "sk-generic")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
 
@@ -92,7 +102,7 @@ def test_urllib_transport_sends_openai_authorization_header(monkeypatch):
 
 
 def test_openai_preflight_uses_environment_key_not_local_llama_runtime():
-    config = replace(LLMConfig.default(), api_key="sk-colab")
+    config = _openai_config(api_key="sk-colab")
 
     result = check_llama_cpp_prerequisites(
         config,
@@ -107,7 +117,7 @@ def test_openai_preflight_uses_environment_key_not_local_llama_runtime():
 
 def test_openai_preflight_reports_missing_api_key_without_llama_requirements():
     result = check_llama_cpp_prerequisites(
-        LLMConfig.default(),
+        _openai_config(),
         command_lookup=lambda command: None,
         port_probe=lambda host, port, timeout: False,
     )

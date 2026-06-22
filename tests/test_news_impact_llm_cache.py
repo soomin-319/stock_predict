@@ -115,7 +115,7 @@ def test_chat_json_records_reproducibility_metadata_in_cache(tmp_path: Path):
     assert len(files) == 1
     stored = json.loads(files[0].read_text(encoding="utf-8"))
     meta = stored["metadata"]
-    assert meta["model"] == "gpt-5-mini"
+    assert meta["model"] == "gemma-4-26b-a4b"
     assert meta["temperature"] == 0.1
     assert meta["prompt_hash"] == sha256_text("SYSTEM PROMPT")
     assert meta["article_hash"] == sha256_text("USER PROMPT")

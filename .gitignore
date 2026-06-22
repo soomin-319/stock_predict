@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .pytest_basetemp/
 .pytest_tmp/
+.pytest_basetemp/
 *.egg-info/
 
 # Secrets & credentials
@@ -25,6 +26,10 @@ figures/
 figures_*/
 models/
 *.log
+
+# Local LLM model weights (large binaries, never commit)
+models/
+*.gguf
 
 # IDE / OS
 .vscode/

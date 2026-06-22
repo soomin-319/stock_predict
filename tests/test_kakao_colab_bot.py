@@ -1470,7 +1470,7 @@ def test_launch_colab_kakao_bot_starts_bootstrap_after_server_start(monkeypatch,
     )
 
     launched = launch_colab_kakao_bot(
-        runtime_config=PipelineRuntimeConfig(project_root=tmp_path, prewarm_default_predictions=True),
+        runtime_config=PipelineRuntimeConfig(project_root=tmp_path, prewarm_default_predictions=True, bootstrap_on_launch=True),
         tunnel_config=PyngrokTunnelConfig(port=8000),
     )
 
@@ -2088,3 +2088,101 @@ def test_guide_response_includes_recommendation_quick_reply(tmp_path: Path):
     response = bot.handle_kakao_payload({"userRequest": {"utterance": "도움말", "user": {"id": "u-guide-rec"}}})
 
     assert any(reply["messageText"] == "추천" for reply in response["template"]["quickReplies"])
+
+
+def test_build_command_includes_llm_config_when_enabled():
+    cfg = PipelineRuntimeConfig(news_impact_llm_config="configs/news_impact.gemma.example.json")
+    cmd = cfg.build_command("005930.KS", enable_news_impact_llm=True)
+    assert "--news-impact-llm-config" in cmd
+    assert "configs/news_impact.gemma.example.json" in cmd
+
+
+def test_build_command_excludes_llm_config_when_disabled():
+    cfg = PipelineRuntimeConfig(news_impact_llm_config="configs/news_impact.gemma.example.json")
+    cmd = cfg.build_command("005930.KS", enable_news_impact_llm=False)
+    assert "--news-impact-llm-config" not in cmd
+
+
+def test_build_command_excludes_llm_config_when_unset():
+    cfg = PipelineRuntimeConfig(news_impact_llm_config=None)
+    cmd = cfg.build_command("005930.KS", enable_news_impact_llm=True)
+    assert "--news-impact-llm-config" not in cmd
+
+
+def test_runtime_config_defaults_disable_bootstrap():
+    cfg = PipelineRuntimeConfig()
+    assert cfg.bootstrap_on_launch is False
+    assert cfg.prewarm_default_predictions is False
+    assert cfg.bootstrap_default_symbols is False
+    assert cfg.published_dir == "published/latest"
+    assert cfg.input_csv == "result/session/session_ohlcv.csv"
+
+
+def test_is_bootstrap_required_always_false(tmp_path):
+    cfg = PipelineRuntimeConfig(project_root=tmp_path)
+    bot = KakaoColabPredictionBot(
+        runtime_config=cfg,
+        result_simple_path="result/result_simple.csv",
+        state_path="result/runtime/jobs.json",
+        session_path="result/runtime/sessions.json",
+    )
+    assert bot._is_bootstrap_required() is False
+
+
+def _write_simple_csv(path: Path, rows: list[tuple[str, str, str]]):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # 세션 로더의 스키마 검증을 통과하도록 필수 컬럼을 모두 채운다.
+    header = "종목코드,종목명,권고,내일 예상 종가,내일 예상 수익률(%),상승확률(%),예측 신뢰도"
+    lines = [header]
+    lines += [
+        f"{code},{name},{rec},70000,1.0%,60.0%,70.0%" for code, name, rec in rows
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
+
+
+def _make_overlay_bot(tmp_path: Path) -> KakaoColabPredictionBot:
+    cfg = PipelineRuntimeConfig(project_root=tmp_path, published_dir="published/latest")
+    # published 베이스라인: 2종목
+    _write_simple_csv(
+        tmp_path / "published" / "latest" / "csv" / "result_simple.csv",
+        [("005930", "삼성전자", "관망"), ("000660", "SK하이닉스", "매수")],
+    )
+    bot = KakaoColabPredictionBot(
+        runtime_config=cfg,
+        result_simple_path="result/result_simple.csv",
+        state_path="result/runtime/jobs.json",
+        session_path="result/runtime/sessions.json",
+    )
+    return bot
+
+
+def test_baseline_served_without_session(tmp_path):
+    bot = _make_overlay_bot(tmp_path)
+    df = bot._load_cached_result_simple()
+    assert set(df["종목코드"]) == {"005930", "000660"}
+    row = df[df["종목코드"] == "005930"].iloc[0]
+    assert row["권고"] == "관망"
+
+
+def test_session_row_overrides_baseline(tmp_path):
+    bot = _make_overlay_bot(tmp_path)
+    # 세션 온디맨드 결과: 005930 최신화(권고 변경)
+    _write_simple_csv(
+        tmp_path / "result" / "result_simple.csv",
+        [("005930", "삼성전자", "매수")],
+    )
+    df = bot._load_cached_result_simple()
+    assert set(df["종목코드"]) == {"005930", "000660"}  # 베이스라인 + 세션 합집합
+    samsung = df[df["종목코드"] == "005930"].iloc[0]
+    assert samsung["권고"] == "매수"  # 세션이 베이스라인을 덮음
+
+
+def test_detail_date_falls_back_to_published(tmp_path):
+    bot = _make_overlay_bot(tmp_path)
+    # published detail에만 000660 존재
+    detail = tmp_path / "published" / "latest" / "csv" / "result_detail.csv"
+    detail.parent.mkdir(parents=True, exist_ok=True)
+    detail.write_text(
+        "Symbol,Date\n000660.KS,2026-06-17\n", encoding="utf-8-sig"
+    )
+    assert bot._latest_prediction_date_from_detail("000660.KS") == "2026-06-17"

@@ -36,6 +36,7 @@ from src.chatbot.responses import attach_quick_replies, list_card_response, simp
 from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.news_impact_context import append_generated_news_impact_context
 from src.reports.result_formatter import validate_result_simple_schema
+from src.ops.published_store import load_published_simple
 from src.utils.atomic_files import atomic_write_text
 from src.utils.secrets import redact_argv, redact_text, redact_value
 from src.recommendation.close_betting import format_recommendation_message
@@ -75,7 +76,7 @@ class UserSessionState:
 class PipelineRuntimeConfig:
     project_root: Path = field(default_factory=lambda: Path(__file__).resolve().parents[2])
     python_executable: str = sys.executable
-    input_csv: str = "data/real_ohlcv.csv"
+    input_csv: str = "result/session/session_ohlcv.csv"
     report_json: str = "pipeline_report_with_context.json"
     dart_api_key: str | None = None
     dart_corp_map_csv: str | None = "data/dart_corp_map.csv"
@@ -86,12 +87,14 @@ class PipelineRuntimeConfig:
     naver_client_id: str | None = None
     naver_client_secret: str | None = None
     use_external: bool = False
-    bootstrap_default_symbols: bool = True
-    bootstrap_on_launch: bool = True
+    bootstrap_default_symbols: bool = False
+    bootstrap_on_launch: bool = False
     async_issue_summary_on_demand: bool = True
     real_start: str = "2018-01-01"
-    prewarm_default_predictions: bool = True
+    prewarm_default_predictions: bool = False
     runtime_dir: str = "result/runtime"
+    news_impact_llm_config: str | None = None
+    published_dir: str = "published/latest"
     extra_args: tuple[str, ...] = ()
     kakao_webhook_secret: str | None = None
     max_concurrent_prediction_jobs: int = 2
@@ -103,6 +106,7 @@ class PipelineRuntimeConfig:
         symbol: str,
         add_symbols: list[str] | None = None,
         issue_summary_symbols: list[str] | None = None,
+        enable_news_impact_llm: bool = False,
     ) -> list[str]:
         normalized_add_symbols = [str(s) for s in (add_symbols or [symbol]) if str(s).strip()]
         normalized_issue_symbols = [str(s) for s in (issue_summary_symbols or [symbol]) if str(s).strip()]
@@ -124,6 +128,8 @@ class PipelineRuntimeConfig:
                 cmd.extend(["--dart-corp-map-csv", self.dart_corp_map_csv])
         if self.openai_model:
             cmd.extend(["--openai-model", self.openai_model])
+        if enable_news_impact_llm and self.news_impact_llm_config:
+            cmd.extend(["--news-impact-llm-config", self.news_impact_llm_config])
         if not self.use_external:
             cmd.append("--disable-external")
         if self.report_json:
@@ -192,6 +198,9 @@ class KakaoColabPredictionBot:
         self.runtime_config = runtime_config or PipelineRuntimeConfig()
         self.project_root = Path(self.runtime_config.project_root)
         self.result_root = self.project_root / "result"
+        self.published_dir = self.project_root / self.runtime_config.published_dir
+        # 온디맨드 세션 입력 CSV의 부모 디렉터리 보장(--add-symbols append 대상)
+        (self.project_root / self.runtime_config.input_csv).parent.mkdir(parents=True, exist_ok=True)
         self._allow_unvalidated_result_paths = result_simple_path is not None
         self.result_simple_path = self.project_root / (result_simple_path or "result/result_simple.csv")
         self.result_detail_path = self.project_root / "result" / "result_detail.csv"
@@ -768,34 +777,53 @@ class KakaoColabPredictionBot:
             row["Date"] = detail_date
         return self._apply_issue_summary_cache(row, symbol)
 
-    def _latest_prediction_date_from_detail(self, symbol: str) -> str | None:
-        detail_path = self._resolve_result_path("csv/result_detail.csv", self.result_detail_path)
-        if not detail_path.exists():
-            return None
-        try:
-            detail_df = pd.read_csv(detail_path, dtype={"Symbol": str}, encoding="utf-8-sig")
-        except Exception:
-            return None
-        if detail_df.empty or "Symbol" not in detail_df.columns or "Date" not in detail_df.columns:
-            return None
+    def _detail_path_candidates(self) -> list[Path]:
+        candidates = [self._resolve_result_path("csv/result_detail.csv", self.result_detail_path)]
+        published_detail = self.published_dir / "csv" / "result_detail.csv"
+        candidates.append(published_detail)
+        return [p for p in candidates if p and Path(p).exists()]
 
+    def _latest_prediction_date_from_detail(self, symbol: str) -> str | None:
         normalized = normalize_user_symbols([symbol])
         symbol_aliases = {str(symbol)}
         if normalized:
             symbol_aliases.add(str(normalized[0]))
         display_code = self._display_code(symbol)
         symbol_aliases.update({f"{display_code}.KS", f"{display_code}.KQ"})
-
-        matched = detail_df[detail_df["Symbol"].astype(str).isin(symbol_aliases)].copy()
-        if matched.empty:
-            return None
-        matched["Date"] = pd.to_datetime(matched["Date"], errors="coerce")
-        matched = matched.dropna(subset=["Date"])
-        if matched.empty:
-            return None
-        return matched["Date"].max().strftime("%Y-%m-%d")
+        for detail_path in self._detail_path_candidates():
+            try:
+                detail_df = pd.read_csv(detail_path, dtype={"Symbol": str}, encoding="utf-8-sig")
+            except Exception:
+                continue
+            if detail_df.empty or "Symbol" not in detail_df.columns or "Date" not in detail_df.columns:
+                continue
+            matched = detail_df[detail_df["Symbol"].astype(str).isin(symbol_aliases)].copy()
+            if matched.empty:
+                continue
+            matched["Date"] = pd.to_datetime(matched["Date"], errors="coerce")
+            matched = matched.dropna(subset=["Date"])
+            if matched.empty:
+                continue
+            return matched["Date"].max().strftime("%Y-%m-%d")
+        return None
 
     def _load_cached_result_simple(self) -> pd.DataFrame:
+        baseline = load_published_simple(self.published_dir)
+        session = self._load_session_result_simple()
+        if baseline.empty:
+            return session
+        if session.empty:
+            return baseline.copy()
+        baseline = baseline.copy()
+        session = session.copy()
+        baseline["종목코드"] = baseline["종목코드"].astype(str)
+        session["종목코드"] = session["종목코드"].astype(str)
+        session_codes = set(session["종목코드"])
+        kept_baseline = baseline[~baseline["종목코드"].isin(session_codes)]
+        merged = pd.concat([session, kept_baseline], ignore_index=True)
+        return merged
+
+    def _load_session_result_simple(self) -> pd.DataFrame:
         result_simple_path = self._resolve_result_path("csv/result_simple.csv", self.result_simple_path)
         if not result_simple_path.exists():
             with self._state_lock:
@@ -1149,15 +1177,8 @@ class KakaoColabPredictionBot:
         self._finalize_process(symbol, int(exit_code))
 
     def _is_bootstrap_required(self) -> bool:
-        if self._bootstrap_all_symbols_done:
-            return False
-        if not self.runtime_config.bootstrap_default_symbols:
-            return False
-        with self._state_lock:
-            has_history = bool(self._job_registry)
-        if has_history:
-            return False
-        return not self.result_simple_path.exists()
+        # published 베이스라인 서빙 모델에서는 첫 요청 시 전 종목 부트스트랩을 하지 않는다.
+        return False
 
     def _load_bootstrap_symbols_from_krx_map(self) -> list[str]:
         path = self.project_root / "data" / "krx_symbol_name_map.csv"
@@ -1201,7 +1222,8 @@ class KakaoColabPredictionBot:
 
         issue_summary_symbols = [symbol]
         add_symbols = [symbol]
-        if self._is_bootstrap_required():
+        is_bootstrap = self._is_bootstrap_required()
+        if is_bootstrap:
             bootstrap_symbols = self._load_bootstrap_symbols_from_krx_map()
             if bootstrap_symbols:
                 add_symbols = bootstrap_symbols
@@ -1214,6 +1236,7 @@ class KakaoColabPredictionBot:
             symbol,
             add_symbols=add_symbols,
             issue_summary_symbols=issue_summary_symbols,
+            enable_news_impact_llm=not is_bootstrap,
         )
         display_code = self._display_code(symbol)
         submitted_at = datetime.now(timezone.utc).isoformat()
@@ -2222,7 +2245,7 @@ def main():
     parser = argparse.ArgumentParser(description="KakaoTalk chatbot webhook for the stock prediction pipeline")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--input", default="data/real_ohlcv.csv")
+    parser.add_argument("--input", default="result/session/session_ohlcv.csv")
     parser.add_argument("--report-json", default="pipeline_report_with_context.json")
     parser.add_argument("--dart-api-key", default=None)
     parser.add_argument("--dart-corp-map-csv", default="data/dart_corp_map.csv")
