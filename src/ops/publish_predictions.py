@@ -34,6 +34,9 @@ def publish_artifacts(
     git_commit: str | None = None,
     git_branch: str | None = None,
     generated_at_kst: str | None = None,
+    requested_news_mode: str | None = None,
+    news_fallback_used: bool = False,
+    news_fallback_reason: str | None = None,
 ) -> PublishMeta:
     run_dir = Path(run_dir)
     published_root = Path(published_root)
@@ -46,6 +49,9 @@ def publish_artifacts(
         symbol_count=int(symbol_count),
         git_commit=git_commit,
         git_branch=git_branch,
+        requested_news_mode=requested_news_mode,
+        news_fallback_used=bool(news_fallback_used),
+        news_fallback_reason=news_fallback_reason,
     )
     for dest in (
         resolve_published_dir(published_root, None),
@@ -88,6 +94,25 @@ GEMMA_CONFIG = "configs/news_impact.gemma.example.json"
 
 def _news_config_for_mode(news_mode: str) -> str | None:
     return GEMMA_CONFIG if news_mode == "gemma" else None
+
+
+def _runtime_meta_from_report(report: dict[str, Any], configured_mode: str) -> dict[str, Any]:
+    runtime = report.get("news_impact_runtime") if isinstance(report, dict) else None
+    if isinstance(runtime, dict):
+        requested = str(runtime.get("requested_mode") or configured_mode)
+        actual = str(runtime.get("actual_mode") or ("rule_based" if configured_mode == "rule" else configured_mode))
+        return {
+            "requested_news_mode": requested,
+            "news_mode": actual,
+            "news_fallback_used": bool(runtime.get("fallback_used")),
+            "news_fallback_reason": runtime.get("fallback_reason"),
+        }
+    return {
+        "requested_news_mode": configured_mode,
+        "news_mode": "rule_based" if configured_mode == "rule" else configured_mode,
+        "news_fallback_used": False,
+        "news_fallback_reason": None,
+    }
 
 
 def _default_pipeline_fn(project_root: Path) -> Callable[..., dict[str, Any]]:
@@ -190,17 +215,17 @@ def run_publish(
         _LOGGER.warning("manifest에 run_id가 없어 source_run_id가 비어 publish됩니다.")
     trading_date = infer_trading_date(run_dir)
     symbol_count = _symbol_count(run_dir)
-    # news_mode records the configured mode. A silent per-symbol gemma->rule
-    # fallback inside scoring is not surfaced in the pipeline report, so it is
-    # not detectable here; the label reflects what was requested.
-    news_mode = "rule_based" if news_config is None else "gemma"
+    runtime_meta = _runtime_meta_from_report(report, str(args.news_mode))
     git_commit, git_branch = provenance_fn()
 
     meta = publish_artifacts(
         run_dir=run_dir,
         published_root=published_root,
         trading_date=trading_date,
-        news_mode=news_mode,
+        news_mode=str(runtime_meta["news_mode"]),
+        requested_news_mode=str(runtime_meta["requested_news_mode"]),
+        news_fallback_used=bool(runtime_meta["news_fallback_used"]),
+        news_fallback_reason=runtime_meta["news_fallback_reason"],
         source_run_id=str(manifest.get("run_id", "")),
         symbol_count=symbol_count,
         git_commit=git_commit,

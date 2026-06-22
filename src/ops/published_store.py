@@ -40,12 +40,18 @@ class PublishMeta:
     symbol_count: int
     git_commit: str | None = None
     git_branch: str | None = None
+    requested_news_mode: str | None = None
+    news_fallback_used: bool = False
+    news_fallback_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "generated_at_kst": self.generated_at_kst,
             "trading_date": self.trading_date,
             "news_mode": self.news_mode,
+            "requested_news_mode": self.requested_news_mode or self.news_mode,
+            "news_fallback_used": bool(self.news_fallback_used),
+            "news_fallback_reason": self.news_fallback_reason,
             "source_run_id": self.source_run_id,
             "symbol_count": self.symbol_count,
             "git": {"commit": self.git_commit, "branch": self.git_branch},
@@ -99,6 +105,9 @@ def update_index(published_root: str | Path, meta: PublishMeta) -> dict[str, Any
         "trading_date": meta.trading_date,
         "generated_at_kst": meta.generated_at_kst,
         "news_mode": meta.news_mode,
+        "requested_news_mode": meta.requested_news_mode or meta.news_mode,
+        "news_fallback_used": bool(meta.news_fallback_used),
+        "news_fallback_reason": meta.news_fallback_reason,
         "symbol_count": meta.symbol_count,
         "source_run_id": meta.source_run_id,
     }
