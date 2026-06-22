@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,23 @@ NEWS_IMPACT_COLUMNS = {
     "review_checklist": "news_impact_review_checklist",
     "top_evidence_url": "news_impact_top_evidence_url",
 }
+
+
+@dataclass(frozen=True)
+class NewsImpactRuntimeResult:
+    frame: pd.DataFrame
+    requested_mode: str
+    actual_mode: str
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "requested_mode": self.requested_mode,
+            "actual_mode": self.actual_mode,
+            "fallback_used": bool(self.fallback_used),
+            "fallback_reason": self.fallback_reason,
+        }
 
 
 def append_news_impact_context(pred_df: pd.DataFrame, report_path: str | Path | None) -> pd.DataFrame:
@@ -155,6 +173,21 @@ def append_generated_news_impact_context(
     if not rows:
         return pred_df
     return append_news_impact_rows(pred_df, rows)
+
+
+def append_generated_news_impact_context_with_runtime(
+    pred_df: pd.DataFrame,
+    context_raw_df: pd.DataFrame | None,
+) -> NewsImpactRuntimeResult:
+    scored = append_generated_news_impact_context(pred_df, context_raw_df)
+    actual_mode = "rule_based" if "news_impact_final_score" in scored.columns else "none"
+    return NewsImpactRuntimeResult(
+        frame=scored,
+        requested_mode="rule",
+        actual_mode=actual_mode,
+        fallback_used=False,
+        fallback_reason=None if actual_mode != "none" else "no_context_rows",
+    )
 
 
 def append_llm_news_impact_context(
