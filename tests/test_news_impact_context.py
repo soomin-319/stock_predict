@@ -9,6 +9,7 @@ from src.reports.news_impact_context import (
     append_generated_news_impact_context,
     append_generated_news_impact_context_with_runtime,
     append_llm_news_impact_context,
+    append_llm_news_impact_context_with_runtime,
     append_news_impact_context,
 )
 from src.reports.result_formatter import build_result_simple
@@ -384,3 +385,84 @@ def test_append_generated_news_impact_context_with_runtime_records_none_without_
         "fallback_used": False,
         "fallback_reason": "no_context_rows",
     }
+
+
+def test_append_llm_news_impact_context_with_runtime_records_gemma_success(tmp_path):
+    pred_df = pd.DataFrame(
+        [{"Date": "2026-06-17", "Symbol": "005930.KS", "predicted_return": 1.0}]
+    )
+    context_raw_df = pd.DataFrame(
+        [{"Date": "2026-06-17", "Symbol": "005930.KS", "source_type": "news", "title": "HBM"}]
+    )
+
+    def fake_run_daily_pipeline(inputs):
+        report_path = Path(inputs.output_dir) / "report.json"
+        report_path.write_text(
+            json.dumps(
+                {
+                    "rows": [
+                        {
+                            "date": "2026-06-17",
+                            "ticker": "005930",
+                            "final_score": 42.0,
+                            "top_reason": "Gemma success",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        return type("Result", (), {"artifact_paths": {"report.json": str(report_path)}})()
+
+    result = append_llm_news_impact_context_with_runtime(
+        pred_df,
+        context_raw_df,
+        llm_config_path="configs/news_impact.gemma.example.json",
+        symbols=["005930.KS"],
+        symbol_name_map={"005930.KS": "Samsung"},
+        run_date="2026-06-17",
+        _run_daily_pipeline=fake_run_daily_pipeline,
+    )
+
+    assert result.to_metadata() == {
+        "requested_mode": "gemma",
+        "actual_mode": "gemma",
+        "fallback_used": False,
+        "fallback_reason": None,
+    }
+    assert float(result.frame.loc[0, "news_impact_final_score"]) == 42.0
+
+
+def test_append_llm_news_impact_context_with_runtime_records_fallback():
+    pred_df = pd.DataFrame(
+        [
+            {
+                "Date": "2026-06-17",
+                "Symbol": "005930.KS",
+                "symbol_name": "Samsung",
+                "predicted_return": 1.0,
+            }
+        ]
+    )
+    context_raw_df = pd.DataFrame(
+        [{"Date": "2026-06-17", "Symbol": "005930.KS", "source_type": "news", "title": "HBM"}]
+    )
+
+    def failing_run_daily_pipeline(inputs):
+        raise RuntimeError("gemma down")
+
+    result = append_llm_news_impact_context_with_runtime(
+        pred_df,
+        context_raw_df,
+        llm_config_path="configs/news_impact.gemma.example.json",
+        symbols=["005930.KS"],
+        symbol_name_map={"005930.KS": "Samsung"},
+        run_date="2026-06-17",
+        _run_daily_pipeline=failing_run_daily_pipeline,
+    )
+
+    assert result.requested_mode == "gemma"
+    assert result.actual_mode == "rule_based"
+    assert result.fallback_used is True
+    assert result.fallback_reason == "RuntimeError: gemma down"
+    assert "news_impact_final_score" in result.frame.columns
