@@ -5,7 +5,6 @@
 
 ## 현재 문서
 
-- [`CODEBASE_ANALYSIS_2026-06-22.md`](CODEBASE_ANALYSIS_2026-06-22.md): 전체 아키텍처·모듈·파이프라인·가드레일 종합 분석 (현재 단일 진입점)
 - [`TIMA_BENCHMARK_UPGRADE.md`](TIMA_BENCHMARK_UPGRADE.md), [`TIMA_PREDICTION_FEATURE_CANDIDATES.md`](TIMA_PREDICTION_FEATURE_CANDIDATES.md): TIMA 벤치마크 관련 문서
 
 > 뉴스 임팩트 LLM 시스템 프롬프트는 **코드 자산**이므로 `docs/`에 두지 않고
