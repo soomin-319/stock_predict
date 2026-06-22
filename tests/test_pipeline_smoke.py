@@ -608,7 +608,11 @@ def test_pipeline_validation_does_not_mutate_signal_config(monkeypatch):
     )
 
     assert asdict(cfg.signal) == original_signal
-    assert asdict(validation["tuned_signal_config"]) == tuned
+    tuned_signal = asdict(validation["tuned_signal_config"])
+    for key, value in tuned.items():
+        assert tuned_signal[key] == value
+    assert tuned_signal["recommendation_buy_threshold_pct"] == original_signal["recommendation_buy_threshold_pct"]
+    assert tuned_signal["recommendation_sell_threshold_pct"] == original_signal["recommendation_sell_threshold_pct"]
 
 
 def test_pipeline_validation_retries_when_fold_count_is_too_low(monkeypatch):
