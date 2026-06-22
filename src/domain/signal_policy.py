@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.config.settings import BacktestConfig, InvestmentCriteriaConfig
+from src.config.settings import BacktestConfig, InvestmentCriteriaConfig, SignalConfig
 
 
 HIGH_CONVICTION_NET_BUY = 100_000_000_000
@@ -19,6 +19,7 @@ STRONG_DUAL_BUY_EVENT_BOOST = 0.06
 HIGH_CONVICTION_COMBINED_EVENT_BOOST = 0.08
 NASDAQ_FUTURES_TAILWIND_EVENT_BOOST = 0.03
 DEFAULT_CRITERIA = InvestmentCriteriaConfig()
+DEFAULT_SIGNAL_CONFIG = SignalConfig()
 DEFAULT_MIN_LIQUIDITY_THRESHOLD = BacktestConfig().min_value_traded
 
 
@@ -38,11 +39,17 @@ def _criteria(cfg: InvestmentCriteriaConfig | None) -> InvestmentCriteriaConfig:
     return cfg or DEFAULT_CRITERIA
 
 
+def _signal_cfg(cfg: SignalConfig | None) -> SignalConfig:
+    return cfg or DEFAULT_SIGNAL_CONFIG
+
+
 def recommendation_from_signal(
     signal_score: float | int | None,
     predicted_return: float | int | None,
     up_probability: float | int | None = None,
     uncertainty_score: float | int | None = None,
+    *,
+    signal_cfg: SignalConfig | None = None,
 ) -> str:
     """Return buy/sell/hold policy from next-day expected return only.
 
@@ -52,10 +59,11 @@ def recommendation_from_signal(
     if pd.isna(predicted_return):
         return "관망"
 
+    cfg = _signal_cfg(signal_cfg)
     ret = float(predicted_return)
-    if ret > 2.0:
+    if ret > float(cfg.recommendation_buy_threshold_pct):
         return "매수"
-    if ret <= -2.0:
+    if ret <= float(cfg.recommendation_sell_threshold_pct):
         return "매도"
     return "관망"
 
