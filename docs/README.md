@@ -22,8 +22,11 @@
 ## 운영/참고 문서
 
 - [`ROADMAP.md`](ROADMAP.md): 우선순위와 향후 작업
-- `NEWS_IMPACT_LLM_PROMPT.md`: 뉴스 임팩트 LLM 시스템 프롬프트. **코드 자산**으로 `src/news_impact/impact_judge.py`가 런타임에 직접 로드하므로 경로를 옮기지 않는다.
 - `TIMA_BENCHMARK_UPGRADE.md`, `TIMA_PREDICTION_FEATURE_CANDIDATES.md`: TIMA 벤치마크 관련 문서
+
+> 뉴스 임팩트 LLM 시스템 프롬프트는 **코드 자산**이므로 더 이상 `docs/`에 두지 않고
+> `src/news_impact/prompts/news_impact_llm_prompt.md`에 패키지 리소스로 둔다.
+> `src/news_impact/impact_judge.py`가 런타임에 직접 로드한다.
 
 ## 보관 문서 (`archive/`)
 

@@ -31,5 +31,8 @@ stock-news-impact = "src.news_impact.run:main"
 where = ["."]
 include = ["src*"]
 
+[tool.setuptools.package-data]
+"src.news_impact" = ["prompts/*.md"]
+
 [tool.pytest.ini_options]
 cache_dir = "result/.pytest_cache"
