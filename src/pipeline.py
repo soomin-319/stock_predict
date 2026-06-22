@@ -716,36 +716,6 @@ def _run_pipeline_validation(
     }
 
 
-def _save_pipeline_figures(
-    backtest_series: pd.DataFrame,
-    scored_oof: pd.DataFrame,
-    figure_dir: str,
-    symbol_figure_limit: int | None,
-    figure_dir_path: Path | None = None,
-) -> tuple[Path, dict[str, Any]]:
-    figure_dir_path = figure_dir_path or resolve_output_dir(figure_dir)
-    figure_dir_path.mkdir(parents=True, exist_ok=True)
-    fig_paths = save_backtest_figures(backtest_series, str(figure_dir_path))
-    signal_hist = save_signal_histogram(scored_oof, str(figure_dir_path))
-    actual_vs_pred = save_actual_vs_predicted_plot(scored_oof, str(figure_dir_path))
-    actual_vs_pred_price = save_actual_vs_predicted_price_plot(scored_oof, str(figure_dir_path))
-    diagnostic_figs = save_diagnostic_figures(scored_oof, str(figure_dir_path))
-    symbol_level_figs = save_symbol_level_comparison_figures(
-        scored_oof,
-        str(figure_dir_path),
-        max_symbols=symbol_figure_limit,
-    )
-    figure_artifacts = {
-        **fig_paths,
-        "signal_hist": signal_hist,
-        "actual_vs_predicted": actual_vs_pred,
-        "actual_vs_predicted_price": actual_vs_pred_price,
-        **diagnostic_figs,
-        **symbol_level_figs,
-    }
-    return figure_dir_path, figure_artifacts
-
-
 def _predict_pipeline_latest(
     feat: pd.DataFrame,
     feature_columns: list[str],

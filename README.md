@@ -45,6 +45,7 @@ python src/pipeline.py --input data/real_ohlcv.csv --add-symbols 005930 000660.K
 - `--output`: legacy compatibility option. CSV outputs are always normalized under `result/`.
 - `--universe-csv`: optional CSV with a `Symbol` column.
 - `--report-json`: pipeline report JSON filename. Default: `pipeline_report.json`.
+- `--news-impact-report`: optional pre-generated `stock-news-impact` JSON report to attach as display-only context.
 - `--fetch-real`: download OHLCV before the run. Uses all 200 bundled KOSPI200 symbols when no symbols or universe CSV are specified.
 - `--real-symbols`: explicit symbols for `--fetch-real`.
 - `--real-start`: start date for real-data fetch. Default: `2020-01-01`.
@@ -60,6 +61,7 @@ python src/pipeline.py --input data/real_ohlcv.csv --add-symbols 005930 000660.K
 - `--min-external-coverage-ratio`, `--min-investor-coverage-ratio`: coverage gate overrides.
 - `--portfolio-value`, `--max-daily-participation`, `--max-positions-per-market-type`: liquidity and portfolio capacity controls.
 - `--issue-summary-symbols`: restrict issue-summary generation to selected symbols.
+- `--walk-forward-n-jobs`, `--model-n-jobs`, `--model-head-n-jobs`, `--context-raw-event-n-jobs`, `--issue-summary-n-jobs`: parallel worker counts for walk-forward folds, per-model LightGBM training, model heads, raw context-event collection, and issue-summary generation.
 
 Deprecated but still accepted for compatibility: `--dart-api-key`, `--dart-corp-map-csv`.
 
@@ -133,18 +135,19 @@ Use Korean company names, industry keywords, and Korean search queries by defaul
 ### Two execution paths
 
 ```text
-Standalone (research report)                 Integrated (display context)
-─────────────────────────────               ──────────────────────────────
-stock-news-impact CLI                        run_pipeline (main prediction)
-  -> src.news_impact.pipeline                  |
-  -> report.json / report.csv                  +- --news-impact-report  ─┐
-     + audit.json                              |                         |
-     (reproducibility metadata:                +- --news-impact-llm-config ┘
-      llm_model, llm_temperature,                |
-      llm_prompt_hash; per-article              -> append_news_impact_context
-      hashes live in the LLM cache)            -> result_detail.csv `news_impact_*`
-                                                  (display-only; excluded from
-                                                   model features and signals)
+Standalone (research report)              Integrated (display context)
+────────────────────────────             ─────────────────────────────
+stock-news-impact CLI                     run_pipeline (main prediction)
+  -> src.news_impact.pipeline               |
+  -> report.json / report.csv               +- --news-impact-report given:
+     + audit.json                           |    -> append_news_impact_context
+     (reproducibility metadata:             |       (attach the external report)
+      llm_model, llm_temperature,           +- otherwise:
+      llm_prompt_hash; per-article          |    -> append_generated_news_impact_context
+      hashes live in the LLM cache)         |       (from collected raw context events)
+                                            -> result_detail.csv `news_impact_*`
+                                               (display-only; dropped from
+                                                model features and signals)
 ```
 
 Both paths are review-only. The integrated path attaches `news_impact_*` columns for display; `select_feature_columns()` drops every `news_impact_` column so they never become model inputs, and `predicted_return` stays the sole signal.
@@ -175,12 +178,10 @@ Get-Content -Encoding utf8 result/latest/manifest.json
 
 ## Documentation
 
-문서는 기능 영역별로 `docs/`에 정리되어 있다. 전체 목록과 모듈 매핑은 [문서 인덱스](docs/INDEX.md)를 참조한다.
+문서는 `docs/`에 정리되어 있다. 현재 기준 종합 레퍼런스는 코드베이스 분석 문서이며, `docs/` 전체 구성은 문서 인덱스를 참조한다.
 
-- [문서 인덱스](docs/INDEX.md) — 기능별 문서 진입점
-- [파이프라인 흐름](docs/01_pipeline.md) · [데이터](docs/02_data.md) · [피처](docs/03_features.md) · [모델](docs/04_model.md)
-- [검증·백테스트](docs/05_validation.md) · [시그널 정책](docs/06_signal_policy.md) · [리포트·산출물](docs/07_reports.md)
-- [뉴스 임팩트](docs/08_news_impact.md) · [챗봇](docs/09_chatbot.md) · [설정](docs/10_config.md)
-- [Roadmap](docs/ROADMAP.md)
+- [문서 인덱스](docs/README.md) — `docs/` 구성 안내
+- [코드베이스 분석 (2026-06-22)](docs/CODEBASE_ANALYSIS_2026-06-22.md) — 전체 아키텍처·모듈·파이프라인·가드레일 종합 분석
+- [TIMA 벤치마크 업그레이드](docs/TIMA_BENCHMARK_UPGRADE.md) · [TIMA 예측 피처 후보](docs/TIMA_PREDICTION_FEATURE_CANDIDATES.md)
 
-과거 분석·제안·리뷰 및 numbered 세트로 대체된 구 가이드는 [`docs/archive/`](docs/archive/)에 보관한다.
+과거 분석·제안·리뷰 및 구 가이드는 [`docs/archive/`](docs/archive/)에, 구현 계획·설계 기록은 [`docs/superpowers/`](docs/superpowers/)에 보관한다.
