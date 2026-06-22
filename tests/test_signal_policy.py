@@ -129,6 +129,13 @@ def test_scalar_policy_helpers_match_vectorized_single_row_outputs():
         assert build_pm_summary_fields(row) == signal_policy._pm_summary_frame(one_row).iloc[0].to_dict()
 
 
+def test_scalar_policy_helpers_are_vectorized_adapters():
+    assert "_risk_flag_series" in inspect.getsource(risk_flag)
+    assert "_prediction_reason_series" in inspect.getsource(prediction_reason)
+    assert "_jongbae_score_series" in inspect.getsource(signal_policy._jongbae_score)
+    assert "_pm_summary_frame" in inspect.getsource(build_pm_summary_fields)
+
+
 def test_nan_liquidity_threshold_uses_default_minimum():
     row = pd.Series(
         {
