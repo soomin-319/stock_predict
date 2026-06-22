@@ -770,7 +770,12 @@ def _predict_pipeline_latest(
     sym_acc = build_symbol_history_accuracy(scored_oof)
     pred_df = pred_df.merge(sym_acc, on="Symbol", how="left")
     pred_df["history_direction_accuracy"] = pred_df["history_direction_accuracy"].fillna(0.5)
-    pred_df = finalize_latest_prediction_frame(pred_df, symbol_name_map, investment_criteria=cfg.investment_criteria)
+    pred_df = finalize_latest_prediction_frame(
+        pred_df,
+        symbol_name_map,
+        investment_criteria=cfg.investment_criteria,
+        signal_cfg=effective_signal_config,
+    )
     warnings: list[str] = []
     try:
         pred_df = append_issue_summary_columns(

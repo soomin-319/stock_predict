@@ -755,6 +755,94 @@ def test_latest_prediction_accepts_tuned_signal_config(monkeypatch):
     assert ordered["signal_score"].tolist() == pytest.approx(ordered["norm_return"].tolist())
 
 
+def test_latest_prediction_uses_custom_recommendation_thresholds(monkeypatch):
+    from src.models.lgbm_heads import MultiHeadPrediction
+
+    class IdentityCalibrator:
+        def transform(self, values):
+            return pd.Series(values)
+
+    class FakeModel:
+        def __init__(self, **_kwargs):
+            pass
+
+        def fit(self, *_args, **_kwargs):
+            return self
+
+        def predict(self, latest):
+            return MultiHeadPrediction(
+                predicted_return=np.array([np.log1p(0.025), np.log1p(-0.015)]),
+                up_probability=np.array([0.8, 0.2]),
+                quantile_low=np.array([0.0, -0.02]),
+                quantile_mid=np.array([0.02, -0.01]),
+                quantile_high=np.array([0.03, 0.0]),
+            )
+
+    feat = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2024-01-01", "2024-01-01"]),
+            "Symbol": ["A", "B"],
+            "Close": [100.0, 100.0],
+            "market_regime": ["normal", "normal"],
+            "target_log_return": [0.0, 0.0],
+            "target_up": [1, 0],
+            "value_traded": [5_000_000_000.0, 5_000_000_000.0],
+        }
+    )
+    scored_oof = pd.DataFrame(
+        {
+            "Symbol": ["A", "B"],
+            "target_up": [1, 0],
+            "predicted_return": [0.01, -0.01],
+        }
+    )
+    monkeypatch.setattr("src.pipeline.MultiHeadStockModel", FakeModel)
+    monkeypatch.setattr("src.pipeline.get_symbol_name_map", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr("src.pipeline.append_issue_summary_columns", lambda pred_df, **_kwargs: pred_df)
+    monkeypatch.setattr(
+        "src.pipeline.append_generated_news_impact_context_with_runtime",
+        lambda pred_df, *_args, **_kwargs: SimpleNamespace(
+            frame=pred_df,
+            to_metadata=lambda: {
+                "requested_mode": "rule",
+                "actual_mode": "none",
+                "fallback_used": False,
+                "fallback_reason": "no_context_rows",
+            },
+        ),
+    )
+
+    pred_df, *_ = _predict_pipeline_latest(
+        feat=feat,
+        feature_columns=[],
+        cfg=AppConfig(),
+        scored_oof=scored_oof,
+        probability_calibrator=IdentityCalibrator(),
+        prediction_context=PredictionFrameContext(
+            external_coverage_ratio=1.0,
+            investor_coverage_ratio=1.0,
+            min_liquidity_threshold=0.0,
+        ),
+        coverage_gate_status="ok",
+        context_raw_df=pd.DataFrame(),
+        effective_openai_api_key=None,
+        effective_openai_model=None,
+        issue_summary_symbols=None,
+        issue_summary_n_jobs=1,
+        news_impact_report=None,
+        signal_config=SignalConfig(
+            return_weight=1.0,
+            up_prob_weight=0.0,
+            uncertainty_penalty=0.0,
+            recommendation_buy_threshold_pct=3.0,
+            recommendation_sell_threshold_pct=-1.0,
+        ),
+    )
+
+    ordered = pred_df.sort_values("Symbol")
+    assert ordered["recommendation"].tolist() == ["관망", "매도"]
+
+
 def test_latest_prediction_degrades_when_issue_summary_fails(monkeypatch):
     from src.models.lgbm_heads import MultiHeadPrediction
 

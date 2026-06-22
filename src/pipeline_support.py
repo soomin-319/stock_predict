@@ -103,12 +103,13 @@ def finalize_latest_prediction_frame(
     pred_df: pd.DataFrame,
     symbol_name_map: dict[str, str],
     investment_criteria: InvestmentCriteriaConfig | None = None,
+    signal_cfg: SignalConfig | None = None,
 ) -> pd.DataFrame:
     out = pred_df.copy()
     out["symbol_name"] = out["Symbol"].astype(str).map(symbol_name_map).fillna(out["Symbol"].astype(str))
     out["confidence_score"] = (1 - out["uncertainty_score"].fillna(1)).clip(lower=0, upper=1)
     out["confidence_label"] = out["confidence_score"].map(confidence_label)
-    out = build_prediction_policy_frame(out, cfg=investment_criteria)
+    out = build_prediction_policy_frame(out, cfg=investment_criteria, signal_cfg=signal_cfg)
     return out
 
 
