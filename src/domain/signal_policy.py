@@ -120,9 +120,13 @@ def _position_size_hint(confidence_score: float | int | None, risk_flag_value: s
     return "관망"
 
 
-def _policy_recommendation(row: pd.Series, cfg: InvestmentCriteriaConfig | None = None) -> str:
+def _policy_recommendation(
+    row: pd.Series,
+    cfg: InvestmentCriteriaConfig | None = None,
+    signal_cfg: SignalConfig | None = None,
+) -> str:
     predicted_return = row.get("predicted_return")
-    return recommendation_from_signal(None, predicted_return)
+    return recommendation_from_signal(None, predicted_return, signal_cfg=signal_cfg)
 
 
 def _format_percentage_text(value, digits: int = 1, unit_interval: bool = False) -> str:
@@ -206,11 +210,12 @@ def _append_flag(flags: pd.Series, mask: pd.Series, label: str) -> None:
     flags.loc[active] = prefix + label
 
 
-def _recommendation_series(df: pd.DataFrame) -> pd.Series:
+def _recommendation_series(df: pd.DataFrame, signal_cfg: SignalConfig | None = None) -> pd.Series:
+    cfg = _signal_cfg(signal_cfg)
     predicted_return = _to_numeric_series_preserve_na(df, "predicted_return", default=float("nan"))
     recommendation = pd.Series("관망", index=df.index, dtype=object)
-    recommendation.loc[predicted_return > 2.0] = "매수"
-    recommendation.loc[predicted_return <= -2.0] = "매도"
+    recommendation.loc[predicted_return > float(cfg.recommendation_buy_threshold_pct)] = "매수"
+    recommendation.loc[predicted_return <= float(cfg.recommendation_sell_threshold_pct)] = "매도"
     return recommendation
 
 
@@ -268,8 +273,12 @@ def _position_size_hint_series(df: pd.DataFrame, risk_flags: pd.Series) -> pd.Se
     return position
 
 
-def _pm_summary_frame(df: pd.DataFrame, cfg: InvestmentCriteriaConfig | None = None) -> pd.DataFrame:
-    action = _recommendation_series(df)
+def _pm_summary_frame(
+    df: pd.DataFrame,
+    cfg: InvestmentCriteriaConfig | None = None,
+    signal_cfg: SignalConfig | None = None,
+) -> pd.DataFrame:
+    action = _recommendation_series(df, signal_cfg=signal_cfg)
     risk = _risk_flag_series(df)
     position_size = _position_size_hint_series(df, risk)
     confidence = _confidence_label_series(df)
@@ -456,8 +465,12 @@ def _jongbae_score_series(df: pd.DataFrame, cfg: InvestmentCriteriaConfig | None
     return score.round(4)
 
 
-def build_pm_summary_fields(row: pd.Series, cfg: InvestmentCriteriaConfig | None = None) -> dict[str, str]:
-    action = _policy_recommendation(row, cfg=cfg)
+def build_pm_summary_fields(
+    row: pd.Series,
+    cfg: InvestmentCriteriaConfig | None = None,
+    signal_cfg: SignalConfig | None = None,
+) -> dict[str, str]:
+    action = _policy_recommendation(row, cfg=cfg, signal_cfg=signal_cfg)
     risk = risk_flag(row)
     position_size = _position_size_hint(row.get("confidence_score"), risk)
     coverage_status = str(row.get("coverage_gate_status", "") or "").lower()
@@ -494,12 +507,13 @@ def build_pm_summary_fields(row: pd.Series, cfg: InvestmentCriteriaConfig | None
 def build_prediction_policy_frame(
     pred_df: pd.DataFrame,
     cfg: InvestmentCriteriaConfig | None = None,
+    signal_cfg: SignalConfig | None = None,
 ) -> pd.DataFrame:
     if pred_df.empty:
         return pred_df.copy()
 
     out = vectorized_event_signal_boost(pred_df, cfg=cfg)
-    pm = _pm_summary_frame(out, cfg=cfg)
+    pm = _pm_summary_frame(out, cfg=cfg, signal_cfg=signal_cfg)
     out = pd.concat([out, pm], axis=1)
     out["jongbae_score"] = _jongbae_score_series(out, cfg=cfg)
     out["jongbae_signal"] = out["jongbae_score"].map(lambda v: "관심" if v >= 0.45 else ("경계" if v < 0 else "중립"))

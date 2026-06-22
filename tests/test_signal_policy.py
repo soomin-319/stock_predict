@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.config.settings import BacktestConfig
+from src.config.settings import BacktestConfig, SignalConfig
 from src.domain import signal_policy
 from src.domain.signal_policy import (
     build_pm_summary_fields,
@@ -133,3 +133,24 @@ def test_build_prediction_policy_frame_has_no_rowwise_apply_calls():
     source = inspect.getsource(build_prediction_policy_frame)
 
     assert ".apply(" not in source
+
+
+def test_vectorized_recommendation_matches_scalar_with_custom_thresholds():
+    cfg = SignalConfig(
+        recommendation_buy_threshold_pct=3.0,
+        recommendation_sell_threshold_pct=-1.0,
+    )
+    frame = pd.DataFrame(
+        {
+            "predicted_return": [3.1, 3.0, 2.5, -0.9, -1.0, -1.1, np.nan],
+        }
+    )
+
+    vectorized = signal_policy._recommendation_series(frame, signal_cfg=cfg).tolist()
+    scalar = [
+        signal_policy.recommendation_from_signal(None, value, signal_cfg=cfg)
+        for value in frame["predicted_return"].tolist()
+    ]
+
+    assert vectorized == scalar
+    assert vectorized == ["매수", "관망", "관망", "관망", "매도", "매도", "관망"]
