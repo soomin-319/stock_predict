@@ -34,6 +34,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data.fetch_real_data import append_real_ohlcv_csv, save_real_ohlcv_csv
+from src.ops.published_store import read_publish_meta, resolve_published_dir
 from src.pipeline import _fallback_symbols_from_input_or_default, _resolve_incremental_fetch_start, run_pipeline
 
 
@@ -118,6 +119,34 @@ def _result_paths_from_report(report: dict | None) -> dict[str, str]:
         "result_detail_csv": _artifact("csv/result_detail.csv", "result_detail.csv"),
         "result_simple_csv": _artifact("csv/result_simple.csv", "result_simple.csv"),
         "report_json": _artifact("pipeline_report.json", "pipeline_report.json"),
+    }
+
+
+def load_published_predictions(date: str | None = None, rows: int = 5) -> dict[str, str]:
+    """published/ 베이스라인을 읽어 경로를 반환하고 프리뷰를 출력한다. 파이프라인 미실행."""
+    published_root = PROJECT_ROOT / "published"
+    target = resolve_published_dir(published_root, date)
+    simple = target / "csv" / "result_simple.csv"
+    if not simple.exists():
+        index_path = published_root / "index.json"
+        print(f"[Colab] published 데이터가 없습니다: {target}")
+        if index_path.exists():
+            print(f"[Colab] 가용 인덱스: {index_path.read_text(encoding='utf-8')}")
+        return {
+            "result_simple_csv": "",
+            "result_detail_csv": "",
+            "report_json": "",
+            "trading_date": "",
+        }
+    meta = read_publish_meta(target)
+    _print_colab_preview(simple, rows=rows)
+    print(f"[Colab] published baseline trading_date={meta.get('trading_date', '?')} "
+          f"news_mode={meta.get('news_mode', '?')} symbols={meta.get('symbol_count', '?')}")
+    return {
+        "result_simple_csv": simple.as_posix(),
+        "result_detail_csv": (target / "csv" / "result_detail.csv").as_posix(),
+        "report_json": (target / "pipeline_report.json").as_posix(),
+        "trading_date": str(meta.get("trading_date", "")),
     }
 
 

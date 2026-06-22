@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tempfile
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from src.news_impact.pipeline import DailyPipelineInputs, run_daily_pipeline
 from src.news_impact.report import REPORT_DISCLAIMER
 from src.news_impact.schema import ImpactEvent
 from src.news_impact.scorer import aggregate_scores
 from src.news_impact.stock_factors.classifier import analyze_stock_factors
+from src.reports.news_impact_fixture import build_news_impact_fixture
 
 NEWS_IMPACT_COLUMNS = {
     "run_id": "news_impact_run_id",
@@ -152,6 +155,52 @@ def append_generated_news_impact_context(
     if not rows:
         return pred_df
     return append_news_impact_rows(pred_df, rows)
+
+
+def append_llm_news_impact_context(
+    pred_df: pd.DataFrame,
+    context_raw_df: pd.DataFrame | None,
+    *,
+    llm_config_path: str,
+    symbols,
+    symbol_name_map: dict[str, str],
+    run_date: str,
+    _run_daily_pipeline=run_daily_pipeline,
+) -> pd.DataFrame:
+    """Judge news/disclosure impact with the gemma pipeline; fall back to the
+    rule-based scorer on any failure (server down, alias mismatch, timeout, etc.)."""
+    if pred_df.empty or context_raw_df is None or context_raw_df.empty:
+        return append_generated_news_impact_context(pred_df, context_raw_df)
+    try:
+        with tempfile.TemporaryDirectory(prefix="news_impact_gemma_") as tmp:
+            bundle = build_news_impact_fixture(
+                context_raw_df=context_raw_df,
+                symbols=symbols,
+                symbol_name_map=symbol_name_map,
+                run_date=run_date,
+                output_dir=tmp,
+            )
+            result = _run_daily_pipeline(
+                DailyPipelineInputs(
+                    run_date=run_date,
+                    watchlist_path=bundle.watchlist_path,
+                    company_master_path=bundle.company_master_path,
+                    input_fixture_path=bundle.fixture_path,
+                    output_dir=tmp,
+                    semantic_clustering=False,
+                    llm_config_path=llm_config_path,
+                )
+            )
+            report_path = result.artifact_paths["report.json"]
+            scored = append_news_impact_context(pred_df, report_path)
+            if "news_impact_final_score" not in scored.columns:
+                # gemma가 유효 row를 못 냄(서버 다운 시 모든 판정 실패 등) -> 규칙 기반 폴백
+                print("[NEWS IMPACT][gemma] 유효 결과 없음 → 규칙 기반 폴백")
+                return append_generated_news_impact_context(pred_df, context_raw_df)
+            return scored
+    except Exception as exc:  # server/alias/timeout/schema validation -> rule-based fallback
+        print(f"[NEWS IMPACT][gemma] 실패 → 규칙 기반 폴백: {type(exc).__name__}: {exc}")
+        return append_generated_news_impact_context(pred_df, context_raw_df)
 
 
 def _ticker_to_symbol(ticker: str) -> str:

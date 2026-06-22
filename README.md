@@ -102,21 +102,55 @@ pytest tests/test_kakao_colab_bot.py
 
 Pytest cache and temporary files are configured under ignored `result/` paths.
 
+## Daily Publish (기본 200종목 → GitHub)
+
+로컬에서 수동 1회 실행해 기본 200종목 예측을 `published/`에 게시하고 GitHub에 push한다.
+
+```powershell
+# gemma 서버(localhost:8001)가 떠 있으면 gemma 뉴스 임팩트, 아니면 규칙기반 폴백
+stock-predict-publish                 # 증분 갱신 + 게시 + commit/push
+stock-predict-publish --no-push       # 커밋까지만(푸시 안 함)
+stock-predict-publish --dry-run       # 게시 파일만 만들고 commit/push 안 함
+stock-predict-publish --news-mode rule --full-refresh
+```
+
+산출물:
+
+- `published/latest/` — 최신 게시본(Colab 기본 읽기 대상)
+- `published/history/<거래일>/` — 거래일별 스냅샷
+- `published/index.json` — 가용 날짜·메타 인덱스
+
+각 폴더는 `csv/result_*.csv`, `manifest.json`, `pipeline_report.json`, `publish_meta.json`을 포함한다.
+뉴스/공시 점수는 표시용이며 `predicted_return`·추천·신호 정책에 영향을 주지 않는다.
+
 ## Kakao Bot
 
 The production usage pattern is GitHub -> Google Colab -> KakaoTalk:
 
-1. Store the project code in GitHub.
-2. Load the repository in a Colab runtime and run the pipeline/chatbot entry point there.
+1. Store the project code (and the published baseline under `published/`) in GitHub.
+2. Load the repository in a Colab runtime; by default it serves the GitHub-published baseline without re-running the pipeline.
 3. Expose the Colab Flask app, typically through ngrok, so the user can communicate with the service through a KakaoTalk chatbot.
 
-The Kakao/Colab integration lives in `src/chatbot/kakao_colab_bot.py` and can be started through:
+The Kakao/Colab integration lives in `src/chatbot/kakao_colab_bot.py` and can be started locally through:
 
 ```powershell
 stock-predict-kakao
 ```
 
-It reads cached predictions from `result/result_simple.csv`, starts background prediction jobs when a symbol is missing, and can prewarm the prediction cache for default symbols. Chatbot responses may include news/disclosure summaries, but those summaries are display-only context separate from the expected-return signal.
+Colab 기본 흐름(기준데이터 서빙):
+
+```python
+# 1) 최신 코드/기준데이터 받기
+!git pull
+# 2) GitHub 기준데이터 표시 (파이프라인 미실행)
+from colab.stock_predict_colab import load_published_predictions
+load_published_predictions()           # 최신; 특정일은 load_published_predictions("2026-06-17")
+# 3) 봇 실행 (자동 부트스트랩 OFF, 기준데이터 베이스라인 서빙)
+from src.chatbot.kakao_colab_bot import launch_colab_kakao_bot, PyngrokTunnelConfig
+launch_colab_kakao_bot(tunnel_config=PyngrokTunnelConfig(auth_token="..."), prewarm_cache=False)
+```
+
+봇은 `published/latest/`를 기준으로 응답하며, 사용자가 종목코드/이름을 입력하거나 '최신화'를 요청할 때만 해당 종목을 세션에서 예측해 기준데이터 위에 덮어 보여준다(세션 한정, GitHub push 없음). 기본 200종목 재예측은 사용자가 명시적으로 `run_colab_pipeline(...)`을 호출할 때만 수행한다. Chatbot responses may include news/disclosure summaries, but those summaries are display-only context separate from the expected-return signal.
 
 
 ## News Impact Scoring Module
@@ -125,8 +159,9 @@ This repository now vendors the full `src.news_impact` package from `stock-news-
 
 Example files:
 
-- `configs/news_impact.example.json`: OpenAI-default LLM config template; read the API key from `OPENAI_API_KEY`.
-- `configs/news_impact.gemma.example.json`: optional local Gemma/llama.cpp config template.
+- `configs/news_impact.example.json`: default LLM config template (local Gemma/llama.cpp `gemma-4-26b-a4b`), matching the `LLMConfig.default()` code default.
+- `configs/news_impact.gemma.example.json`: same local Gemma/llama.cpp template, used as the explicit path in the chatbot/CLI integration.
+- `configs/news_impact.openai.example.json`: optional OpenAI template; reads the API key from `OPENAI_API_KEY`.
 - `data/news_impact/watchlist.example.csv`: watchlist template.
 - `data/news_impact/company_master.example.csv`: company master template.
 
@@ -156,6 +191,19 @@ Both paths are review-only. The integrated path attaches `news_impact_*` columns
 Copy-Item configs/news_impact.example.json configs/news_impact.json
 stock-news-impact --help
 ```
+
+### On-demand gemma news-impact (챗봇)
+
+요청 종목 예측 시 뉴스/공시 임팩트를 로컬 gemma로 판정하도록 연결할 수 있다.
+
+1. 로컬 llama.cpp로 `gemma-4-26b-a4b`를 `http://localhost:8001/v1`에 서빙.
+2. 연결 확인:
+   ```bash
+   python -m src.news_impact.run llm-smoke --config configs/news_impact.gemma.example.json
+   ```
+   `{"status": "ok", ...}` 이면 정상.
+3. 챗봇 구성에서 `PipelineRuntimeConfig(news_impact_llm_config="configs/news_impact.gemma.example.json")` 설정.
+4. 이후 단일 종목 예측 / "최신화" 시 gemma로 임팩트를 판정한다. 서버 무응답·오류 시 규칙 기반으로 자동 폴백하며, 부트스트랩(전 종목 prewarm)은 규칙 기반을 유지한다. 산출 점수는 표시용이며 `predicted_return`·추천·신호 정책을 바꾸지 않는다.
 
 ## Environment Variables
 

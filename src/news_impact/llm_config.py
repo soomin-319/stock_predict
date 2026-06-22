@@ -26,9 +26,9 @@ class LLMConfig:
     @classmethod
     def default(cls) -> "LLMConfig":
         return cls(
-            provider="openai",
-            base_url="https://api.openai.com/v1",
-            model="gpt-5-mini",
+            provider="llama_cpp",
+            base_url="http://localhost:8001/v1",
+            model="gemma-4-26b-a4b",
             temperature=0.1,
             max_retries=2,
             json_schema_required=True,
