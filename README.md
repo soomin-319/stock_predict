@@ -226,9 +226,10 @@ Get-Content -Encoding utf8 result/latest/manifest.json
 
 ## Documentation
 
-문서는 `docs/`에 정리되어 있다. `docs/` 전체 구성은 문서 인덱스를 참조한다.
+문서는 `docs/`에 정리되어 있다. 현재 기준 종합 레퍼런스는 코드베이스 개요 문서이며, `docs/` 전체 구성은 문서 인덱스를 참조한다.
 
 - [문서 인덱스](docs/README.md) — `docs/` 구성 안내
+- [코드베이스 개요 및 개선안](docs/CODEBASE_OVERVIEW.md) — 전체 아키텍처·모듈·파이프라인·가드레일 종합 + 개선안
 - [TIMA 벤치마크 업그레이드](docs/TIMA_BENCHMARK_UPGRADE.md) · [TIMA 예측 피처 후보](docs/TIMA_PREDICTION_FEATURE_CANDIDATES.md)
 
 과거 분석·제안·리뷰 및 구 가이드는 [`docs/archive/`](docs/archive/)에, 구현 계획·설계 기록은 [`docs/superpowers/`](docs/superpowers/)에 보관한다.

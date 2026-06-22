@@ -5,6 +5,7 @@
 
 ## 현재 문서
 
+- [`CODEBASE_OVERVIEW.md`](CODEBASE_OVERVIEW.md): 코드베이스 종합 개요 + 개선안 (유지보수용 살아있는 문서)
 - [`TIMA_BENCHMARK_UPGRADE.md`](TIMA_BENCHMARK_UPGRADE.md), [`TIMA_PREDICTION_FEATURE_CANDIDATES.md`](TIMA_PREDICTION_FEATURE_CANDIDATES.md): TIMA 벤치마크 관련 문서
 
 > 뉴스 임팩트 LLM 시스템 프롬프트는 **코드 자산**이므로 `docs/`에 두지 않고
