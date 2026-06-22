@@ -124,20 +124,28 @@ DISPLAY_ONLY_CONTEXT_COLUMNS = frozenset(
     }
 )
 
-DISPLAY_ONLY_CONTEXT_PREFIXES = ("news_impact_",)
+DISPLAY_ONLY_CONTEXT_PREFIXES = ("news_", "disclosure_")
+DISPLAY_ONLY_CONTEXT_SUBSTRINGS = ("_news_", "_impact_")
 
 MODEL_FEATURE_COLUMN_BASE = FEATURE_COLUMN_BASE - DISPLAY_ONLY_CONTEXT_COLUMNS
+
+
+def is_display_only_context_column(column: str) -> bool:
+    return (
+        column in DISPLAY_ONLY_CONTEXT_COLUMNS
+        or column.startswith(DISPLAY_ONLY_CONTEXT_PREFIXES)
+        or any(pattern in column for pattern in DISPLAY_ONLY_CONTEXT_SUBSTRINGS)
+    )
 
 
 def select_feature_columns(df: pd.DataFrame) -> list[str]:
     return [
         c
         for c in df.columns
-        if c not in DISPLAY_ONLY_CONTEXT_COLUMNS
-        and not c.startswith(DISPLAY_ONLY_CONTEXT_PREFIXES)
+        if not is_display_only_context_column(c)
         and (c.startswith(FEATURE_COLUMN_PREFIXES) or c.endswith("_missing") or c in MODEL_FEATURE_COLUMN_BASE)
     ]
 
 
 def display_context_columns(df: pd.DataFrame) -> list[str]:
-    return [c for c in df.columns if c in DISPLAY_ONLY_CONTEXT_COLUMNS]
+    return [c for c in df.columns if is_display_only_context_column(c)]

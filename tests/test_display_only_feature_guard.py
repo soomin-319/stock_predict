@@ -58,6 +58,29 @@ def test_select_feature_columns_excludes_any_news_impact_prefixed_column_even_mi
     assert all(not column.startswith("news_impact_") for column in selected)
 
 
+def test_select_feature_columns_excludes_display_context_name_patterns():
+    df = pd.DataFrame(
+        {
+            "daily_return": [0.01],
+            "ret_1": [0.02],
+            "news_sentiment_raw": [0.9],
+            "news_sentiment_raw_missing": [0.0],
+            "latest_news_headline": ["수주 확대"],
+            "latest_news_headline_missing": [0.0],
+            "foo_impact_score": [95.0],
+            "foo_impact_score_missing": [0.0],
+            "disclosure_impact_label": ["positive"],
+            "disclosure_impact_label_missing": [0.0],
+            "disclosure_event_summary": ["공급계약"],
+            "disclosure_event_summary_missing": [0.0],
+        }
+    )
+
+    selected = select_feature_columns(df)
+
+    assert selected == ["daily_return", "ret_1"]
+
+
 def test_model_feature_values_do_not_change_when_news_and_disclosure_context_changes():
     low_context = build_features(_sample_ohlcv(news_value=0.0, disclosure_value=0.0), FeatureConfig())
     high_context = build_features(_sample_ohlcv(news_value=1.0, disclosure_value=1.0), FeatureConfig())
