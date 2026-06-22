@@ -258,6 +258,10 @@ def test_run_pipeline_generates_report_without_graph_artifacts(tmp_path):
     assert "walk_forward" in payload
     assert "baselines" in payload
     assert "config_input" in payload
+    assert payload["news_impact_runtime"]["requested_mode"] in {"rule", "gemma", "none"}
+    assert payload["news_impact_runtime"]["actual_mode"] in {"rule_based", "gemma", "none"}
+    assert isinstance(payload["news_impact_runtime"]["fallback_used"], bool)
+    assert "fallback_reason" in payload["news_impact_runtime"]
     assert payload["config_input"] == payload["config"]
     assert "tuned_signal" in payload
     assert set(payload["signal_weights_tuned"]) == set(payload["config"]["signal"])
@@ -709,7 +713,18 @@ def test_latest_prediction_accepts_tuned_signal_config(monkeypatch):
     monkeypatch.setattr("src.pipeline.MultiHeadStockModel", FakeModel)
     monkeypatch.setattr("src.pipeline.get_symbol_name_map", lambda *_args, **_kwargs: {})
     monkeypatch.setattr("src.pipeline.append_issue_summary_columns", lambda pred_df, **_kwargs: pred_df)
-    monkeypatch.setattr("src.pipeline.append_generated_news_impact_context", lambda pred_df, *_args, **_kwargs: pred_df)
+    monkeypatch.setattr(
+        "src.pipeline.append_generated_news_impact_context_with_runtime",
+        lambda pred_df, *_args, **_kwargs: types.SimpleNamespace(
+            frame=pred_df,
+            to_metadata=lambda: {
+                "requested_mode": "rule",
+                "actual_mode": "none",
+                "fallback_used": False,
+                "fallback_reason": "no_context_rows",
+            },
+        ),
+    )
 
     pred_df, *_ = _predict_pipeline_latest(
         feat=feat,
@@ -782,7 +797,18 @@ def test_latest_prediction_degrades_when_issue_summary_fails(monkeypatch):
         raise RuntimeError("llm down")
 
     monkeypatch.setattr("src.pipeline.append_issue_summary_columns", fail_issue_summary)
-    monkeypatch.setattr("src.pipeline.append_generated_news_impact_context", lambda pred_df, *_args, **_kwargs: pred_df)
+    monkeypatch.setattr(
+        "src.pipeline.append_generated_news_impact_context_with_runtime",
+        lambda pred_df, *_args, **_kwargs: types.SimpleNamespace(
+            frame=pred_df,
+            to_metadata=lambda: {
+                "requested_mode": "rule",
+                "actual_mode": "none",
+                "fallback_used": False,
+                "fallback_reason": "no_context_rows",
+            },
+        ),
+    )
 
     pred_df, *_ = _predict_pipeline_latest(
         feat=feat,
