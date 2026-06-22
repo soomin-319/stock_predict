@@ -147,6 +147,39 @@ def test_nan_liquidity_threshold_uses_default_minimum():
     assert "LOW_LIQUIDITY" in risk_flag(row)
 
 
+def test_scalar_adapters_preserve_missing_value_policy_defaults():
+    row = pd.Series(
+        {
+            "predicted_return": np.nan,
+            "confidence_score": np.nan,
+            "coverage_gate_status": "",
+            "uncertainty_score": np.nan,
+            "up_probability": np.nan,
+            "history_direction_accuracy": np.nan,
+            "value_traded": 0,
+            "min_liquidity_threshold": np.nan,
+            "external_coverage_ratio": np.nan,
+            "investor_coverage_ratio": np.nan,
+            "market_headwind_score": np.nan,
+            "turnover_rank_daily": np.nan,
+            "foreign_net_buy": np.nan,
+            "institution_net_buy": np.nan,
+            "breakout_52w_flag": np.nan,
+            "near_52w_high_flag": np.nan,
+            "leader_confirmation_flag": np.nan,
+            "nq_f_ret_1d": np.nan,
+            "rsi_14": np.nan,
+        },
+        name="missing",
+    )
+    frame = pd.DataFrame([row.to_dict()], index=[row.name])
+
+    assert risk_flag(row) == signal_policy._risk_flag_series(frame).iloc[0]
+    assert prediction_reason(row) == signal_policy._prediction_reason_series(frame).iloc[0]
+    assert signal_policy._jongbae_score(row) == signal_policy._jongbae_score_series(frame).iloc[0]
+    assert build_pm_summary_fields(row) == signal_policy._pm_summary_frame(frame).iloc[0].to_dict()
+
+
 def test_build_prediction_policy_frame_has_no_rowwise_apply_calls():
     source = inspect.getsource(build_prediction_policy_frame)
 
