@@ -186,6 +186,33 @@ def test_build_prediction_policy_frame_has_no_rowwise_apply_calls():
     assert ".apply(" not in source
 
 
+def test_policy_adapter_recommendation_ignores_non_return_context_columns():
+    base = pd.Series(
+        {
+            "predicted_return": 2.5,
+            "signal_score": -999.0,
+            "up_probability": 0.0,
+            "uncertainty_score": 1.0,
+            "news_impact_score": -1.0,
+            "disclosure_impact_score": -1.0,
+            "confidence_score": 0.9,
+        }
+    )
+    changed = base.copy()
+    changed["signal_score"] = 999.0
+    changed["up_probability"] = 1.0
+    changed["uncertainty_score"] = 0.0
+    changed["news_impact_score"] = 1.0
+    changed["disclosure_impact_score"] = 1.0
+
+    assert build_pm_summary_fields(base)["recommendation"] == "\uB9E4\uC218"
+    assert build_pm_summary_fields(changed)["recommendation"] == "\uB9E4\uC218"
+
+    base_frame = pd.DataFrame([base.to_dict(), changed.to_dict()])
+    out = build_prediction_policy_frame(base_frame)
+    assert out["recommendation"].tolist() == ["\uB9E4\uC218", "\uB9E4\uC218"]
+
+
 def test_vectorized_recommendation_matches_scalar_with_custom_thresholds():
     cfg = SignalConfig(
         recommendation_buy_threshold_pct=3.0,
