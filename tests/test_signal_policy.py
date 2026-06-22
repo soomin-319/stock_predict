@@ -118,6 +118,17 @@ def test_build_prediction_policy_frame_matches_scalar_policy_helpers():
     assert out["recommendation"].tolist() == ["\uB9E4\uC218", "\uB9E4\uB3C4", "\uAD00\uB9DD"]
 
 
+def test_scalar_policy_helpers_match_vectorized_single_row_outputs():
+    frame = _policy_input_frame()
+
+    for idx, row in frame.iterrows():
+        one_row = frame.loc[[idx]]
+        assert risk_flag(row) == signal_policy._risk_flag_series(one_row).iloc[0]
+        assert prediction_reason(row) == signal_policy._prediction_reason_series(one_row).iloc[0]
+        assert signal_policy._jongbae_score(row) == signal_policy._jongbae_score_series(one_row).iloc[0]
+        assert build_pm_summary_fields(row) == signal_policy._pm_summary_frame(one_row).iloc[0].to_dict()
+
+
 def test_nan_liquidity_threshold_uses_default_minimum():
     row = pd.Series(
         {
