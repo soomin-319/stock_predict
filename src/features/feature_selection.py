@@ -19,6 +19,11 @@ FEATURE_COLUMN_PREFIXES = (
     "tnx",
 )
 
+# Model-eligible feature names that are not already matched by FEATURE_COLUMN_PREFIXES.
+# Display-only context names (news_*, disclosure_*, *_impact_*, and composite scores)
+# must NOT be listed here; they live solely in DISPLAY_ONLY_CONTEXT_COLUMNS and are kept
+# out of model features by is_display_only_context_column(). The invariant is locked by
+# tests/test_feature_module_boundaries.py.
 FEATURE_COLUMN_BASE = frozenset(
     {
         "daily_return",
@@ -57,11 +62,6 @@ FEATURE_COLUMN_BASE = frozenset(
         "institution_net_buy",
         "foreign_ownership_ratio",
         "program_trading_flow",
-        "disclosure_score",
-        "news_sentiment",
-        "news_relevance_score",
-        "news_impact_score",
-        "news_article_count",
         "foreign_buy_signal",
         "institution_buy_signal",
         "smart_money_buy_signal",
@@ -74,15 +74,12 @@ FEATURE_COLUMN_BASE = frozenset(
         "foreign_net_buy_5d",
         "institution_net_buy_3d",
         "institution_net_buy_5d",
-        "news_positive_signal",
-        "news_negative_signal",
         "close_to_52w_high",
         "near_52w_high_flag",
         "breakout_52w_flag",
         "leader_confirmation_flag",
         "rsi_pullback_buy_flag",
         "rsi_overbought_sell_flag",
-        "investor_event_score",
         "limit_hit_up_flag",
         "limit_hit_down_flag",
         "limit_event_flag",
@@ -102,12 +99,12 @@ FEATURE_COLUMN_BASE = frozenset(
         "nasdaq_tailwind_flag",
         "nasdaq_headwind_flag",
         "rsi_buy_watch_flag",
-        "news_same_day_signal",
-        "disclosure_same_day_signal",
         "jongbae_score",
     }
 )
 
+# Single source of truth for display-only context column names. These are attached to
+# results for user display only and must never become model features, rankings, or signals.
 DISPLAY_ONLY_CONTEXT_COLUMNS = frozenset(
     {
         "disclosure_score",
@@ -127,6 +124,8 @@ DISPLAY_ONLY_CONTEXT_COLUMNS = frozenset(
 DISPLAY_ONLY_CONTEXT_PREFIXES = ("news_", "disclosure_")
 DISPLAY_ONLY_CONTEXT_SUBSTRINGS = ("_news_", "_impact_")
 
+# Defense-in-depth: FEATURE_COLUMN_BASE already omits display-only names, but subtract
+# again so any future accidental addition still cannot leak into model features.
 MODEL_FEATURE_COLUMN_BASE = FEATURE_COLUMN_BASE - DISPLAY_ONLY_CONTEXT_COLUMNS
 
 
