@@ -162,6 +162,11 @@ def _run_fold_window(
     return _run_fold((fold_id, train_end_date, valid_start_date, valid_end_date, train_df, valid_df), feature_columns, cfg)
 
 
+def resolve_worker_count(n_jobs: int, cpu_count: int) -> int:
+    """Resolve a configured ``n_jobs`` (``-1`` means all cores) to a positive worker count."""
+    return cpu_count if n_jobs == -1 else max(1, n_jobs)
+
+
 def _execute_fold_windows(
     df: pd.DataFrame,
     windows: Iterable[FoldWindow],
@@ -174,7 +179,7 @@ def _execute_fold_windows(
 
     n_jobs = int(getattr(cfg, "walk_forward_n_jobs", 1) or 1)
     cpu_count = os.cpu_count() or 1
-    worker_count = min(cpu_count if n_jobs == -1 else max(1, n_jobs), len(fold_windows))
+    worker_count = min(resolve_worker_count(n_jobs, cpu_count), len(fold_windows))
 
     numbered_windows = [(fold_id, *window) for fold_id, window in enumerate(fold_windows)]
     if worker_count == 1:
@@ -193,7 +198,7 @@ def _execute_folds(folds: List[FoldInput], feature_columns: List[str], cfg: Trai
 
     n_jobs = int(getattr(cfg, "walk_forward_n_jobs", 1) or 1)
     cpu_count = os.cpu_count() or 1
-    worker_count = min(cpu_count if n_jobs == -1 else max(1, n_jobs), len(folds))
+    worker_count = min(resolve_worker_count(n_jobs, cpu_count), len(folds))
 
     numbered_folds = [(fold_id, *fold) for fold_id, fold in enumerate(folds)]
     if worker_count == 1:
