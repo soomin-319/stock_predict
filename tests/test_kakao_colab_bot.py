@@ -270,6 +270,38 @@ def test_bot_session_helpers_delegate_to_session_store(tmp_path: Path, monkeypat
     ]
 
 
+def test_bot_job_helpers_delegate_to_job_store(tmp_path: Path, monkeypatch):
+    bot = make_bot(tmp_path)
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(
+        bot._job_store,
+        "mark_failed",
+        lambda symbol, exit_code, note="": calls.append(("mark_failed", (symbol, exit_code, note))),
+    )
+    monkeypatch.setattr(
+        bot._job_store,
+        "elapsed_seconds",
+        lambda job_state: calls.append(("elapsed_seconds", job_state)) or 12.5,
+    )
+    monkeypatch.setattr(
+        bot._job_store,
+        "mark_stale_running_on_startup",
+        lambda: calls.append(("stale", None)) or True,
+    )
+
+    bot._mark_job_failed("005930.KS", -2, "stale_running_state")
+    elapsed = bot._job_elapsed_seconds({"completed_at": "invalid"})
+    bot._cleanup_stale_running_jobs_on_startup()
+
+    assert elapsed == 12.5
+    assert calls == [
+        ("mark_failed", ("005930.KS", -2, "stale_running_state")),
+        ("elapsed_seconds", {"completed_at": "invalid"}),
+        ("stale", None),
+    ]
+
+
 def test_returns_cached_prediction_message_from_kakao_payload(tmp_path: Path):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
