@@ -18,19 +18,6 @@ from src.features.technical_indicators import (
 )
 
 
-WARNING_LEVEL_MAP = {
-    "none": 0.0,
-    "normal": 0.0,
-    "투자주의": 1.0,
-    "주의": 1.0,
-    "investment_caution": 1.0,
-    "투자경고": 2.0,
-    "경고": 2.0,
-    "investment_warning": 2.0,
-    "투자위험": 3.0,
-    "위험": 3.0,
-    "investment_risk": 3.0,
-}
 KRX_PRICE_LIMIT_CHANGE_DATE = pd.Timestamp("2015-06-15")
 NEUTRAL_FEATURE_VALUES = {
     "rsi_14": 50.0,
@@ -48,43 +35,6 @@ def _coerce_numeric_series(df: pd.DataFrame, aliases: list[str], default: float 
     if src is None:
         return pd.Series(default, index=df.index, dtype=float)
     return pd.to_numeric(df[src], errors="coerce").fillna(default)
-
-
-def _coerce_flag_series(df: pd.DataFrame, aliases: list[str], truthy: set[str] | None = None) -> pd.Series:
-    src = next((c for c in aliases if c in df.columns), None)
-    if src is None:
-        return pd.Series(0.0, index=df.index, dtype=float)
-
-    values = df[src]
-    if pd.api.types.is_bool_dtype(values):
-        return values.astype(float)
-    if pd.api.types.is_numeric_dtype(values):
-        return pd.to_numeric(values, errors="coerce").fillna(0.0).gt(0).astype(float)
-
-    valid = truthy or {"1", "y", "yes", "true", "t", "on", "발동", "지정", "해당", "krx", "nxt"}
-    normalized = values.astype(str).str.strip().str.lower()
-    return normalized.isin(valid).astype(float)
-
-
-def _coerce_category_series(df: pd.DataFrame, aliases: list[str], default: str) -> pd.Series:
-    src = next((c for c in aliases if c in df.columns), None)
-    if src is None:
-        return pd.Series(default, index=df.index, dtype="object")
-    return df[src].astype(str).str.strip().replace({"": default}).fillna(default)
-
-
-def _warning_level_series(df: pd.DataFrame) -> pd.Series:
-    src = next((c for c in ["warning_level", "시장경보", "투자경보단계", "WarningLevel"] if c in df.columns), None)
-    if src is None:
-        return pd.Series(0.0, index=df.index, dtype=float)
-
-    values = df[src]
-    if pd.api.types.is_numeric_dtype(values):
-        return pd.to_numeric(values, errors="coerce").fillna(0.0)
-
-    normalized = values.astype(str).str.strip().str.lower()
-    mapped = normalized.map(WARNING_LEVEL_MAP)
-    return mapped.fillna(0.0).astype(float)
 
 
 def _price_limit_pct(df: pd.DataFrame) -> pd.Series:
@@ -109,67 +59,12 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     out = out.sort_values(["Symbol", "Date", "_feature_input_order"], kind="stable")
     grouped = out.groupby("Symbol", group_keys=False)
 
-    # Backward-compatible defaults for legacy low-priority fields that may
-    # still be referenced in older local copies or partially-updated branches.
-    # They are dropped again before returning so the final feature set remains
-    # limited to the requested key catalyst signals.
-    legacy_removed_default_map = {
-        "individual_net_buy": 0.0,
-        "foreign_ownership_ratio": 0.0,
-        "program_trading_flow": 0.0,
-        "market_type_kospi": 0.0,
-        "market_type_kosdaq": 0.0,
-        "market_type_konex": 0.0,
-        "venue_krx": 0.0,
-        "venue_nxt": 0.0,
-        "session_regular": 0.0,
-        "session_premarket": 0.0,
-        "session_aftermarket": 0.0,
-        "session_offhours": 0.0,
-        "days_since_listing": 9999.0,
-        "is_newly_listed": 0.0,
-        "is_newly_listed_60d": 0.0,
-        "warning_level": 0.0,
-        "market_warning_flag": 0.0,
-        "halt_flag": 0.0,
-        "vi_flag": 0.0,
-        "vi_count": 0.0,
-        "short_term_overheat_flag": 0.0,
-        "short_sell_flag": 0.0,
-        "short_sell_balance": 0.0,
-        "short_sell_ratio": 0.0,
-        "short_sell_overheat_flag": 0.0,
-        "individual_buy_signal": 0.0,
-        "retail_chase_signal": 0.0,
-        "vi_after_return": 0.0,
-        "vi_after_volume_spike": 0.0,
-        "pbr": 0.0,
-        "per": 0.0,
-        "roe": 0.0,
-        "dividend_yield": 0.0,
-        "buyback_flag": 0.0,
-        "share_cancellation_flag": 0.0,
-        "value_up_disclosure_flag": 0.0,
-        "shareholder_return_score": 0.0,
-        "short_sell_event_score": 0.0,
-    }
-    missing_defaults = {
-        column: pd.Series(default, index=out.index, dtype=float)
-        for column, default in legacy_removed_default_map.items()
-        if column not in out.columns
-    }
-    if missing_defaults:
-        out = pd.concat([out, pd.DataFrame(missing_defaults, index=out.index)], axis=1)
-        grouped = out.groupby("Symbol", group_keys=False)
-
     # Keep only the high-priority investor/event inputs that drive the
     # requested selection buckets: top-turnover disclosures, favorable news,
     # foreign/institution buying, and 52-week-high trend strength.
     numeric_alias_map = {
         "foreign_net_buy": ["foreign_net_buy", "외국인순매수", "ForeignNetBuy"],
         "institution_net_buy": ["institution_net_buy", "기관순매수", "InstitutionNetBuy"],
-        "foreign_ownership_ratio": ["foreign_ownership_ratio", "외국인보유비중", "ForeignOwnershipRatio"],
-        "program_trading_flow": ["program_trading_flow", "프로그램순매수", "ProgramTradingFlow"],
         "disclosure_score": ["disclosure_score", "공시점수", "DisclosureScore"],
         "news_sentiment": ["news_sentiment", "뉴스점수", "NewsSentiment"],
         "news_relevance_score": ["news_relevance_score", "뉴스관련도", "NewsRelevanceScore"],
@@ -284,18 +179,6 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
     feature_cols["limit_hit_up_flag"] = limit_hit_up_flag
     feature_cols["limit_hit_down_flag"] = limit_hit_down_flag
     feature_cols["limit_event_flag"] = ((limit_hit_up_flag + limit_hit_down_flag) > 0).astype(float)
-    feature_cols["vi_after_return"] = out["daily_return"].fillna(0.0) * out["vi_flag"]
-    feature_cols["vi_after_volume_spike"] = out["vol_ratio_20"].replace([np.inf, -np.inf], np.nan).fillna(0.0) * out["vi_flag"]
-    feature_cols["short_sell_event_score"] = (
-        0.5 * out["short_sell_overheat_flag"]
-        + 0.3 * out["short_sell_flag"]
-        + 0.2 * (out["short_sell_ratio"] > 0).astype(float)
-    )
-    feature_cols["shareholder_return_score"] = (
-        0.4 * out["buyback_flag"]
-        + 0.3 * out["share_cancellation_flag"]
-        + 0.3 * out["value_up_disclosure_flag"]
-    )
     out = pd.concat([out, pd.DataFrame(feature_cols, index=out.index)], axis=1)
 
     drop_source_cols = [
@@ -347,7 +230,6 @@ def build_features(df: pd.DataFrame, cfg: FeatureConfig) -> pd.DataFrame:
         "ValueUpDisclosureFlag",
     ]
     out = out.drop(columns=[c for c in drop_source_cols if c in out.columns], errors="ignore")
-    out = out.drop(columns=list(legacy_removed_default_map.keys()), errors="ignore")
 
     out = out.copy()
     out["target_log_return"] = grouped["Close"].transform(lambda x: np.log(x.shift(-1) / x))
