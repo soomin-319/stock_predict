@@ -1209,6 +1209,59 @@ def test_cached_prediction_message_renders_issue_summary_block_header(tmp_path: 
     assert "주의사항:" not in text
 
 
+def test_prediction_message_formatter_matches_bot_output_for_cached_row(tmp_path: Path):
+    from src.chatbot.message_formatter import PredictionMessageFormatter
+
+    bot = make_bot(tmp_path)
+    row = pd.Series(
+        {
+            "종목코드": "005930",
+            "종목명": "삼성전자",
+            "권고": "매수",
+            "내일 예상 수익률(%)": 2.34,
+            "상승확률(%)": 61.2,
+            "내일 예상 종가": 71000,
+            "예측 신뢰도": "높음",
+            "예측 이유": "거래대금 상위 / 외국인 기관 순매수 / 나스닥 선물 +1%",
+            "공시 요약": "신규 공급계약 체결",
+            "뉴스 요약": "AI 반도체 수요 증가",
+            "뉴스/공시 영향 점수": "긍정 2",
+            "뉴스/공시 영향 요약": "참고용 호재",
+            "뉴스/공시 영향 참고": "참고용·예측값 미반영",
+        }
+    )
+
+    assert PredictionMessageFormatter().format_prediction_message(row) == bot._build_prediction_message_from_row(row)
+
+
+def test_prediction_message_formatter_display_context_does_not_change_recommendation(tmp_path: Path):
+    from src.chatbot.message_formatter import PredictionMessageFormatter
+
+    formatter = PredictionMessageFormatter()
+    base = pd.Series(
+        {
+            "종목코드": "000001",
+            "종목명": "테스트",
+            "권고": "관망",
+            "내일 예상 수익률(%)": 0.1,
+            "상승확률(%)": 50.0,
+            "내일 예상 종가": 1000,
+            "예측 신뢰도": "보통",
+        }
+    )
+    with_context = base.copy()
+    with_context["뉴스 요약"] = "강한 호재"
+    with_context["공시 요약"] = "대형 계약"
+    with_context["뉴스/공시 영향 점수"] = "긍정 9"
+    with_context["뉴스/공시 영향 요약"] = "표시 전용"
+
+    rendered = formatter.format_prediction_message(with_context)
+
+    assert "권고: 관망" in rendered
+    assert "강한 호재" in rendered
+    assert "표시 전용" in rendered
+
+
 def test_cached_prediction_message_splits_issue_summary_into_bullets(tmp_path: Path):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
