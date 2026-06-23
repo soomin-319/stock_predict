@@ -118,6 +118,7 @@ class ChatbotJobStore:
                 state["exit_code"] = -2
                 state["completed_at"] = now
                 state["failure_note"] = "stale_running_on_startup"
+                state["note"] = "stale_after_restart"
                 state.pop("command", None)
                 state.pop("pid", None)
                 changed = True

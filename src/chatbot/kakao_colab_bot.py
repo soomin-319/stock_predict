@@ -18,7 +18,7 @@ import traceback
 import urllib.request
 import zipfile
 from difflib import SequenceMatcher
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -32,6 +32,7 @@ from src.data.investor_context import collect_context_raw_events
 from src.data.krx_universe import find_symbol_candidates_by_name, get_symbol_name_map
 from src.data.fetch_real_data import normalize_user_symbols
 from src.chatbot.intent import is_help_utterance, is_status_utterance, normalize_utterance
+from src.chatbot.job_store import ChatbotJobStore, PredictionJobState
 from src.chatbot.message_formatter import PredictionMessageFormatter
 from src.chatbot.responses import attach_quick_replies, list_card_response, simple_text_response
 from src.chatbot.session_store import ChatbotSessionStore, load_registry, save_registry
@@ -50,19 +51,6 @@ _HELP_KEYWORDS = {"도움말", "help", "사용법", "시작", "안내"}
 _STATUS_KEYWORDS = {"결과", "상태", "진행상황", "조회", "확인"}
 _REFRESH_KEYWORDS = {"최신화", "새로고침", "재실행", "다시예측", "다시 예측"}
 _RECOMMENDATION_KEYWORDS = {"추천"}
-
-
-@dataclass(slots=True)
-class PredictionJobState:
-    symbol: str
-    display_code: str
-    command: list[str]
-    log_path: str
-    submitted_at: str
-    status: str = "running"
-    pid: int | None = None
-    exit_code: int | None = None
-    completed_at: str | None = None
 
 
 @dataclass(slots=True)
@@ -220,8 +208,15 @@ class KakaoColabPredictionBot:
         self.recommendation_service = recommendation_service or RealTimeCloseBettingRecommendationService()
         self._state_lock = threading.RLock()
         self._active_processes: dict[str, Any] = {}
-        self._job_registry = self._load_registry(state_load_path)
+        loaded_job_registry = self._load_registry(state_load_path)
         loaded_session_registry = self._load_registry(session_load_path)
+        self._job_store = ChatbotJobStore(
+            path=self.state_path,
+            registry=loaded_job_registry,
+            lock=self._state_lock,
+            secret_values=self.runtime_config.secret_values(),
+        )
+        self._job_registry = self._job_store.data
         self._session_store = ChatbotSessionStore(
             path=self.session_path,
             registry=loaded_session_registry,
@@ -230,7 +225,7 @@ class KakaoColabPredictionBot:
         )
         self._session_registry = self._session_store.data
         if state_load_path != self.state_path:
-            self._save_registry(self.state_path, self._job_registry)
+            self._job_store.save()
         if session_load_path != self.session_path:
             self._save_registry(self.session_path, self._session_registry)
         self._result_simple_cache: pd.DataFrame | None = None
@@ -256,20 +251,7 @@ class KakaoColabPredictionBot:
         return path if path.is_absolute() else self.project_root / path
 
     def _cleanup_stale_running_jobs_on_startup(self) -> None:
-        changed = False
-        now = datetime.now(timezone.utc).isoformat()
-        with self._state_lock:
-            for state in self._job_registry.values():
-                if state.get("status") != "running":
-                    continue
-                state["status"] = "failed"
-                state["exit_code"] = -2
-                state["completed_at"] = now
-                state["note"] = "stale_after_restart"
-                state.pop("pid", None)
-                changed = True
-            if changed:
-                self._save_registry(self.state_path, self._job_registry)
+        self._job_store.mark_stale_running_on_startup()
 
     def _load_latest_manifest(self) -> dict[str, Any] | None:
         pointer_path = self.result_root / "latest_manifest.json"
@@ -974,21 +956,8 @@ class KakaoColabPredictionBot:
             except Exception:
                 pass
 
-        status = "completed" if exit_code == 0 else "failed"
-        with self._state_lock:
-            job_state = self._job_registry.get(symbol, {})
-        job_state.update(
-            {
-                "status": status,
-                "exit_code": int(exit_code),
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
-        job_state.pop("command", None)
-        job_state.pop("pid", None)
-        with self._state_lock:
-            self._job_registry[symbol] = job_state
-            self._save_registry(self.state_path, self._job_registry)
+        job_state = self._job_store.mark_completed(symbol, int(exit_code))
+        status = str(job_state.get("status") or "failed")
 
         display_code = self._display_code(symbol)
         is_bootstrap_job = symbol == self.BOOTSTRAP_JOB_KEY
@@ -1014,33 +983,10 @@ class KakaoColabPredictionBot:
             self._active_processes.pop(symbol, None)
 
     def _mark_job_failed(self, symbol: str, exit_code: int, note: str = ""):
-        with self._state_lock:
-            job_state = self._job_registry.get(symbol, {})
-            job_state.update(
-                {
-                    "status": "failed",
-                    "exit_code": int(exit_code),
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                    "failure_note": str(note or ""),
-                }
-            )
-            job_state.pop("command", None)
-            job_state.pop("pid", None)
-            self._job_registry[symbol] = job_state
-            self._save_registry(self.state_path, self._job_registry)
+        self._job_store.mark_failed(symbol, exit_code=exit_code, note=note)
 
     def _job_elapsed_seconds(self, job_state: dict[str, Any]) -> float | None:
-        completed_at = str(job_state.get("completed_at") or "").strip()
-        if not completed_at:
-            return None
-        try:
-            completed_dt = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
-        except Exception:
-            return None
-        now_utc = datetime.now(timezone.utc)
-        if completed_dt.tzinfo is None:
-            completed_dt = completed_dt.replace(tzinfo=timezone.utc)
-        return max(0.0, (now_utc - completed_dt.astimezone(timezone.utc)).total_seconds())
+        return self._job_store.elapsed_seconds(job_state)
 
     def _log_completion_preview(self, symbol: str):
         display_code = self._display_code(symbol)
@@ -1089,11 +1035,7 @@ class KakaoColabPredictionBot:
             if existing.get("status") == "running":
                 self._console_log(f"{self._display_code(symbol)} 예측 작업이 이미 실행 중입니다.")
                 return True
-            running_count = sum(
-                1
-                for key, state in self._job_registry.items()
-                if key != self.BOOTSTRAP_JOB_KEY and state.get("status") == "running"
-            )
+            running_count = self._job_store.running_prediction_count(self.BOOTSTRAP_JOB_KEY)
             max_jobs = max(1, int(self.runtime_config.max_concurrent_prediction_jobs or 1))
             if running_count >= max_jobs:
                 self._console_log(
@@ -1151,24 +1093,16 @@ class KakaoColabPredictionBot:
                 log_handle.close()
             except Exception:
                 pass
-            with self._state_lock:
-                failed_state = asdict(
-                    PredictionJobState(
-                        symbol=symbol,
-                        display_code=display_code,
-                        command=safe_command,
-                        log_path=str(log_path.relative_to(self.project_root)),
-                        submitted_at=submitted_at,
-                        status="failed",
-                        pid=None,
-                        exit_code=-1,
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                    )
-                )
-                failed_state.pop("command", None)
-                failed_state.pop("pid", None)
-                self._job_registry[symbol] = failed_state
-                self._save_registry(self.state_path, self._job_registry)
+            failed_state = {
+                "symbol": symbol,
+                "display_code": display_code,
+                "log_path": str(log_path.relative_to(self.project_root)),
+                "submitted_at": submitted_at,
+                "status": "failed",
+                "exit_code": -1,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self._job_store.set(symbol, failed_state)
             return False
         log_thread = None
         if getattr(process, "stdout", None) is not None:
@@ -1197,7 +1131,8 @@ class KakaoColabPredictionBot:
                 "log_thread": log_thread,
                 "monitor_thread": monitor_thread,
             }
-            self._job_registry[symbol] = asdict(
+            self._job_store.set(
+                symbol,
                 PredictionJobState(
                     symbol=symbol,
                     display_code=display_code,
@@ -1206,9 +1141,8 @@ class KakaoColabPredictionBot:
                     submitted_at=submitted_at,
                     status="running",
                     pid=getattr(process, "pid", None),
-                )
+                ),
             )
-            self._save_registry(self.state_path, self._job_registry)
         return True
 
     def _start_bootstrap_job(self, force: bool = False) -> bool:
@@ -1230,18 +1164,17 @@ class KakaoColabPredictionBot:
         log_path = self.log_dir / f"bootstrap_{submitted_at.replace(':', '').replace('+00:00', 'Z')}.log"
         self._console_log("초기 전체 종목 예측 작업 시작: prewarm_prediction_cache(issue_summary=enabled)")
 
-        with self._state_lock:
-            self._job_registry[self.BOOTSTRAP_JOB_KEY] = asdict(
-                PredictionJobState(
-                    symbol=self.BOOTSTRAP_JOB_KEY,
-                    display_code="BOOTSTRAP",
-                    command=command,
-                    log_path=str(log_path.relative_to(self.project_root)),
-                    submitted_at=submitted_at,
-                    status="running",
-                )
-            )
-            self._save_registry(self.state_path, self._job_registry)
+        self._job_store.set(
+            self.BOOTSTRAP_JOB_KEY,
+            PredictionJobState(
+                symbol=self.BOOTSTRAP_JOB_KEY,
+                display_code="BOOTSTRAP",
+                command=command,
+                log_path=str(log_path.relative_to(self.project_root)),
+                submitted_at=submitted_at,
+                status="running",
+            ),
+        )
 
         worker = threading.Thread(
             target=self._run_bootstrap_prewarm_worker,
@@ -1276,8 +1209,7 @@ class KakaoColabPredictionBot:
                     "completed_at": datetime.now(timezone.utc).isoformat(),
                 }
             )
-            self._job_registry[self.BOOTSTRAP_JOB_KEY] = state
-            self._save_registry(self.state_path, self._job_registry)
+            self._job_store.set(self.BOOTSTRAP_JOB_KEY, state)
         if exit_code == 0:
             self._console_log("초기 전체 종목 예측 작업 completed (exit_code=0).")
             self._start_queued_summaries_after_bootstrap()
