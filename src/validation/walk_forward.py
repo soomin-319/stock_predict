@@ -48,8 +48,8 @@ def _iter_folds(df: pd.DataFrame, cfg: TrainingConfig):
 
 def _iter_fold_windows(df: pd.DataFrame, cfg: TrainingConfig):
     dates = sorted(df["Date"].dropna().unique())
-    # Purge gap prevents rows whose forward target overlaps the validation
-    # window from entering training (look-ahead bias on multi-horizon targets).
+    # Purge gap prevents rows whose forward target window overlaps the validation
+    # window from entering training (look-ahead bias from forward-looking targets).
     purge_gap = max(0, int(getattr(cfg, "purge_gap_days", 0) or 0))
     embargo = max(0, int(getattr(cfg, "embargo_days", 0) or 0))
     for start in range(cfg.min_train_size, len(dates) - cfg.test_size + 1, cfg.step_size):
