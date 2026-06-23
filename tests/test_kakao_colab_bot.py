@@ -240,6 +240,36 @@ def test_default_runtime_path_migrates_legacy_registry(tmp_path: Path):
     assert bot.state_path.exists()
 
 
+def test_bot_session_helpers_delegate_to_session_store(tmp_path: Path, monkeypatch):
+    bot = make_bot(tmp_path)
+    calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+
+    def fake_update(user_id, *, symbol, display_code, intent):
+        calls.append(("update", (user_id,), {"symbol": symbol, "display_code": display_code, "intent": intent}))
+
+    def fake_symbol_for(user_id):
+        calls.append(("symbol_for", (user_id,), {}))
+        return "005930.KS"
+
+    def fake_intent_for(user_id):
+        calls.append(("intent_for", (user_id,), {}))
+        return "tracking"
+
+    monkeypatch.setattr(bot._session_store, "update", fake_update)
+    monkeypatch.setattr(bot._session_store, "symbol_for", fake_symbol_for)
+    monkeypatch.setattr(bot._session_store, "intent_for", fake_intent_for)
+
+    bot._update_session("user-1", "005930.KS", "running")
+
+    assert bot._symbol_from_session("user-1") == "005930.KS"
+    assert bot._session_intent("user-1") == "tracking"
+    assert calls == [
+        ("update", ("user-1",), {"symbol": "005930.KS", "display_code": "005930", "intent": "running"}),
+        ("symbol_for", ("user-1",), {}),
+        ("intent_for", ("user-1",), {}),
+    ]
+
+
 def test_returns_cached_prediction_message_from_kakao_payload(tmp_path: Path):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
