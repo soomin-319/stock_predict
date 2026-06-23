@@ -90,7 +90,6 @@ from src.validation.walk_forward import walk_forward_validate_result
 from src.validation.result_validity import evaluate_backtest_validity
 from src.validation.support import (
     calibration_split_metrics as validation_calibration_split_metrics,
-    calibrate_up_probability as validation_calibrate_up_probability,
     compute_oof_diagnostics as validation_compute_oof_diagnostics,
     fit_up_probability_calibrator as validation_fit_up_probability_calibrator,
     prediction_from_oof_df as validation_prediction_from_oof_df,
@@ -136,10 +135,6 @@ def _project_result_dir() -> Path:
 def resolve_output_path(output_csv: str, is_windows: bool | None = None) -> Path:
     """Force all file outputs under project-local ./result directory."""
     return output_resolve_output_path(output_csv, is_windows=is_windows)
-
-
-def _feature_columns(df: pd.DataFrame) -> list[str]:
-    return select_feature_columns(df)
 
 
 def _adaptive_training_cfg(cfg, feat: pd.DataFrame):
@@ -313,10 +308,6 @@ def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: lis
 
 
 
-
-
-def _calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Index | list | tuple | pd.Series) -> pd.Series:
-    return validation_calibrate_up_probability(oof_df, up_probs)
 
 
 def _safe_to_csv(df: pd.DataFrame, path: Path, *, allow_fallback: bool = True) -> Path:
@@ -574,7 +565,7 @@ def _build_pipeline_feature_matrix(data: pd.DataFrame, cfg: Any, use_external: b
     feat = annotate_market_regime(feat)
     feat = add_investment_signal_features(feat, cfg.investment_criteria)
     feat = feat.dropna(subset=["target_log_return"]).copy()
-    feature_columns = _feature_columns(feat)
+    feature_columns = select_feature_columns(feat)
     return feat, external_coverage, feature_columns
 
 
