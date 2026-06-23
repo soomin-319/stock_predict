@@ -1,8 +1,7 @@
 import pandas as pd
 
 from src.config.settings import AppConfig
-from src.features.price_features import DISPLAY_ONLY_CONTEXT_COLUMNS, build_features
-from src.pipeline import _feature_columns
+from src.features.price_features import DISPLAY_ONLY_CONTEXT_COLUMNS, build_features, select_feature_columns
 
 
 EXPECTED_CORE_CONTEXT_COLUMNS = [
@@ -79,7 +78,7 @@ def test_investor_feature_columns_are_created_from_optional_inputs():
 
     df = pd.DataFrame(rows)
     out = build_features(df, cfg.feature)
-    feature_cols = _feature_columns(out)
+    feature_cols = select_feature_columns(out)
 
     for c in EXPECTED_CORE_CONTEXT_COLUMNS:
         assert c in out.columns
