@@ -1262,6 +1262,66 @@ def test_prediction_message_formatter_display_context_does_not_change_recommenda
     assert "표시 전용" in rendered
 
 
+def test_kakao_bot_prediction_message_helpers_delegate_to_formatter(tmp_path: Path):
+    bot = make_bot(tmp_path)
+    row = pd.Series({"종목코드": "000001", "종목명": "테스트", "권고": "관망"})
+    calls: list[str] = []
+
+    class StubFormatter:
+        def format_prediction_message(self, value):
+            calls.append("format")
+            assert value is row
+            return "formatted"
+
+        def build_reason_line(self, value):
+            calls.append("reason")
+            assert value is row
+            return "reason"
+
+        def build_issue_summary_block(self, value):
+            calls.append("issue")
+            assert value is row
+            return "issue"
+
+        def build_news_impact_block(self, value):
+            calls.append("impact")
+            assert value is row
+            return "impact"
+
+        def get_clean_issue_text(self, value):
+            calls.append("clean")
+            return "clean"
+
+        def to_bullet_lines(self, value):
+            calls.append("bullets")
+            return ["bullet"]
+
+        def format_percent(self, value):
+            calls.append("percent")
+            return "1.00%"
+
+        def format_price(self, value):
+            calls.append("price")
+            return "1,000원"
+
+        def format_confidence(self, value):
+            calls.append("confidence")
+            return "보통"
+
+    bot._message_formatter = StubFormatter()
+
+    assert bot._build_prediction_message_from_row(row) == "formatted"
+    assert bot._build_reason_line(row) == "reason"
+    assert bot._build_issue_summary_block(row) == "issue"
+    assert bot._build_news_impact_block(row) == "impact"
+    assert bot._get_clean_issue_text("x") == "clean"
+    assert bot._to_bullet_lines("x") == ["bullet"]
+    assert bot._format_percent(1) == "1.00%"
+    assert bot._format_price(1000) == "1,000원"
+    assert bot._format_confidence("보통") == "보통"
+    assert calls == ["format", "reason", "issue", "impact", "clean", "bullets", "percent", "price", "confidence"]
+
+
 def test_cached_prediction_message_splits_issue_summary_into_bullets(tmp_path: Path):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
