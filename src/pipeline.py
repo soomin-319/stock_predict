@@ -86,7 +86,7 @@ from src.validation.backtest import (
 )
 from src.validation.baselines import evaluate_baselines
 from src.validation.signal_tuning import tune_signal_weights
-from src.validation.walk_forward import walk_forward_validate_result
+from src.validation.walk_forward import resolve_worker_count, walk_forward_validate_result
 from src.validation.result_validity import evaluate_backtest_validity
 from src.validation.support import (
     calibration_split_metrics as validation_calibration_split_metrics,
@@ -334,6 +334,7 @@ class PipelineDiagnostics:
     row_counts: dict[str, int] = field(default_factory=dict)
     stage_status: dict[str, dict[str, str]] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    parallelism: dict[str, Any] = field(default_factory=dict)
 
     @contextmanager
     def time_stage(self, name: str) -> Iterator[None]:
@@ -359,12 +360,32 @@ class PipelineDiagnostics:
         if missing:
             self.warn(f"missing stage status: {', '.join(missing)}")
 
+    def set_parallelism(self, training_cfg: Any, cpu_count: int | None = None) -> None:
+        """Record configured vs resolved parallel worker counts for ops debugging.
+
+        ``resolved`` reflects how ``-1`` (all cores) expands on this host. During
+        parallel walk-forward folds each model is additionally pinned to a single
+        thread (see ``walk_forward._execute_folds``) to avoid CPU oversubscription.
+        """
+        cores = int(cpu_count if cpu_count is not None else (os.cpu_count() or 1))
+        configured = {
+            "walk_forward_n_jobs": int(training_cfg.walk_forward_n_jobs),
+            "model_n_jobs": int(training_cfg.model_n_jobs),
+            "model_head_n_jobs": int(training_cfg.model_head_n_jobs),
+        }
+        self.parallelism = {
+            "cpu_count": cores,
+            "configured": configured,
+            "resolved": {key: resolve_worker_count(value, cores) for key, value in configured.items()},
+        }
+
     def to_report(self, coverage_summary: dict[str, Any]) -> dict[str, Any]:
         return {
             "timings_seconds": {k: round(float(v), 6) for k, v in self.timings_seconds.items()},
             "row_counts": dict(self.row_counts),
             "stage_status": dict(self.stage_status),
             "warnings": list(self.warnings),
+            "parallelism": dict(self.parallelism),
             "coverage_summary": coverage_summary,
         }
 
@@ -1148,6 +1169,7 @@ def run_pipeline(
             cfg_overrides=cfg_overrides,
         )
     diagnostics.mark_stage("load_config_and_inputs", "ok")
+    diagnostics.set_parallelism(cfg.training)
     diagnostics.set_rows("raw_input", raw)
     diagnostics.set_rows("cleaned_input", cleaned)
 
