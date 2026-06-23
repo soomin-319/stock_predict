@@ -63,6 +63,8 @@ class SignalConfig:
     return_weight: float = 0.65  # 과거 rel_strength_weight(0.20)는 norm_return 중복이라 여기로 흡수
     up_prob_weight: float = 0.35
     uncertainty_penalty: float = 0.25
+    recommendation_buy_threshold_pct: float = 2.0
+    recommendation_sell_threshold_pct: float = -2.0
 
 
 @dataclass
@@ -165,6 +167,12 @@ def _validate_number(value, path: str, *, allow_zero: bool = False) -> None:
         raise ValueError(f"{path} must be a {comparator}, got {value!r}")
 
 
+def _validate_negative_number(value, path: str) -> None:
+    valid = isinstance(value, (int, float)) and not isinstance(value, bool) and value < 0
+    if not valid:
+        raise ValueError(f"{path} must be a negative number, got {value!r}")
+
+
 def _validate_positive_int_windows(values: list[int], path: str) -> None:
     valid = (
         isinstance(values, list)
@@ -233,6 +241,16 @@ def _validate_app_config(cfg: AppConfig) -> None:
     primary_weight_sum = cfg.signal.return_weight + cfg.signal.up_prob_weight
     if primary_weight_sum <= 0:
         raise ValueError("signal weights must include at least one positive primary weight")
+    _validate_number(cfg.signal.recommendation_buy_threshold_pct, "signal.recommendation_buy_threshold_pct")
+    _validate_negative_number(
+        cfg.signal.recommendation_sell_threshold_pct,
+        "signal.recommendation_sell_threshold_pct",
+    )
+    if cfg.signal.recommendation_sell_threshold_pct >= cfg.signal.recommendation_buy_threshold_pct:
+        raise ValueError(
+            "signal.recommendation_sell_threshold_pct must be less than "
+            "signal.recommendation_buy_threshold_pct"
+        )
 
     _validate_positive_int(cfg.investment_criteria.top_turnover_rank, "investment_criteria.top_turnover_rank")
     _validate_positive(cfg.investment_criteria.high_conviction_net_buy_krw, "investment_criteria.high_conviction_net_buy_krw", allow_zero=True)

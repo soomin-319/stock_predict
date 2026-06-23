@@ -62,8 +62,8 @@ from src.reports.report_metadata import build_report_metadata, generate_run_id, 
 from src.reports.run_artifacts import RunArtifactManager
 from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.news_impact_context import (
-    append_generated_news_impact_context,
-    append_llm_news_impact_context,
+    append_generated_news_impact_context_with_runtime,
+    append_llm_news_impact_context_with_runtime,
     append_news_impact_context,
 )
 from src.reports.result_formatter import (
@@ -90,7 +90,6 @@ from src.validation.walk_forward import walk_forward_validate_result
 from src.validation.result_validity import evaluate_backtest_validity
 from src.validation.support import (
     calibration_split_metrics as validation_calibration_split_metrics,
-    calibrate_up_probability as validation_calibrate_up_probability,
     compute_oof_diagnostics as validation_compute_oof_diagnostics,
     fit_up_probability_calibrator as validation_fit_up_probability_calibrator,
     prediction_from_oof_df as validation_prediction_from_oof_df,
@@ -136,10 +135,6 @@ def _project_result_dir() -> Path:
 def resolve_output_path(output_csv: str, is_windows: bool | None = None) -> Path:
     """Force all file outputs under project-local ./result directory."""
     return output_resolve_output_path(output_csv, is_windows=is_windows)
-
-
-def _feature_columns(df: pd.DataFrame) -> list[str]:
-    return select_feature_columns(df)
 
 
 def _adaptive_training_cfg(cfg, feat: pd.DataFrame):
@@ -313,10 +308,6 @@ def _expand_predictions_to_universe(pred_df: pd.DataFrame, universe_symbols: lis
 
 
 
-
-
-def _calibrate_up_probability(oof_df: pd.DataFrame, up_probs: pd.Series | pd.Index | list | tuple | pd.Series) -> pd.Series:
-    return validation_calibrate_up_probability(oof_df, up_probs)
 
 
 def _safe_to_csv(df: pd.DataFrame, path: Path, *, allow_fallback: bool = True) -> Path:
@@ -574,7 +565,7 @@ def _build_pipeline_feature_matrix(data: pd.DataFrame, cfg: Any, use_external: b
     feat = annotate_market_regime(feat)
     feat = add_investment_signal_features(feat, cfg.investment_criteria)
     feat = feat.dropna(subset=["target_log_return"]).copy()
-    feature_columns = _feature_columns(feat)
+    feature_columns = select_feature_columns(feat)
     return feat, external_coverage, feature_columns
 
 
@@ -736,7 +727,7 @@ def _predict_pipeline_latest(
     news_impact_report: str | None,
     signal_config: Any | None = None,
     news_impact_llm_config: str | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, dict, MultiHeadStockModel]:
+) -> tuple[pd.DataFrame, pd.DataFrame, dict, MultiHeadStockModel, dict[str, Any]]:
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
     lookback = int(getattr(cfg.training, "final_model_lookback_days", 0) or 0)
     if lookback > 0:
@@ -770,7 +761,12 @@ def _predict_pipeline_latest(
     sym_acc = build_symbol_history_accuracy(scored_oof)
     pred_df = pred_df.merge(sym_acc, on="Symbol", how="left")
     pred_df["history_direction_accuracy"] = pred_df["history_direction_accuracy"].fillna(0.5)
-    pred_df = finalize_latest_prediction_frame(pred_df, symbol_name_map, investment_criteria=cfg.investment_criteria)
+    pred_df = finalize_latest_prediction_frame(
+        pred_df,
+        symbol_name_map,
+        investment_criteria=cfg.investment_criteria,
+        signal_cfg=effective_signal_config,
+    )
     warnings: list[str] = []
     try:
         pred_df = append_issue_summary_columns(
@@ -785,11 +781,23 @@ def _predict_pipeline_latest(
         warning = f"issue summary unavailable: {exc}"
         warnings.append(warning)
         _LOGGER.warning("%s", warning)
+    news_impact_runtime = {
+        "requested_mode": "none",
+        "actual_mode": "none",
+        "fallback_used": False,
+        "fallback_reason": None,
+    }
     try:
         if news_impact_report:
             pred_df = append_news_impact_context(pred_df, news_impact_report)
+            news_impact_runtime = {
+                "requested_mode": "none",
+                "actual_mode": "none",
+                "fallback_used": False,
+                "fallback_reason": None,
+            }
         elif news_impact_llm_config:
-            pred_df = append_llm_news_impact_context(
+            runtime_result = append_llm_news_impact_context_with_runtime(
                 pred_df,
                 context_raw_df,
                 llm_config_path=news_impact_llm_config,
@@ -797,18 +805,28 @@ def _predict_pipeline_latest(
                 symbol_name_map=symbol_name_map,
                 run_date=pd.to_datetime(pred_df["Date"]).max().strftime("%Y-%m-%d"),
             )
+            pred_df = runtime_result.frame
+            news_impact_runtime = runtime_result.to_metadata()
         else:
-            pred_df = append_generated_news_impact_context(pred_df, context_raw_df)
+            runtime_result = append_generated_news_impact_context_with_runtime(pred_df, context_raw_df)
+            pred_df = runtime_result.frame
+            news_impact_runtime = runtime_result.to_metadata()
     except Exception as exc:
         warning = f"news impact context unavailable: {exc}"
         warnings.append(warning)
         _LOGGER.warning("%s", warning)
+        news_impact_runtime = {
+            "requested_mode": "gemma" if news_impact_llm_config else "rule",
+            "actual_mode": "none",
+            "fallback_used": bool(news_impact_llm_config),
+            "fallback_reason": f"{type(exc).__name__}: {exc}",
+        }
     if warnings:
         pred_df.attrs["warnings"] = warnings
     pred_df["예측 신뢰도"] = pred_df["confidence_score"].map(lambda v: formatter_format_percentage_text(v, digits=1, unit_interval=True))
     pred_df["권고"] = pred_df["recommendation"]
     oof_diagnostics = _compute_oof_diagnostics(scored_oof)
-    return pred_df, latest, oof_diagnostics, model
+    return pred_df, latest, oof_diagnostics, model, news_impact_runtime
 
 
 def _record_model_metadata_warnings(diagnostics: PipelineDiagnostics, model_metadata: dict[str, Any]) -> None:
@@ -836,6 +854,7 @@ def _write_pipeline_artifacts(
     artifact_manager: RunArtifactManager,
     feature_missing_rates: dict[str, float],
     final_model: MultiHeadStockModel,
+    news_impact_runtime: dict[str, Any],
 ) -> dict[str, Any]:
     scored_oof = validation_result["scored_oof"]
     backtest = validation_result["backtest"]
@@ -1000,6 +1019,7 @@ def _write_pipeline_artifacts(
             "status": coverage_gate_status,
         },
         "diagnostics": diagnostics_report,
+        "news_impact_runtime": news_impact_runtime,
         "oof_diagnostics": oof_diagnostics,
         "probability_calibration": validation_result["probability_calibration"],
         "model": {
@@ -1212,7 +1232,7 @@ def run_pipeline(
 
     _print_progress(12, total_steps, "Training final model and creating latest predictions")
     with diagnostics.time_stage("train_final_and_predict_latest"):
-        pred_df, latest, oof_diagnostics, final_model = _predict_pipeline_latest(
+        pred_df, latest, oof_diagnostics, final_model, news_impact_runtime = _predict_pipeline_latest(
             feat=feat,
             feature_columns=feature_columns,
             cfg=cfg,
@@ -1262,6 +1282,7 @@ def run_pipeline(
             artifact_manager=artifact_manager,
             feature_missing_rates=feature_missing_rates,
             final_model=final_model,
+            news_impact_runtime=news_impact_runtime,
         )
 
     _print_prediction_console_summary(pred_df)

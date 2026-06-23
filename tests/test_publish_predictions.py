@@ -32,6 +32,9 @@ def test_publish_artifacts_writes_latest_history_index(tmp_path: Path):
         published_root=published_root,
         trading_date="2026-06-17",
         news_mode="gemma",
+        requested_news_mode="gemma",
+        news_fallback_used=False,
+        news_fallback_reason=None,
         source_run_id="rid-1",
         symbol_count=2,
     )
@@ -40,8 +43,15 @@ def test_publish_artifacts_writes_latest_history_index(tmp_path: Path):
     latest_simple = published_root / "latest" / "csv" / "result_simple.csv"
     hist_simple = published_root / "history" / "2026-06-17" / "csv" / "result_simple.csv"
     assert latest_simple.exists() and hist_simple.exists()
-    assert json.loads((published_root / "latest" / "publish_meta.json").read_text(encoding="utf-8"))["news_mode"] == "gemma"
+    latest_meta = json.loads((published_root / "latest" / "publish_meta.json").read_text(encoding="utf-8"))
+    assert latest_meta["news_mode"] == "gemma"
+    assert latest_meta["requested_news_mode"] == "gemma"
+    assert latest_meta["news_fallback_used"] is False
+    assert latest_meta["news_fallback_reason"] is None
     assert read_index(published_root)["latest"] == "2026-06-17"
+    index_entry = read_index(published_root)["entries"][0]
+    assert index_entry["requested_news_mode"] == "gemma"
+    assert index_entry["news_fallback_used"] is False
 
 
 from src.ops.publish_predictions import infer_trading_date, ensure_operational_manifest
@@ -173,3 +183,41 @@ def test_run_publish_rule_mode_labels_news_mode_rule_based(tmp_path: Path):
     )
     assert result["news_mode"] == "rule_based"
     assert result["git"]["commit"] is None
+
+
+def test_run_publish_records_actual_news_runtime_from_pipeline_report(tmp_path: Path):
+    project_root = tmp_path
+    run_dir = project_root / "result" / "runs" / "rid-runtime"
+    _make_run_dir(run_dir)
+    (project_root / "result" / "latest_manifest.json").write_text(
+        '{"run_id": "rid-runtime"}', encoding="utf-8"
+    )
+
+    def fake_pipeline(news_impact_llm_config, full_refresh, config_json=None):
+        return {
+            "manifest": {"promoted": True, "status": "pass", "run_id": "rid-runtime"},
+            "news_impact_runtime": {
+                "requested_mode": "gemma",
+                "actual_mode": "rule_based",
+                "fallback_used": True,
+                "fallback_reason": "RuntimeError: gemma down",
+            },
+        }
+
+    result = run_publish(
+        _Args(news_mode="gemma"),
+        project_root=project_root,
+        pipeline_fn=fake_pipeline,
+        git_fn=lambda *a, **k: None,
+        provenance_fn=lambda: ("abc1234", "feat/publish"),
+    )
+
+    assert result["news_mode"] == "rule_based"
+    assert result["requested_news_mode"] == "gemma"
+    assert result["news_fallback_used"] is True
+    assert result["news_fallback_reason"] == "RuntimeError: gemma down"
+
+    meta = json.loads((project_root / "published" / "latest" / "publish_meta.json").read_text(encoding="utf-8"))
+    assert meta["news_mode"] == "rule_based"
+    assert meta["requested_news_mode"] == "gemma"
+    assert meta["news_fallback_used"] is True

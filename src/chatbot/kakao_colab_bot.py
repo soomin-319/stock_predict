@@ -18,7 +18,7 @@ import traceback
 import urllib.request
 import zipfile
 from difflib import SequenceMatcher
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -32,13 +32,16 @@ from src.data.investor_context import collect_context_raw_events
 from src.data.krx_universe import find_symbol_candidates_by_name, get_symbol_name_map
 from src.data.fetch_real_data import normalize_user_symbols
 from src.chatbot.intent import is_help_utterance, is_status_utterance, normalize_utterance
+from src.chatbot.job_store import ChatbotJobStore, PredictionJobState
+from src.chatbot.message_formatter import PredictionMessageFormatter
 from src.chatbot.responses import attach_quick_replies, list_card_response, simple_text_response
+from src.chatbot.session_store import ChatbotSessionStore, load_registry, save_registry
 from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.news_impact_context import append_generated_news_impact_context
 from src.reports.result_formatter import validate_result_simple_schema
 from src.ops.published_store import load_published_simple
 from src.utils.atomic_files import atomic_write_text
-from src.utils.secrets import redact_argv, redact_text, redact_value
+from src.utils.secrets import redact_argv, redact_text
 from src.recommendation.close_betting import format_recommendation_message
 from src.recommendation.realtime_close_betting import RealTimeCloseBettingRecommendationService
 
@@ -48,28 +51,6 @@ _HELP_KEYWORDS = {"도움말", "help", "사용법", "시작", "안내"}
 _STATUS_KEYWORDS = {"결과", "상태", "진행상황", "조회", "확인"}
 _REFRESH_KEYWORDS = {"최신화", "새로고침", "재실행", "다시예측", "다시 예측"}
 _RECOMMENDATION_KEYWORDS = {"추천"}
-
-
-@dataclass(slots=True)
-class PredictionJobState:
-    symbol: str
-    display_code: str
-    command: list[str]
-    log_path: str
-    submitted_at: str
-    status: str = "running"
-    pid: int | None = None
-    exit_code: int | None = None
-    completed_at: str | None = None
-
-
-@dataclass(slots=True)
-class UserSessionState:
-    user_id: str
-    last_symbol: str | None = None
-    last_display_code: str | None = None
-    last_intent: str = "idle"
-    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 @dataclass(slots=True)
@@ -225,11 +206,26 @@ class KakaoColabPredictionBot:
         self.session_path.parent.mkdir(parents=True, exist_ok=True)
         self.process_runner = process_runner or subprocess.Popen
         self.recommendation_service = recommendation_service or RealTimeCloseBettingRecommendationService()
+        self._state_lock = threading.RLock()
         self._active_processes: dict[str, Any] = {}
-        self._job_registry = self._load_registry(state_load_path)
-        self._session_registry = self._load_registry(session_load_path)
+        loaded_job_registry = self._load_registry(state_load_path)
+        loaded_session_registry = self._load_registry(session_load_path)
+        self._job_store = ChatbotJobStore(
+            path=self.state_path,
+            registry=loaded_job_registry,
+            lock=self._state_lock,
+            secret_values=self.runtime_config.secret_values(),
+        )
+        self._job_registry = self._job_store.data
+        self._session_store = ChatbotSessionStore(
+            path=self.session_path,
+            registry=loaded_session_registry,
+            lock=self._state_lock,
+            secret_values=self.runtime_config.secret_values(),
+        )
+        self._session_registry = self._session_store.data
         if state_load_path != self.state_path:
-            self._save_registry(self.state_path, self._job_registry)
+            self._job_store.save()
         if session_load_path != self.session_path:
             self._save_registry(self.session_path, self._session_registry)
         self._result_simple_cache: pd.DataFrame | None = None
@@ -241,10 +237,10 @@ class KakaoColabPredictionBot:
         self._queued_summary_symbols: set[str] = set()
         self._live_events_cache: dict[tuple[str, str], tuple[datetime, pd.DataFrame]] = {}
         self._live_events_cache_ttl = timedelta(minutes=15)
+        self._message_formatter = PredictionMessageFormatter()
         self._timed_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         self._timed_futures: dict[str, concurrent.futures.Future] = {}
         self._bootstrap_thread: threading.Thread | None = None
-        self._state_lock = threading.RLock()
         self._legacy_formatter_patched = False
         self._bootstrap_all_symbols_done = False
         self._cleanup_stale_running_jobs_on_startup()
@@ -255,20 +251,7 @@ class KakaoColabPredictionBot:
         return path if path.is_absolute() else self.project_root / path
 
     def _cleanup_stale_running_jobs_on_startup(self) -> None:
-        changed = False
-        now = datetime.now(timezone.utc).isoformat()
-        with self._state_lock:
-            for state in self._job_registry.values():
-                if state.get("status") != "running":
-                    continue
-                state["status"] = "failed"
-                state["exit_code"] = -2
-                state["completed_at"] = now
-                state["note"] = "stale_after_restart"
-                state.pop("pid", None)
-                changed = True
-            if changed:
-                self._save_registry(self.state_path, self._job_registry)
+        self._job_store.mark_stale_running_on_startup()
 
     def _load_latest_manifest(self) -> dict[str, Any] | None:
         pointer_path = self.result_root / "latest_manifest.json"
@@ -898,103 +881,22 @@ class KakaoColabPredictionBot:
             return self._build_prediction_message_from_row(row)
 
     def _build_prediction_message_from_row(self, row: pd.Series) -> str:
-        code = str(row.get("종목코드", "-"))
-        name = str(row.get("종목명", "-"))
-        recommendation = str(row.get("권고", "-"))
-        predicted_return = self._format_percent(row.get("내일 예상 수익률(%)"))
-        up_probability = self._format_percent(row.get("상승확률(%)"))
-        predicted_close = self._format_price(row.get("내일 예상 종가"))
-        confidence = self._format_confidence(row.get("예측 신뢰도"))
-        reason_line = self._build_reason_line(row)
-        issue_block = self._build_issue_summary_block(row)
-        news_impact_block = self._build_news_impact_block(row)
-        return (
-            f"[{code} {name}]\n"
-            f"권고: {recommendation}\n"
-            f"상승확률: {up_probability}\n"
-            f"내일 예측 수익률: {predicted_return}\n"
-            f"내일 예측 종가: {predicted_close}\n"
-            f"신뢰도: {confidence}\n"
-            f"{reason_line}"
-            f"{issue_block}"
-            f"{news_impact_block}"
-        )
+        return self._message_formatter.format_prediction_message(row)
 
     def _build_reason_line(self, row: pd.Series) -> str:
-        raw_reason = self._get_clean_issue_text(row.get("예측 이유"))
-        if not raw_reason:
-            raw_reason = self._get_clean_issue_text(row.get("예측 사유"))
-        if not raw_reason:
-            return ""
-
-        labels: list[str] = []
-        if "거래대금" in raw_reason:
-            labels.append("거래대금 상위")
-        if "외국인" in raw_reason and "기관" in raw_reason and "순매수" in raw_reason:
-            labels.append("외국인/기관 순매수")
-        if "나스닥" in raw_reason and "+1%" in raw_reason:
-            labels.append("나스닥 선물 +1% 이상")
-
-        if not labels:
-            return ""
-        return "사유: " + ", ".join(dict.fromkeys(labels)) + "\n"
+        return self._message_formatter.build_reason_line(row)
 
     def _build_issue_summary_block(self, row: pd.Series) -> str:
-        disclosure_text = self._get_clean_issue_text(row.get("공시 요약"))
-        news_text = self._get_clean_issue_text(row.get("뉴스 요약"))
-        if not disclosure_text and not news_text:
-            return ""
-        disclosure_lines = self._to_bullet_lines(disclosure_text or "당일 공시 없음.")
-        news_lines = self._to_bullet_lines(news_text or "당일 뉴스 없음.")
-        return (
-            "\n[공시 요약]\n"
-            + "\n".join(f"- {line}" for line in disclosure_lines)
-            + "\n\n[뉴스 요약]\n"
-            + "\n".join(f"- {line}" for line in news_lines)
-        )
+        return self._message_formatter.build_issue_summary_block(row)
 
     def _build_news_impact_block(self, row: pd.Series) -> str:
-        score_text = self._get_clean_issue_text(row.get("뉴스/공시 영향 점수"))
-        summary_text = self._get_clean_issue_text(row.get("뉴스/공시 영향 요약"))
-        note_text = self._get_clean_issue_text(row.get("뉴스/공시 영향 참고"))
-        if not score_text and not summary_text:
-            return ""
-        lines = []
-        if score_text:
-            lines.append(f"- 점수: {score_text}")
-        if summary_text:
-            lines.append(f"- 요약: {summary_text}")
-        lines.append(f"- 참고: {note_text or '참고용·예측값 미반영'}")
-        return "\n\n[뉴스/공시 영향 점수]\n" + "\n".join(lines)
+        return self._message_formatter.build_news_impact_block(row)
 
     def _get_clean_issue_text(self, raw: Any) -> str:
-        if raw is None:
-            return ""
-        if not isinstance(raw, str) and pd.isna(raw):
-            return ""
-        text = str(raw).strip()
-        if not text or text == "-":
-            return ""
-        return text
+        return self._message_formatter.get_clean_issue_text(raw)
 
     def _to_bullet_lines(self, text: str) -> list[str]:
-        normalized = str(text).replace("\r", "\n")
-        normalized = re.sub(r"^\[(공시 요약|뉴스 요약)\]\s*", "", normalized.strip(), flags=re.IGNORECASE)
-        raw_lines = [line.strip() for line in normalized.split("\n") if line.strip()]
-        if not raw_lines:
-            return []
-
-        bullets: list[str] = []
-        split_pattern = r"\s*(?:/|\||;|·)\s+"
-        for raw_line in raw_lines:
-            clean_line = raw_line.strip("-• ").strip()
-            if not clean_line:
-                continue
-            parts = [part.strip() for part in re.split(split_pattern, clean_line) if part.strip()]
-            for part in parts:
-                if part and part not in bullets:
-                    bullets.append(part)
-        return bullets or [normalized.strip()]
+        return self._message_formatter.to_bullet_lines(text)
 
     def _maybe_patch_legacy_rationale_bug(self, exc: Exception) -> bool:
         is_legacy_name_error = isinstance(exc, NameError) and "rationale_block" in str(exc)
@@ -1016,45 +918,13 @@ class KakaoColabPredictionBot:
         self._minimal_format_prediction_message = self._build_prediction_message_from_row
 
     def _format_percent(self, value: Any) -> str:
-        if isinstance(value, str) and value.strip().endswith("%"):
-            return value.strip()
-        numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
-        if pd.isna(numeric):
-            return "-"
-        return f"{float(numeric):.3f}%"
+        return self._message_formatter.format_percent(value)
 
     def _format_price(self, value: Any) -> str:
-        if isinstance(value, str):
-            cleaned = value.strip().replace(",", "")
-            cleaned = re.sub(r"[^\d.\-]", "", cleaned)
-        else:
-            cleaned = value
-        numeric = pd.to_numeric(pd.Series([cleaned]), errors="coerce").iloc[0]
-        if pd.isna(numeric):
-            return "-"
-        return f"{float(numeric):,.0f}원"
+        return self._message_formatter.format_price(value)
 
     def _format_confidence(self, value: Any) -> str:
-        raw_value = value.strip() if isinstance(value, str) else value
-        if isinstance(raw_value, str) and raw_value.endswith("%"):
-            numeric = pd.to_numeric(pd.Series([raw_value[:-1]]), errors="coerce").iloc[0]
-            display = raw_value
-            if not pd.isna(numeric):
-                numeric = float(numeric) / 100.0
-        else:
-            numeric = pd.to_numeric(pd.Series([raw_value]), errors="coerce").iloc[0]
-            display = None
-        if pd.isna(numeric):
-            return "-"
-        if numeric >= 0.67:
-            label = "높음"
-        elif numeric >= 0.34:
-            label = "보통"
-        else:
-            label = "낮음"
-        if display is None:
-            display = f"{float(numeric) * 100.0:.1f}%"
-        return f"{display} ({label})"
+        return self._message_formatter.format_confidence(value)
 
     def _console_log(self, message: str):
         timestamp = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S KST")
@@ -1086,21 +956,8 @@ class KakaoColabPredictionBot:
             except Exception:
                 pass
 
-        status = "completed" if exit_code == 0 else "failed"
-        with self._state_lock:
-            job_state = self._job_registry.get(symbol, {})
-        job_state.update(
-            {
-                "status": status,
-                "exit_code": int(exit_code),
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
-        job_state.pop("command", None)
-        job_state.pop("pid", None)
-        with self._state_lock:
-            self._job_registry[symbol] = job_state
-            self._save_registry(self.state_path, self._job_registry)
+        job_state = self._job_store.mark_completed(symbol, int(exit_code))
+        status = str(job_state.get("status") or "failed")
 
         display_code = self._display_code(symbol)
         is_bootstrap_job = symbol == self.BOOTSTRAP_JOB_KEY
@@ -1126,33 +983,10 @@ class KakaoColabPredictionBot:
             self._active_processes.pop(symbol, None)
 
     def _mark_job_failed(self, symbol: str, exit_code: int, note: str = ""):
-        with self._state_lock:
-            job_state = self._job_registry.get(symbol, {})
-            job_state.update(
-                {
-                    "status": "failed",
-                    "exit_code": int(exit_code),
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                    "failure_note": str(note or ""),
-                }
-            )
-            job_state.pop("command", None)
-            job_state.pop("pid", None)
-            self._job_registry[symbol] = job_state
-            self._save_registry(self.state_path, self._job_registry)
+        self._job_store.mark_failed(symbol, exit_code=exit_code, note=note)
 
     def _job_elapsed_seconds(self, job_state: dict[str, Any]) -> float | None:
-        completed_at = str(job_state.get("completed_at") or "").strip()
-        if not completed_at:
-            return None
-        try:
-            completed_dt = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
-        except Exception:
-            return None
-        now_utc = datetime.now(timezone.utc)
-        if completed_dt.tzinfo is None:
-            completed_dt = completed_dt.replace(tzinfo=timezone.utc)
-        return max(0.0, (now_utc - completed_dt.astimezone(timezone.utc)).total_seconds())
+        return self._job_store.elapsed_seconds(job_state)
 
     def _log_completion_preview(self, symbol: str):
         display_code = self._display_code(symbol)
@@ -1201,11 +1035,7 @@ class KakaoColabPredictionBot:
             if existing.get("status") == "running":
                 self._console_log(f"{self._display_code(symbol)} 예측 작업이 이미 실행 중입니다.")
                 return True
-            running_count = sum(
-                1
-                for key, state in self._job_registry.items()
-                if key != self.BOOTSTRAP_JOB_KEY and state.get("status") == "running"
-            )
+            running_count = self._job_store.running_prediction_count(self.BOOTSTRAP_JOB_KEY)
             max_jobs = max(1, int(self.runtime_config.max_concurrent_prediction_jobs or 1))
             if running_count >= max_jobs:
                 self._console_log(
@@ -1263,24 +1093,16 @@ class KakaoColabPredictionBot:
                 log_handle.close()
             except Exception:
                 pass
-            with self._state_lock:
-                failed_state = asdict(
-                    PredictionJobState(
-                        symbol=symbol,
-                        display_code=display_code,
-                        command=safe_command,
-                        log_path=str(log_path.relative_to(self.project_root)),
-                        submitted_at=submitted_at,
-                        status="failed",
-                        pid=None,
-                        exit_code=-1,
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                    )
-                )
-                failed_state.pop("command", None)
-                failed_state.pop("pid", None)
-                self._job_registry[symbol] = failed_state
-                self._save_registry(self.state_path, self._job_registry)
+            failed_state = {
+                "symbol": symbol,
+                "display_code": display_code,
+                "log_path": str(log_path.relative_to(self.project_root)),
+                "submitted_at": submitted_at,
+                "status": "failed",
+                "exit_code": -1,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self._job_store.set(symbol, failed_state)
             return False
         log_thread = None
         if getattr(process, "stdout", None) is not None:
@@ -1309,7 +1131,8 @@ class KakaoColabPredictionBot:
                 "log_thread": log_thread,
                 "monitor_thread": monitor_thread,
             }
-            self._job_registry[symbol] = asdict(
+            self._job_store.set(
+                symbol,
                 PredictionJobState(
                     symbol=symbol,
                     display_code=display_code,
@@ -1318,9 +1141,8 @@ class KakaoColabPredictionBot:
                     submitted_at=submitted_at,
                     status="running",
                     pid=getattr(process, "pid", None),
-                )
+                ),
             )
-            self._save_registry(self.state_path, self._job_registry)
         return True
 
     def _start_bootstrap_job(self, force: bool = False) -> bool:
@@ -1342,18 +1164,17 @@ class KakaoColabPredictionBot:
         log_path = self.log_dir / f"bootstrap_{submitted_at.replace(':', '').replace('+00:00', 'Z')}.log"
         self._console_log("초기 전체 종목 예측 작업 시작: prewarm_prediction_cache(issue_summary=enabled)")
 
-        with self._state_lock:
-            self._job_registry[self.BOOTSTRAP_JOB_KEY] = asdict(
-                PredictionJobState(
-                    symbol=self.BOOTSTRAP_JOB_KEY,
-                    display_code="BOOTSTRAP",
-                    command=command,
-                    log_path=str(log_path.relative_to(self.project_root)),
-                    submitted_at=submitted_at,
-                    status="running",
-                )
-            )
-            self._save_registry(self.state_path, self._job_registry)
+        self._job_store.set(
+            self.BOOTSTRAP_JOB_KEY,
+            PredictionJobState(
+                symbol=self.BOOTSTRAP_JOB_KEY,
+                display_code="BOOTSTRAP",
+                command=command,
+                log_path=str(log_path.relative_to(self.project_root)),
+                submitted_at=submitted_at,
+                status="running",
+            ),
+        )
 
         worker = threading.Thread(
             target=self._run_bootstrap_prewarm_worker,
@@ -1388,8 +1209,7 @@ class KakaoColabPredictionBot:
                     "completed_at": datetime.now(timezone.utc).isoformat(),
                 }
             )
-            self._job_registry[self.BOOTSTRAP_JOB_KEY] = state
-            self._save_registry(self.state_path, self._job_registry)
+            self._job_store.set(self.BOOTSTRAP_JOB_KEY, state)
         if exit_code == 0:
             self._console_log("초기 전체 종목 예측 작업 completed (exit_code=0).")
             self._start_queued_summaries_after_bootstrap()
@@ -1914,34 +1734,14 @@ class KakaoColabPredictionBot:
             self._finalize_process(symbol, int(exit_code))
 
     def _update_session(self, user_id: str | None, symbol: str | None, intent: str):
-        if not user_id:
-            return
-        with self._state_lock:
-            self._session_registry[user_id] = asdict(
-                UserSessionState(
-                    user_id=user_id,
-                    last_symbol=symbol,
-                    last_display_code=self._display_code(symbol) if symbol else None,
-                    last_intent=intent,
-                )
-            )
-            self._save_registry(self.session_path, self._session_registry)
+        display_code = self._display_code(symbol) if symbol else None
+        self._session_store.update(user_id, symbol=symbol, display_code=display_code, intent=intent)
 
     def _symbol_from_session(self, user_id: str | None) -> str | None:
-        if not user_id:
-            return None
-        with self._state_lock:
-            session = self._session_registry.get(user_id, {})
-        symbol = session.get("last_symbol")
-        return str(symbol) if symbol else None
+        return self._session_store.symbol_for(user_id)
 
     def _session_intent(self, user_id: str | None) -> str:
-        if not user_id:
-            return ""
-        with self._state_lock:
-            session = self._session_registry.get(user_id, {})
-        intent = str(session.get("last_intent") or "").strip()
-        return intent
+        return self._session_store.intent_for(user_id)
 
     def _is_help_request(self, text: str) -> bool:
         return is_help_utterance(text)
@@ -1956,19 +1756,10 @@ class KakaoColabPredictionBot:
         return text.strip().lower() in _RECOMMENDATION_KEYWORDS
 
     def _load_registry(self, path: Path) -> dict[str, dict[str, Any]]:
-        if not path.exists():
-            return {}
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-        if not isinstance(data, dict):
-            return {}
-        return {str(k): v for k, v in data.items() if isinstance(v, dict)}
+        return load_registry(path)
 
     def _save_registry(self, path: Path, data: dict[str, dict[str, Any]]):
-        safe_data = redact_value(data, self.runtime_config.secret_values())
-        atomic_write_text(path, json.dumps(safe_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        save_registry(path, data, self.runtime_config.secret_values())
 
     def _build_response(self, text: str, quick_replies: list[tuple[str, str]] | None = None) -> dict[str, Any]:
         return attach_quick_replies(simple_text_response(str(text or "")), quick_replies[:10] if quick_replies else None)

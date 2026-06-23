@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,23 @@ NEWS_IMPACT_COLUMNS = {
     "review_checklist": "news_impact_review_checklist",
     "top_evidence_url": "news_impact_top_evidence_url",
 }
+
+
+@dataclass(frozen=True)
+class NewsImpactRuntimeResult:
+    frame: pd.DataFrame
+    requested_mode: str
+    actual_mode: str
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "requested_mode": self.requested_mode,
+            "actual_mode": self.actual_mode,
+            "fallback_used": bool(self.fallback_used),
+            "fallback_reason": self.fallback_reason,
+        }
 
 
 def append_news_impact_context(pred_df: pd.DataFrame, report_path: str | Path | None) -> pd.DataFrame:
@@ -157,7 +175,26 @@ def append_generated_news_impact_context(
     return append_news_impact_rows(pred_df, rows)
 
 
-def append_llm_news_impact_context(
+def append_generated_news_impact_context_with_runtime(
+    pred_df: pd.DataFrame,
+    context_raw_df: pd.DataFrame | None,
+) -> NewsImpactRuntimeResult:
+    scored = append_generated_news_impact_context(pred_df, context_raw_df)
+    actual_mode = "rule_based" if "news_impact_final_score" in scored.columns else "none"
+    return NewsImpactRuntimeResult(
+        frame=scored,
+        requested_mode="rule",
+        actual_mode=actual_mode,
+        fallback_used=False,
+        fallback_reason=None if actual_mode != "none" else "no_context_rows",
+    )
+
+
+def _fallback_reason(exc: Exception) -> str:
+    return f"{type(exc).__name__}: {exc}"
+
+
+def append_llm_news_impact_context_with_runtime(
     pred_df: pd.DataFrame,
     context_raw_df: pd.DataFrame | None,
     *,
@@ -166,11 +203,18 @@ def append_llm_news_impact_context(
     symbol_name_map: dict[str, str],
     run_date: str,
     _run_daily_pipeline=run_daily_pipeline,
-) -> pd.DataFrame:
+) -> NewsImpactRuntimeResult:
     """Judge news/disclosure impact with the gemma pipeline; fall back to the
     rule-based scorer on any failure (server down, alias mismatch, timeout, etc.)."""
     if pred_df.empty or context_raw_df is None or context_raw_df.empty:
-        return append_generated_news_impact_context(pred_df, context_raw_df)
+        fallback = append_generated_news_impact_context_with_runtime(pred_df, context_raw_df)
+        return NewsImpactRuntimeResult(
+            frame=fallback.frame,
+            requested_mode="gemma",
+            actual_mode=fallback.actual_mode,
+            fallback_used=fallback.actual_mode == "rule_based",
+            fallback_reason=None if fallback.actual_mode == "rule_based" else fallback.fallback_reason,
+        )
     try:
         with tempfile.TemporaryDirectory(prefix="news_impact_gemma_") as tmp:
             bundle = build_news_impact_fixture(
@@ -196,11 +240,54 @@ def append_llm_news_impact_context(
             if "news_impact_final_score" not in scored.columns:
                 # gemma가 유효 row를 못 냄(서버 다운 시 모든 판정 실패 등) -> 규칙 기반 폴백
                 print("[NEWS IMPACT][gemma] 유효 결과 없음 → 규칙 기반 폴백")
-                return append_generated_news_impact_context(pred_df, context_raw_df)
-            return scored
+                fallback = append_generated_news_impact_context_with_runtime(pred_df, context_raw_df)
+                return NewsImpactRuntimeResult(
+                    frame=fallback.frame,
+                    requested_mode="gemma",
+                    actual_mode=fallback.actual_mode,
+                    fallback_used=True,
+                    fallback_reason="gemma_no_valid_rows",
+                )
+            return NewsImpactRuntimeResult(
+                frame=scored,
+                requested_mode="gemma",
+                actual_mode="gemma",
+                fallback_used=False,
+                fallback_reason=None,
+            )
     except Exception as exc:  # server/alias/timeout/schema validation -> rule-based fallback
-        print(f"[NEWS IMPACT][gemma] 실패 → 규칙 기반 폴백: {type(exc).__name__}: {exc}")
-        return append_generated_news_impact_context(pred_df, context_raw_df)
+        reason = _fallback_reason(exc)
+        print(f"[NEWS IMPACT][gemma] 실패 → 규칙 기반 폴백: {reason}")
+        fallback = append_generated_news_impact_context_with_runtime(pred_df, context_raw_df)
+        return NewsImpactRuntimeResult(
+            frame=fallback.frame,
+            requested_mode="gemma",
+            actual_mode=fallback.actual_mode,
+            fallback_used=True,
+            fallback_reason=reason,
+        )
+
+
+def append_llm_news_impact_context(
+    pred_df: pd.DataFrame,
+    context_raw_df: pd.DataFrame | None,
+    *,
+    llm_config_path: str,
+    symbols,
+    symbol_name_map: dict[str, str],
+    run_date: str,
+    _run_daily_pipeline=run_daily_pipeline,
+) -> pd.DataFrame:
+    """Judge news/disclosure impact with gemma; fall back to rule-based scoring."""
+    return append_llm_news_impact_context_with_runtime(
+        pred_df,
+        context_raw_df,
+        llm_config_path=llm_config_path,
+        symbols=symbols,
+        symbol_name_map=symbol_name_map,
+        run_date=run_date,
+        _run_daily_pipeline=_run_daily_pipeline,
+    ).frame
 
 
 def _ticker_to_symbol(ticker: str) -> str:

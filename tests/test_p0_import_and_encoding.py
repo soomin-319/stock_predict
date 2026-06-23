@@ -47,12 +47,14 @@ def test_recommendation_package_import_is_lazy():
 
 def test_known_p0_mojibake_strings_are_removed():
     chatbot = Path("src/chatbot/kakao_colab_bot.py").read_text(encoding="utf-8")
+    formatter = Path("src/chatbot/message_formatter.py").read_text(encoding="utf-8")
     realtime = Path("src/recommendation/realtime_close_betting.py").read_text(encoding="utf-8")
+    chatbot_formatting_sources = chatbot + formatter
     bad_prediction_reason = 'row.get("' + "".join(chr(c) for c in (0x3F, 0xB349, 0xB96B, 0x20, 0x3F, 0xB301, 0xC440)) + '")'
     bad_close_betting_message = '"' + " ".join(["??"] * 5) + '"'
 
-    assert bad_prediction_reason not in chatbot
-    assert 'row.get("예측 이유")' in chatbot
+    assert bad_prediction_reason not in chatbot_formatting_sources
+    assert 'row.get("예측 이유")' in chatbot_formatting_sources
     assert bad_close_betting_message not in realtime
     assert '"종가 확정 후 다음 거래일 진입"' in realtime
 

@@ -1,3 +1,4 @@
+from src.config.settings import SignalConfig
 from src.domain.signal_policy import recommendation_from_signal
 
 
@@ -22,3 +23,44 @@ def test_recommendation_ignores_signal_probability_and_uncertainty_when_availabl
 
 def test_recommendation_returns_hold_when_return_is_missing():
     assert recommendation_from_signal(None, None) == "관망"
+
+
+def test_recommendation_uses_custom_signal_config_thresholds():
+    cfg = SignalConfig(
+        recommendation_buy_threshold_pct=3.0,
+        recommendation_sell_threshold_pct=-1.0,
+    )
+
+    assert recommendation_from_signal(None, 2.5, signal_cfg=cfg) == "관망"
+    assert recommendation_from_signal(None, 3.1, signal_cfg=cfg) == "매수"
+    assert recommendation_from_signal(None, -1.0, signal_cfg=cfg) == "매도"
+    assert recommendation_from_signal(None, -0.9, signal_cfg=cfg) == "관망"
+
+
+def test_recommendation_custom_thresholds_still_ignore_non_return_inputs():
+    cfg = SignalConfig(
+        recommendation_buy_threshold_pct=3.0,
+        recommendation_sell_threshold_pct=-1.0,
+    )
+
+    assert recommendation_from_signal(
+        1.0,
+        2.5,
+        up_probability=1.0,
+        uncertainty_score=0.0,
+        signal_cfg=cfg,
+    ) == "관망"
+    assert recommendation_from_signal(
+        0.0,
+        3.1,
+        up_probability=0.0,
+        uncertainty_score=1.0,
+        signal_cfg=cfg,
+    ) == "매수"
+    assert recommendation_from_signal(
+        1.0,
+        -1.0,
+        up_probability=1.0,
+        uncertainty_score=0.0,
+        signal_cfg=cfg,
+    ) == "매도"

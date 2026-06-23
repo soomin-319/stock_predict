@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.config.settings import BacktestConfig
+from src.config.settings import BacktestConfig, SignalConfig
 from src.domain import signal_policy
 from src.domain.signal_policy import (
     build_pm_summary_fields,
@@ -118,6 +118,24 @@ def test_build_prediction_policy_frame_matches_scalar_policy_helpers():
     assert out["recommendation"].tolist() == ["\uB9E4\uC218", "\uB9E4\uB3C4", "\uAD00\uB9DD"]
 
 
+def test_scalar_policy_helpers_match_vectorized_single_row_outputs():
+    frame = _policy_input_frame()
+
+    for idx, row in frame.iterrows():
+        one_row = frame.loc[[idx]]
+        assert risk_flag(row) == signal_policy._risk_flag_series(one_row).iloc[0]
+        assert prediction_reason(row) == signal_policy._prediction_reason_series(one_row).iloc[0]
+        assert signal_policy._jongbae_score(row) == signal_policy._jongbae_score_series(one_row).iloc[0]
+        assert build_pm_summary_fields(row) == signal_policy._pm_summary_frame(one_row).iloc[0].to_dict()
+
+
+def test_scalar_policy_helpers_are_vectorized_adapters():
+    assert "_risk_flag_series" in inspect.getsource(risk_flag)
+    assert "_prediction_reason_series" in inspect.getsource(prediction_reason)
+    assert "_jongbae_score_series" in inspect.getsource(signal_policy._jongbae_score)
+    assert "_pm_summary_frame" in inspect.getsource(build_pm_summary_fields)
+
+
 def test_nan_liquidity_threshold_uses_default_minimum():
     row = pd.Series(
         {
@@ -129,7 +147,88 @@ def test_nan_liquidity_threshold_uses_default_minimum():
     assert "LOW_LIQUIDITY" in risk_flag(row)
 
 
+def test_scalar_adapters_preserve_missing_value_policy_defaults():
+    row = pd.Series(
+        {
+            "predicted_return": np.nan,
+            "confidence_score": np.nan,
+            "coverage_gate_status": "",
+            "uncertainty_score": np.nan,
+            "up_probability": np.nan,
+            "history_direction_accuracy": np.nan,
+            "value_traded": 0,
+            "min_liquidity_threshold": np.nan,
+            "external_coverage_ratio": np.nan,
+            "investor_coverage_ratio": np.nan,
+            "market_headwind_score": np.nan,
+            "turnover_rank_daily": np.nan,
+            "foreign_net_buy": np.nan,
+            "institution_net_buy": np.nan,
+            "breakout_52w_flag": np.nan,
+            "near_52w_high_flag": np.nan,
+            "leader_confirmation_flag": np.nan,
+            "nq_f_ret_1d": np.nan,
+            "rsi_14": np.nan,
+        },
+        name="missing",
+    )
+    frame = pd.DataFrame([row.to_dict()], index=[row.name])
+
+    assert risk_flag(row) == signal_policy._risk_flag_series(frame).iloc[0]
+    assert prediction_reason(row) == signal_policy._prediction_reason_series(frame).iloc[0]
+    assert signal_policy._jongbae_score(row) == signal_policy._jongbae_score_series(frame).iloc[0]
+    assert build_pm_summary_fields(row) == signal_policy._pm_summary_frame(frame).iloc[0].to_dict()
+
+
 def test_build_prediction_policy_frame_has_no_rowwise_apply_calls():
     source = inspect.getsource(build_prediction_policy_frame)
 
     assert ".apply(" not in source
+
+
+def test_policy_adapter_recommendation_ignores_non_return_context_columns():
+    base = pd.Series(
+        {
+            "predicted_return": 2.5,
+            "signal_score": -999.0,
+            "up_probability": 0.0,
+            "uncertainty_score": 1.0,
+            "news_impact_score": -1.0,
+            "disclosure_impact_score": -1.0,
+            "confidence_score": 0.9,
+        }
+    )
+    changed = base.copy()
+    changed["signal_score"] = 999.0
+    changed["up_probability"] = 1.0
+    changed["uncertainty_score"] = 0.0
+    changed["news_impact_score"] = 1.0
+    changed["disclosure_impact_score"] = 1.0
+
+    assert build_pm_summary_fields(base)["recommendation"] == "\uB9E4\uC218"
+    assert build_pm_summary_fields(changed)["recommendation"] == "\uB9E4\uC218"
+
+    base_frame = pd.DataFrame([base.to_dict(), changed.to_dict()])
+    out = build_prediction_policy_frame(base_frame)
+    assert out["recommendation"].tolist() == ["\uB9E4\uC218", "\uB9E4\uC218"]
+
+
+def test_vectorized_recommendation_matches_scalar_with_custom_thresholds():
+    cfg = SignalConfig(
+        recommendation_buy_threshold_pct=3.0,
+        recommendation_sell_threshold_pct=-1.0,
+    )
+    frame = pd.DataFrame(
+        {
+            "predicted_return": [3.1, 3.0, 2.5, -0.9, -1.0, -1.1, np.nan],
+        }
+    )
+
+    vectorized = signal_policy._recommendation_series(frame, signal_cfg=cfg).tolist()
+    scalar = [
+        signal_policy.recommendation_from_signal(None, value, signal_cfg=cfg)
+        for value in frame["predicted_return"].tolist()
+    ]
+
+    assert vectorized == scalar
+    assert vectorized == ["매수", "관망", "관망", "관망", "매도", "매도", "관망"]

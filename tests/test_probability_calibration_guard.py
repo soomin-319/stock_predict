@@ -1,8 +1,11 @@
 import numpy as np
 import pandas as pd
 
-from src.pipeline import _calibrate_up_probability
-from src.validation.support import calibration_split_metrics, fit_up_probability_calibrator
+from src.validation.support import (
+    calibrate_up_probability,
+    calibration_split_metrics,
+    fit_up_probability_calibrator,
+)
 
 
 def test_calibration_guard_blends_when_isotonic_collapses_unique_values():
@@ -14,7 +17,7 @@ def test_calibration_guard_blends_when_isotonic_collapses_unique_values():
     )
     raw = pd.Series([0.11, 0.14, 0.19, 0.21, 0.88], dtype=float)
 
-    calibrated = _calibrate_up_probability(oof, raw)
+    calibrated = calibrate_up_probability(oof, raw)
 
     assert calibrated.nunique() >= 3
     assert np.all((calibrated >= 0.0) & (calibrated <= 1.0))
@@ -22,7 +25,7 @@ def test_calibration_guard_blends_when_isotonic_collapses_unique_values():
 
 def test_calibration_returns_raw_when_oof_not_usable():
     raw = pd.Series([0.2, 0.4, 0.6], dtype=float)
-    out = _calibrate_up_probability(pd.DataFrame(), raw)
+    out = calibrate_up_probability(pd.DataFrame(), raw)
     pd.testing.assert_series_equal(out, raw)
 
 

@@ -72,6 +72,46 @@ def test_app_config_to_dict_includes_schema_version():
     assert app_config_to_dict(load_app_config())["config_schema_version"] == 1
 
 
+def test_signal_config_exposes_recommendation_thresholds():
+    cfg = load_app_config(
+        overrides={
+            "signal": {
+                "recommendation_buy_threshold_pct": 3.5,
+                "recommendation_sell_threshold_pct": -1.5,
+            }
+        }
+    )
+
+    signal_dict = app_config_to_dict(cfg)["signal"]
+    assert signal_dict["recommendation_buy_threshold_pct"] == 3.5
+    assert signal_dict["recommendation_sell_threshold_pct"] == -1.5
+
+
+@pytest.mark.parametrize(
+    "overrides, expected",
+    [
+        ({"signal": {"recommendation_buy_threshold_pct": 0.0}}, "signal.recommendation_buy_threshold_pct"),
+        ({"signal": {"recommendation_buy_threshold_pct": -0.1}}, "signal.recommendation_buy_threshold_pct"),
+        ({"signal": {"recommendation_buy_threshold_pct": True}}, "signal.recommendation_buy_threshold_pct"),
+        ({"signal": {"recommendation_sell_threshold_pct": 0.0}}, "signal.recommendation_sell_threshold_pct"),
+        ({"signal": {"recommendation_sell_threshold_pct": 0.1}}, "signal.recommendation_sell_threshold_pct"),
+        ({"signal": {"recommendation_sell_threshold_pct": False}}, "signal.recommendation_sell_threshold_pct"),
+        (
+            {
+                "signal": {
+                    "recommendation_buy_threshold_pct": 1.0,
+                    "recommendation_sell_threshold_pct": 1.0,
+                }
+            },
+            "signal.recommendation_sell_threshold_pct",
+        ),
+    ],
+)
+def test_signal_config_rejects_invalid_recommendation_thresholds(overrides, expected):
+    with pytest.raises(ValueError, match=expected):
+        load_app_config(overrides=overrides)
+
+
 @pytest.mark.parametrize(
     "quantiles",
     [

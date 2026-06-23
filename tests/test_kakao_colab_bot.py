@@ -240,6 +240,68 @@ def test_default_runtime_path_migrates_legacy_registry(tmp_path: Path):
     assert bot.state_path.exists()
 
 
+def test_bot_session_helpers_delegate_to_session_store(tmp_path: Path, monkeypatch):
+    bot = make_bot(tmp_path)
+    calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+
+    def fake_update(user_id, *, symbol, display_code, intent):
+        calls.append(("update", (user_id,), {"symbol": symbol, "display_code": display_code, "intent": intent}))
+
+    def fake_symbol_for(user_id):
+        calls.append(("symbol_for", (user_id,), {}))
+        return "005930.KS"
+
+    def fake_intent_for(user_id):
+        calls.append(("intent_for", (user_id,), {}))
+        return "tracking"
+
+    monkeypatch.setattr(bot._session_store, "update", fake_update)
+    monkeypatch.setattr(bot._session_store, "symbol_for", fake_symbol_for)
+    monkeypatch.setattr(bot._session_store, "intent_for", fake_intent_for)
+
+    bot._update_session("user-1", "005930.KS", "running")
+
+    assert bot._symbol_from_session("user-1") == "005930.KS"
+    assert bot._session_intent("user-1") == "tracking"
+    assert calls == [
+        ("update", ("user-1",), {"symbol": "005930.KS", "display_code": "005930", "intent": "running"}),
+        ("symbol_for", ("user-1",), {}),
+        ("intent_for", ("user-1",), {}),
+    ]
+
+
+def test_bot_job_helpers_delegate_to_job_store(tmp_path: Path, monkeypatch):
+    bot = make_bot(tmp_path)
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(
+        bot._job_store,
+        "mark_failed",
+        lambda symbol, exit_code, note="": calls.append(("mark_failed", (symbol, exit_code, note))),
+    )
+    monkeypatch.setattr(
+        bot._job_store,
+        "elapsed_seconds",
+        lambda job_state: calls.append(("elapsed_seconds", job_state)) or 12.5,
+    )
+    monkeypatch.setattr(
+        bot._job_store,
+        "mark_stale_running_on_startup",
+        lambda: calls.append(("stale", None)) or True,
+    )
+
+    bot._mark_job_failed("005930.KS", -2, "stale_running_state")
+    elapsed = bot._job_elapsed_seconds({"completed_at": "invalid"})
+    bot._cleanup_stale_running_jobs_on_startup()
+
+    assert elapsed == 12.5
+    assert calls == [
+        ("mark_failed", ("005930.KS", -2, "stale_running_state")),
+        ("elapsed_seconds", {"completed_at": "invalid"}),
+        ("stale", None),
+    ]
+
+
 def test_returns_cached_prediction_message_from_kakao_payload(tmp_path: Path):
     result_dir = tmp_path / "result"
     result_dir.mkdir(parents=True)
@@ -1207,6 +1269,119 @@ def test_cached_prediction_message_renders_issue_summary_block_header(tmp_path: 
     assert "- 증권사 리포트 호평" in text
     assert "종합 판단:" not in text
     assert "주의사항:" not in text
+
+
+def test_prediction_message_formatter_matches_bot_output_for_cached_row(tmp_path: Path):
+    from src.chatbot.message_formatter import PredictionMessageFormatter
+
+    bot = make_bot(tmp_path)
+    row = pd.Series(
+        {
+            "종목코드": "005930",
+            "종목명": "삼성전자",
+            "권고": "매수",
+            "내일 예상 수익률(%)": 2.34,
+            "상승확률(%)": 61.2,
+            "내일 예상 종가": 71000,
+            "예측 신뢰도": "높음",
+            "예측 이유": "거래대금 상위 / 외국인 기관 순매수 / 나스닥 선물 +1%",
+            "공시 요약": "신규 공급계약 체결",
+            "뉴스 요약": "AI 반도체 수요 증가",
+            "뉴스/공시 영향 점수": "긍정 2",
+            "뉴스/공시 영향 요약": "참고용 호재",
+            "뉴스/공시 영향 참고": "참고용·예측값 미반영",
+        }
+    )
+
+    assert PredictionMessageFormatter().format_prediction_message(row) == bot._build_prediction_message_from_row(row)
+
+
+def test_prediction_message_formatter_display_context_does_not_change_recommendation(tmp_path: Path):
+    from src.chatbot.message_formatter import PredictionMessageFormatter
+
+    formatter = PredictionMessageFormatter()
+    base = pd.Series(
+        {
+            "종목코드": "000001",
+            "종목명": "테스트",
+            "권고": "관망",
+            "내일 예상 수익률(%)": 0.1,
+            "상승확률(%)": 50.0,
+            "내일 예상 종가": 1000,
+            "예측 신뢰도": "보통",
+        }
+    )
+    with_context = base.copy()
+    with_context["뉴스 요약"] = "강한 호재"
+    with_context["공시 요약"] = "대형 계약"
+    with_context["뉴스/공시 영향 점수"] = "긍정 9"
+    with_context["뉴스/공시 영향 요약"] = "표시 전용"
+
+    rendered = formatter.format_prediction_message(with_context)
+
+    assert "권고: 관망" in rendered
+    assert "강한 호재" in rendered
+    assert "표시 전용" in rendered
+
+
+def test_kakao_bot_prediction_message_helpers_delegate_to_formatter(tmp_path: Path):
+    bot = make_bot(tmp_path)
+    row = pd.Series({"종목코드": "000001", "종목명": "테스트", "권고": "관망"})
+    calls: list[str] = []
+
+    class StubFormatter:
+        def format_prediction_message(self, value):
+            calls.append("format")
+            assert value is row
+            return "formatted"
+
+        def build_reason_line(self, value):
+            calls.append("reason")
+            assert value is row
+            return "reason"
+
+        def build_issue_summary_block(self, value):
+            calls.append("issue")
+            assert value is row
+            return "issue"
+
+        def build_news_impact_block(self, value):
+            calls.append("impact")
+            assert value is row
+            return "impact"
+
+        def get_clean_issue_text(self, value):
+            calls.append("clean")
+            return "clean"
+
+        def to_bullet_lines(self, value):
+            calls.append("bullets")
+            return ["bullet"]
+
+        def format_percent(self, value):
+            calls.append("percent")
+            return "1.00%"
+
+        def format_price(self, value):
+            calls.append("price")
+            return "1,000원"
+
+        def format_confidence(self, value):
+            calls.append("confidence")
+            return "보통"
+
+    bot._message_formatter = StubFormatter()
+
+    assert bot._build_prediction_message_from_row(row) == "formatted"
+    assert bot._build_reason_line(row) == "reason"
+    assert bot._build_issue_summary_block(row) == "issue"
+    assert bot._build_news_impact_block(row) == "impact"
+    assert bot._get_clean_issue_text("x") == "clean"
+    assert bot._to_bullet_lines("x") == ["bullet"]
+    assert bot._format_percent(1) == "1.00%"
+    assert bot._format_price(1000) == "1,000원"
+    assert bot._format_confidence("보통") == "보통"
+    assert calls == ["format", "reason", "issue", "impact", "clean", "bullets", "percent", "price", "confidence"]
 
 
 def test_cached_prediction_message_splits_issue_summary_into_bullets(tmp_path: Path):

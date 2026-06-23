@@ -7,7 +7,9 @@ import pandas as pd
 from src.domain.signal_policy import recommendation_from_signal
 from src.reports.news_impact_context import (
     append_generated_news_impact_context,
+    append_generated_news_impact_context_with_runtime,
     append_llm_news_impact_context,
+    append_llm_news_impact_context_with_runtime,
     append_news_impact_context,
 )
 from src.reports.result_formatter import build_result_simple
@@ -323,3 +325,144 @@ def test_append_llm_news_impact_falls_back_on_empty_report(tmp_path):
     )
     # gemma가 유효 row를 못 내면(서버 다운 등) 규칙 기반으로 폴백
     assert "뉴스/공시 영향 점수" in out.columns
+
+
+def test_append_generated_news_impact_context_with_runtime_records_rule_mode():
+    pred_df = pd.DataFrame(
+        [
+            {
+                "Date": "2026-06-17",
+                "Symbol": "005930.KS",
+                "symbol_name": "Samsung",
+                "predicted_return": 1.0,
+                "recommendation": "hold",
+                "signal_score": 0.0,
+            }
+        ]
+    )
+    context_raw_df = pd.DataFrame(
+        [
+            {
+                "Date": "2026-06-17",
+                "Symbol": "005930.KS",
+                "source_type": "news",
+                "title": "Samsung wins HBM supply contract",
+                "summary": "positive supply news",
+                "url": "https://example.com/news",
+            }
+        ]
+    )
+
+    result = append_generated_news_impact_context_with_runtime(pred_df, context_raw_df)
+
+    assert result.requested_mode == "rule"
+    assert result.actual_mode == "rule_based"
+    assert result.fallback_used is False
+    assert result.fallback_reason is None
+    assert result.to_metadata() == {
+        "requested_mode": "rule",
+        "actual_mode": "rule_based",
+        "fallback_used": False,
+        "fallback_reason": None,
+    }
+    assert "news_impact_final_score" in result.frame.columns
+    assert result.frame["predicted_return"].tolist() == [1.0]
+    assert result.frame["recommendation"].tolist() == ["hold"]
+    assert result.frame["signal_score"].tolist() == [0.0]
+
+
+def test_append_generated_news_impact_context_with_runtime_records_none_without_context():
+    pred_df = pd.DataFrame(
+        [{"Date": "2026-06-17", "Symbol": "005930.KS", "predicted_return": 1.0}]
+    )
+
+    result = append_generated_news_impact_context_with_runtime(pred_df, pd.DataFrame())
+
+    assert result.frame.equals(pred_df)
+    assert result.to_metadata() == {
+        "requested_mode": "rule",
+        "actual_mode": "none",
+        "fallback_used": False,
+        "fallback_reason": "no_context_rows",
+    }
+
+
+def test_append_llm_news_impact_context_with_runtime_records_gemma_success(tmp_path):
+    pred_df = pd.DataFrame(
+        [{"Date": "2026-06-17", "Symbol": "005930.KS", "predicted_return": 1.0}]
+    )
+    context_raw_df = pd.DataFrame(
+        [{"Date": "2026-06-17", "Symbol": "005930.KS", "source_type": "news", "title": "HBM"}]
+    )
+
+    def fake_run_daily_pipeline(inputs):
+        report_path = Path(inputs.output_dir) / "report.json"
+        report_path.write_text(
+            json.dumps(
+                {
+                    "rows": [
+                        {
+                            "date": "2026-06-17",
+                            "ticker": "005930",
+                            "final_score": 42.0,
+                            "top_reason": "Gemma success",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        return type("Result", (), {"artifact_paths": {"report.json": str(report_path)}})()
+
+    result = append_llm_news_impact_context_with_runtime(
+        pred_df,
+        context_raw_df,
+        llm_config_path="configs/news_impact.gemma.example.json",
+        symbols=["005930.KS"],
+        symbol_name_map={"005930.KS": "Samsung"},
+        run_date="2026-06-17",
+        _run_daily_pipeline=fake_run_daily_pipeline,
+    )
+
+    assert result.to_metadata() == {
+        "requested_mode": "gemma",
+        "actual_mode": "gemma",
+        "fallback_used": False,
+        "fallback_reason": None,
+    }
+    assert float(result.frame.loc[0, "news_impact_final_score"]) == 42.0
+
+
+def test_append_llm_news_impact_context_with_runtime_records_fallback():
+    pred_df = pd.DataFrame(
+        [
+            {
+                "Date": "2026-06-17",
+                "Symbol": "005930.KS",
+                "symbol_name": "Samsung",
+                "predicted_return": 1.0,
+            }
+        ]
+    )
+    context_raw_df = pd.DataFrame(
+        [{"Date": "2026-06-17", "Symbol": "005930.KS", "source_type": "news", "title": "HBM"}]
+    )
+
+    def failing_run_daily_pipeline(inputs):
+        raise RuntimeError("gemma down")
+
+    result = append_llm_news_impact_context_with_runtime(
+        pred_df,
+        context_raw_df,
+        llm_config_path="configs/news_impact.gemma.example.json",
+        symbols=["005930.KS"],
+        symbol_name_map={"005930.KS": "Samsung"},
+        run_date="2026-06-17",
+        _run_daily_pipeline=failing_run_daily_pipeline,
+    )
+
+    assert result.requested_mode == "gemma"
+    assert result.actual_mode == "rule_based"
+    assert result.fallback_used is True
+    assert result.fallback_reason == "RuntimeError: gemma down"
+    assert "news_impact_final_score" in result.frame.columns

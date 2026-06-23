@@ -1,3 +1,54 @@
+"""`result/` 산출물 보존·정리 정책 (단일 출처).
+
+이 모듈은 `result/` 트리의 보존 기간·정리 대상·보호 규칙을 코드로 강제하는 동시에
+운영 정책의 명문화된 단일 출처다. CODEBASE_OVERVIEW §8(산출물 라이프사이클)은 이
+docstring을 정책의 권위 있는 참조로 가리킨다.
+
+디렉터리 레이아웃과 정리 대상
+-----------------------------
+`cleanup_result_artifacts(result_root, policy)`가 정리하는 하위 트리는 셋뿐이다.
+
+- `result/runs/<run_id>/` — 실행별 원본 산출물.  `cleanup_runs`가 처리한다.
+- `result/test/<session>/` — 테스트 세션 아티팩트.  `cleanup_test_artifacts`가 처리한다.
+- `result/runtime/logs/` — 런타임 로그 파일.  `cleanup_logs`가 처리한다.
+
+승격된 공식 최신본 `result/latest/`와 `result/runtime/`의 레지스트리 파일
+(`chatbot_jobs.json` 등)은 정리 대상이 **아니다**.  레지스트리 항목의 TTL 만료는
+`prune_registry`로 별도 관리한다.
+
+보존 기간 (`RetentionPolicy` 기본값)
+-----------------------------------
+- `successful_run_count=10` — 성공 run은 수정시각 기준 최신 10개만 보존하고, 이를
+  넘는 더 오래된 성공 run은 나이와 무관하게 제거한다.
+- `successful_run_days=30` — 보존 개수 안에 들어도 30일을 초과한 성공 run은 제거한다.
+- `failed_run_days=30` — 실패 run(`manifest.status == "fail"` 또는 manifest 판독 실패)은
+  30일 초과 시 제거한다.  `result/test/`도 같은 30일 TTL을 쓴다.
+- `runtime_log_days=14` — `result/runtime/logs/`의 로그 파일은 14일 초과 시 제거한다.
+
+run의 나이는 `manifest.json`(있으면) 또는 디렉터리 자체의 mtime으로 판정한다
+(`_modified_at`).
+
+보호 규칙 (안전망)
+-----------------
+- `result/latest_manifest.json` 또는 `result/latest/manifest.json`이 가리키는
+  `run_id`의 run은 보존 정책과 무관하게 **절대 제거하지 않는다**(`_protected_latest_run_ids`).
+- `_remove`는 허용 루트 내부가 아닌 경로, 그리고 허용 루트 자신은 삭제를 거부한다
+  (`refusing cleanup outside allowed root`).  심볼릭링크/상위경로 탈출을 차단한다.
+
+정리 주기 (수동 호출)
+--------------------
+이 정리 루틴은 메인 파이프라인이나 콘솔 진입점에서 **자동 호출되지 않는다**.  운영자가
+명시적으로 `cleanup_result_artifacts(...)`를 호출하거나 외부 스케줄러로 돌려야 한다.
+자동화하려면 이 함수를 운영 cron/CI 잡에 배선할 것.
+
+용량 상한
+---------
+바이트 단위의 하드 용량 상한은 없다.  디스크 사용량은 (1) 성공 run 개수 상한
+(`successful_run_count`)과 (2) 위 나이 기반 TTL로 **간접적으로만** 제한된다.  엄격한
+용량 캡이 필요하면 `RetentionPolicy`에 크기 예산을 추가하고 `cleanup_runs`에서
+최신순으로 누적 크기를 집계해 초과분을 제거하는 방식으로 확장할 수 있다.
+"""
+
 from __future__ import annotations
 
 import json
