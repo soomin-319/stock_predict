@@ -1,6 +1,6 @@
 # Stock Predict
 
-Python stock prediction pipeline for next-day and multi-horizon return signals. It builds price, market, and investor-flow features, validates with walk-forward OOF predictions, runs a long-only top-k backtest, and writes CSV/JSON artifacts under `result/`.
+Python stock prediction pipeline for next-day return signals. It builds price, market, and investor-flow features, validates with walk-forward OOF predictions, runs a long-only top-k backtest, and writes CSV/JSON artifacts under `result/`.
 
 This project is for research and operations support. The client uses its outputs as one reference material for investment decisions; it is not an investment-advice or automated trading system. Buy/sell/hold signals are based only on the next-day expected return (`predicted_return`). News and disclosures are collected and summarized only for user display, and must not change the expected return or the buy/sell decision.
 
