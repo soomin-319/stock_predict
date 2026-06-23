@@ -34,12 +34,13 @@ from src.data.fetch_real_data import normalize_user_symbols
 from src.chatbot.intent import is_help_utterance, is_status_utterance, normalize_utterance
 from src.chatbot.message_formatter import PredictionMessageFormatter
 from src.chatbot.responses import attach_quick_replies, list_card_response, simple_text_response
+from src.chatbot.session_store import ChatbotSessionStore, load_registry, save_registry
 from src.reports.issue_summary import append_issue_summary_columns
 from src.reports.news_impact_context import append_generated_news_impact_context
 from src.reports.result_formatter import validate_result_simple_schema
 from src.ops.published_store import load_published_simple
 from src.utils.atomic_files import atomic_write_text
-from src.utils.secrets import redact_argv, redact_text, redact_value
+from src.utils.secrets import redact_argv, redact_text
 from src.recommendation.close_betting import format_recommendation_message
 from src.recommendation.realtime_close_betting import RealTimeCloseBettingRecommendationService
 
@@ -62,15 +63,6 @@ class PredictionJobState:
     pid: int | None = None
     exit_code: int | None = None
     completed_at: str | None = None
-
-
-@dataclass(slots=True)
-class UserSessionState:
-    user_id: str
-    last_symbol: str | None = None
-    last_display_code: str | None = None
-    last_intent: str = "idle"
-    updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 @dataclass(slots=True)
@@ -226,9 +218,17 @@ class KakaoColabPredictionBot:
         self.session_path.parent.mkdir(parents=True, exist_ok=True)
         self.process_runner = process_runner or subprocess.Popen
         self.recommendation_service = recommendation_service or RealTimeCloseBettingRecommendationService()
+        self._state_lock = threading.RLock()
         self._active_processes: dict[str, Any] = {}
         self._job_registry = self._load_registry(state_load_path)
-        self._session_registry = self._load_registry(session_load_path)
+        loaded_session_registry = self._load_registry(session_load_path)
+        self._session_store = ChatbotSessionStore(
+            path=self.session_path,
+            registry=loaded_session_registry,
+            lock=self._state_lock,
+            secret_values=self.runtime_config.secret_values(),
+        )
+        self._session_registry = self._session_store.data
         if state_load_path != self.state_path:
             self._save_registry(self.state_path, self._job_registry)
         if session_load_path != self.session_path:
@@ -246,7 +246,6 @@ class KakaoColabPredictionBot:
         self._timed_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         self._timed_futures: dict[str, concurrent.futures.Future] = {}
         self._bootstrap_thread: threading.Thread | None = None
-        self._state_lock = threading.RLock()
         self._legacy_formatter_patched = False
         self._bootstrap_all_symbols_done = False
         self._cleanup_stale_running_jobs_on_startup()
@@ -1803,34 +1802,14 @@ class KakaoColabPredictionBot:
             self._finalize_process(symbol, int(exit_code))
 
     def _update_session(self, user_id: str | None, symbol: str | None, intent: str):
-        if not user_id:
-            return
-        with self._state_lock:
-            self._session_registry[user_id] = asdict(
-                UserSessionState(
-                    user_id=user_id,
-                    last_symbol=symbol,
-                    last_display_code=self._display_code(symbol) if symbol else None,
-                    last_intent=intent,
-                )
-            )
-            self._save_registry(self.session_path, self._session_registry)
+        display_code = self._display_code(symbol) if symbol else None
+        self._session_store.update(user_id, symbol=symbol, display_code=display_code, intent=intent)
 
     def _symbol_from_session(self, user_id: str | None) -> str | None:
-        if not user_id:
-            return None
-        with self._state_lock:
-            session = self._session_registry.get(user_id, {})
-        symbol = session.get("last_symbol")
-        return str(symbol) if symbol else None
+        return self._session_store.symbol_for(user_id)
 
     def _session_intent(self, user_id: str | None) -> str:
-        if not user_id:
-            return ""
-        with self._state_lock:
-            session = self._session_registry.get(user_id, {})
-        intent = str(session.get("last_intent") or "").strip()
-        return intent
+        return self._session_store.intent_for(user_id)
 
     def _is_help_request(self, text: str) -> bool:
         return is_help_utterance(text)
@@ -1845,19 +1824,10 @@ class KakaoColabPredictionBot:
         return text.strip().lower() in _RECOMMENDATION_KEYWORDS
 
     def _load_registry(self, path: Path) -> dict[str, dict[str, Any]]:
-        if not path.exists():
-            return {}
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-        if not isinstance(data, dict):
-            return {}
-        return {str(k): v for k, v in data.items() if isinstance(v, dict)}
+        return load_registry(path)
 
     def _save_registry(self, path: Path, data: dict[str, dict[str, Any]]):
-        safe_data = redact_value(data, self.runtime_config.secret_values())
-        atomic_write_text(path, json.dumps(safe_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        save_registry(path, data, self.runtime_config.secret_values())
 
     def _build_response(self, text: str, quick_replies: list[tuple[str, str]] | None = None) -> dict[str, Any]:
         return attach_quick_replies(simple_text_response(str(text or "")), quick_replies[:10] if quick_replies else None)
