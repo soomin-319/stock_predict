@@ -23,6 +23,20 @@ def test_feature_selection_module_keeps_display_only_context_out_of_model_featur
     assert not (set(selected) & DISPLAY_ONLY_CONTEXT_COLUMNS)
 
 
+def test_feature_column_base_lists_only_model_eligible_columns():
+    from src.features.feature_selection import (
+        FEATURE_COLUMN_BASE,
+        is_display_only_context_column,
+    )
+
+    leaked = sorted(c for c in FEATURE_COLUMN_BASE if is_display_only_context_column(c))
+
+    assert leaked == [], (
+        "FEATURE_COLUMN_BASE must contain only model-eligible feature names; "
+        f"display-only context names leaked in and rely on later subtraction: {leaked}"
+    )
+
+
 def test_technical_indicators_module_exposes_core_price_helpers():
     from src.features.technical_indicators import (
         compute_atr,

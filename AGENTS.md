@@ -2,7 +2,7 @@
 
 ## Core Guardrails
 
-This Python pipeline predicts next-day and multi-horizon stock returns. Treat all outputs as research and operations support, not investment advice or an automated trading system.
+This Python pipeline predicts next-day stock returns. Treat all outputs as research and operations support, not investment advice or an automated trading system.
 
 Buy/sell/hold decisions must use next-day expected return (`predicted_return`). News and disclosures are display-only context and must never change expected returns, rankings, recommendations, or signals.
 

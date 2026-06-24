@@ -186,6 +186,15 @@ def test_execute_folds_caps_nested_model_parallelism(monkeypatch):
     assert len(executed) == 2
 
 
+def test_resolve_worker_count_resolves_minus_one_and_floors_at_one():
+    from src.validation.walk_forward import resolve_worker_count
+
+    assert resolve_worker_count(-1, 8) == 8
+    assert resolve_worker_count(4, 8) == 4
+    assert resolve_worker_count(0, 8) == 1
+    assert resolve_worker_count(1, 8) == 1
+
+
 def test_execute_folds_keeps_oof_shape_consistent_between_sequential_and_parallel(monkeypatch):
     class _FakeExecutor:
         def __init__(self, max_workers):

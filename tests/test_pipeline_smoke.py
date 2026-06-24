@@ -179,6 +179,24 @@ def test_pipeline_diagnostics_records_stage_status_and_warnings():
     assert any("missing stage status" in warning for warning in report["warnings"])
 
 
+def test_diagnostics_report_includes_resolved_parallelism():
+    from src.config.settings import TrainingConfig
+
+    diagnostics = PipelineDiagnostics()
+    diagnostics.set_parallelism(
+        TrainingConfig(walk_forward_n_jobs=-1, model_n_jobs=2, model_head_n_jobs=1),
+        cpu_count=8,
+    )
+
+    parallelism = diagnostics.to_report({})["parallelism"]
+
+    assert parallelism["cpu_count"] == 8
+    assert parallelism["configured"]["walk_forward_n_jobs"] == -1
+    assert parallelism["resolved"]["walk_forward_n_jobs"] == 8
+    assert parallelism["resolved"]["model_n_jobs"] == 2
+    assert parallelism["resolved"]["model_head_n_jobs"] == 1
+
+
 def test_training_config_accepts_lightgbm_regularization_overrides(tmp_path):
     from src.config.settings import load_app_config
 
@@ -304,6 +322,8 @@ def test_run_pipeline_generates_report_without_graph_artifacts(tmp_path):
     assert "coverage_summary" in diagnostics
     assert "stage_status" in diagnostics
     assert "warnings" in diagnostics
+    assert diagnostics["parallelism"]["cpu_count"] >= 1
+    assert "walk_forward_n_jobs" in diagnostics["parallelism"]["resolved"]
     assert set(PIPELINE_STAGE_KEYS).issubset(diagnostics["stage_status"])
     assert "feature_missing_rates" in diagnostics
     assert "ma_120" in diagnostics["feature_missing_rates"]
