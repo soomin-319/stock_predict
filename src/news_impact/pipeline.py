@@ -283,7 +283,7 @@ def _build_llm_judged_events(
     for news_index, clustered in enumerate(clustered_news, start=1):
         item = clustered.item
         article_text, input_flags = _llm_article_text_and_flags(item)
-        for ticker in watchlist_tickers:
+        for ticker in _target_tickers_for_news(item, watchlist_tickers):
             company = companies.get(ticker, {})
             company_name = company.get("company", "")
             sector = company.get("sector", "")
@@ -340,6 +340,12 @@ def _build_llm_judged_events(
                 )
             )
     return events, llm_failed_count
+
+
+def _target_tickers_for_news(item: NewsItem, watchlist_tickers: list[str]) -> list[str]:
+    if item.ticker and item.ticker in watchlist_tickers:
+        return [item.ticker]
+    return watchlist_tickers
 
 
 def _assign_unique_news_cluster_ids(news: Iterable[NewsItem]) -> list[ClusteredItem]:

@@ -48,6 +48,7 @@ class NewsItem:
     raw_text: str | None
     storage_policy: StoragePolicy
     quality_flags: list[str] | tuple[str, ...]
+    ticker: str | None = None
 
     def __post_init__(self) -> None:
         _require_allowed("market_session", self.market_session, _MARKET_SESSIONS)
@@ -65,6 +66,8 @@ class NewsItem:
         _require_score("publisher_confidence", self.publisher_confidence)
         if self.signal_at != compute_signal_at(self.published_at, self.collected_at):
             raise SchemaValidationError("signal_at must equal max(published_at, collected_at)")
+        if self.ticker is not None:
+            _require_ticker(self.ticker)
         object.__setattr__(self, "quality_flags", tuple(self.quality_flags))
 
     def to_dict(self) -> dict[str, Any]:
