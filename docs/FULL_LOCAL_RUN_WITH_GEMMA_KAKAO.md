@@ -37,6 +37,8 @@ python -m pip install -e .
 $portOpen = Test-NetConnection -ComputerName 127.0.0.1 -Port 8001 -InformationLevel Quiet
 if (-not $portOpen) {
   # IQ4_XS(~12.7GB)를 16GB VRAM에 통째로 올림: 전 레이어 GPU 오프로딩(-ngl) + flash-attn(-fa) + gemma 템플릿(--jinja).
+  # --reasoning off: 뉴스임팩트 판정은 짧은 텍스트→정해진 스키마 분류라 thinking 토큰의 효용이 거의 없음.
+  #   thinking을 끄면 판정당 출력 ~1,300토큰→~215토큰으로 줄어 약 4배 빨라짐(품질 저하 미관측). 뉴스/공시 점수는 표시용이라 영향 없음.
   Start-Process -FilePath $LlamaServer -ArgumentList @(
     '-m', $GemmaModel,
     '--host', '127.0.0.1',
@@ -45,7 +47,8 @@ if (-not $portOpen) {
     '-c', '8192',
     '-ngl', '99',
     '-fa', 'on',
-    '--jinja'
+    '--jinja',
+    '--reasoning', 'off'
   ) -WindowStyle Hidden
   Start-Sleep -Seconds 15
 }
