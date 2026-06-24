@@ -426,7 +426,7 @@ def _load_pipeline_config_and_data(
         ~cleaned[quality_columns].fillna(False).any(axis=1)
     ].copy()
     if universe_csv:
-        universe = load_universe_symbols(universe_csv)
+        universe = load_universe_symbols_list(universe_csv)
         requested_universe_symbols = list(universe)
         data = filter_by_universe(quality_excluded, universe)
     else:
