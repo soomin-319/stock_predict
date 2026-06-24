@@ -49,9 +49,13 @@ def build_news_impact_fixture(
         if not title:
             continue
         if source_type == "news":
+            ticker = _ticker(str(row.get("Symbol")))
+            if ticker is None:
+                continue
             news_rows.append(
                 {
                     "source": str(row.get("provider") or "naver"),
+                    "ticker": ticker,
                     "title": title,
                     "summary": "",
                     "url": str(row.get("url") or ""),

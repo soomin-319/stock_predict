@@ -217,9 +217,12 @@ def append_llm_news_impact_context_with_runtime(
         )
     try:
         with tempfile.TemporaryDirectory(prefix="news_impact_gemma_") as tmp:
+            target_symbols = symbols
+            if target_symbols is None:
+                target_symbols = pred_df.get("Symbol", pd.Series(dtype=object)).dropna().astype(str).tolist()
             bundle = build_news_impact_fixture(
                 context_raw_df=context_raw_df,
-                symbols=symbols,
+                symbols=target_symbols,
                 symbol_name_map=symbol_name_map,
                 run_date=run_date,
                 output_dir=tmp,
