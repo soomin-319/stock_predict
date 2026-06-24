@@ -5,6 +5,7 @@
 - Gemma 서버: `llama.cpp` `llama-server.exe`
 - Gemma endpoint: `http://localhost:8001/v1`
 - Gemma model alias: `gemma-4-26b-a4b`
+- Gemma model file: `gemma-4-26B-A4B-it-UD-IQ4_XS.gguf` (IQ4_XS, ~12.7GB — 16GB VRAM 풀 오프로딩용)
 - Kakao 챗봇: Flask local server + ngrok public webhook
 - API 키: `.env`에서 프로세스 환경변수로 로드. 값은 출력하지 않음.
 
@@ -26,7 +27,7 @@ Get-Content .env | ForEach-Object {
 
 # 2. 현재 PC 기준 llama.cpp/Gemma 경로
 $LlamaServer = 'C:\Users\카운\AppData\Local\Microsoft\WinGet\Packages\ggml.llamacpp_Microsoft.Winget.Source_8wekyb3d8bbwe\llama-server.exe'
-$GemmaModel  = 'C:\Users\카운\Desktop\stock_predict\models\gemma-4-26B-A4B-it-Q4_K_M.gguf'
+$GemmaModel  = 'C:\Users\카운\Desktop\stock_predict\models\gemma-4-26B-A4B-it-UD-IQ4_XS.gguf'
 
 # 3. 의존성 설치
 python -m pip install -r requirements.txt
@@ -35,12 +36,16 @@ python -m pip install -e .
 # 4. 기존 8001 Gemma 서버가 있으면 그대로 사용. 없으면 llama.cpp 서버 실행.
 $portOpen = Test-NetConnection -ComputerName 127.0.0.1 -Port 8001 -InformationLevel Quiet
 if (-not $portOpen) {
+  # IQ4_XS(~12.7GB)를 16GB VRAM에 통째로 올림: 전 레이어 GPU 오프로딩(-ngl) + flash-attn(-fa) + gemma 템플릿(--jinja).
   Start-Process -FilePath $LlamaServer -ArgumentList @(
     '-m', $GemmaModel,
     '--host', '127.0.0.1',
     '--port', '8001',
     '--alias', 'gemma-4-26b-a4b',
-    '-c', '8192'
+    '-c', '8192',
+    '-ngl', '99',
+    '-fa', 'on',
+    '--jinja'
   ) -WindowStyle Hidden
   Start-Sleep -Seconds 15
 }
@@ -126,6 +131,16 @@ Get-Process llama-server -ErrorAction SilentlyContinue | Stop-Process
 Test-Path $LlamaServer
 Test-Path $GemmaModel
 Test-NetConnection -ComputerName 127.0.0.1 -Port 8001
+```
+
+### VRAM 부족(OOM) / GPU에 다 안 올라감
+
+`gemma-4-26B-A4B-it-UD-IQ4_XS.gguf`(~12.7GB)는 16GB VRAM에 통째로 올라가도록 받은 모델입니다. 그래도 OOM이 나면(디스플레이 점유 VRAM 등):
+
+```powershell
+# 1) 컨텍스트를 줄임 (8192 -> 4096): 위 Start-Process 인자에서 '-c','8192' 를 '-c','4096' 으로
+# 2) 그래도 부족하면 일부 레이어만 GPU에: '-ngl','99' 를 '-ngl','40' 등으로 낮춤(나머지는 CPU)
+# 3) 모니터를 메인보드 내장 출력에 연결하면 GPU에서 ~1.5GB가 추가로 확보됨
 ```
 
 ### ngrok URL이 안 나옴
