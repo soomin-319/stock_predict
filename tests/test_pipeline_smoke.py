@@ -16,6 +16,7 @@ from src.pipeline import (
     PipelineDiagnostics,
     _drop_empty_detail_columns,
     _build_pipeline_feature_matrix,
+    _load_pipeline_config_and_data,
     _run_pipeline_validation,
     _predict_pipeline_latest,
     _prepare_pipeline_context,
@@ -32,6 +33,21 @@ def test_graph_module_and_dependency_are_removed():
     assert not Path("tests/test_visualize_recent_month.py").exists()
     assert "matplotlib" not in Path("requirements.txt").read_text().lower()
     assert "matplotlib" not in Path("pyproject.toml").read_text().lower()
+
+
+def test_load_pipeline_config_and_data_uses_universe_csv(tmp_path):
+    universe_csv = tmp_path / "universe.csv"
+    universe_csv.write_text("Symbol\nAAA\n", encoding="utf-8-sig")
+
+    _, _, _, data, requested_symbols = _load_pipeline_config_and_data(
+        "data/sample_ohlcv.csv",
+        str(universe_csv),
+        None,
+        {},
+    )
+
+    assert requested_symbols == ["AAA"]
+    assert sorted(data["Symbol"].unique()) == ["AAA"]
 
 
 def make_sample_df(days: int = 320):
