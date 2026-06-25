@@ -54,3 +54,18 @@ def test_news_impact_llm_prompt_asset_is_vendored():
 
     # impact_judge.build_system_prompt()가 런타임에 읽는 필수 자산. 머지 시 누락 방지.
     assert Path("docs/NEWS_IMPACT_LLM_PROMPT.md").exists()
+
+
+
+def test_daily_pipeline_inputs_accepts_stable_llm_cache_dir(tmp_path):
+    from src.news_impact.pipeline import DailyPipelineInputs
+
+    inputs = DailyPipelineInputs(
+        run_date="2026-06-25",
+        watchlist_path=tmp_path / "wl.csv",
+        company_master_path=tmp_path / "cm.csv",
+        input_fixture_path=tmp_path / "fx.json",
+        output_dir=tmp_path / "out",
+        llm_cache_dir=tmp_path / "stable_cache",
+    )
+    assert Path(inputs.llm_cache_dir) == tmp_path / "stable_cache"

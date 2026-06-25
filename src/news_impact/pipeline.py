@@ -65,6 +65,7 @@ class DailyPipelineInputs:
     llm_config_path: str | Path | None = None
     impact_judge_llm: ImpactJudgeLLM | None = None
     semantic_cluster_llm: SemanticClusterLLM | None = None
+    llm_cache_dir: str | Path | None = None
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,7 @@ def run_daily_pipeline(inputs: DailyPipelineInputs) -> DailyPipelineResult:
     impact_judge_llm = inputs.impact_judge_llm or _build_impact_judge_llm(
         llm_config=llm_config,
         output_dir=output_dir,
+        llm_cache_dir=inputs.llm_cache_dir,
     )
     system_prompt = build_system_prompt()
     impact_events, llm_failed_count = _build_llm_judged_events(
@@ -384,8 +386,17 @@ def _build_targeted_news_prompt(
     )
 
 
-def _build_impact_judge_llm(llm_config: LLMConfig, output_dir: Path) -> LlamaCppClient:
-    cache = FileLLMResponseCache(output_dir / "llm_cache" / "impact_judgments")
+def _build_impact_judge_llm(
+    llm_config: LLMConfig,
+    output_dir: Path,
+    llm_cache_dir: str | Path | None = None,
+) -> LlamaCppClient:
+    cache_root = (
+        Path(llm_cache_dir)
+        if llm_cache_dir is not None
+        else output_dir / "llm_cache" / "impact_judgments"
+    )
+    cache = FileLLMResponseCache(cache_root)
     return LlamaCppClient(llm_config, cache=cache)
 
 

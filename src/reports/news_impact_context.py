@@ -236,6 +236,7 @@ def append_llm_news_impact_context_with_runtime(
                     output_dir=tmp,
                     semantic_clustering=False,
                     llm_config_path=llm_config_path,
+                    llm_cache_dir=Path("result/runtime/llm_cache/news_impact"),
                 )
             )
             report_path = result.artifact_paths["report.json"]
