@@ -159,6 +159,10 @@ def _build_issue_summary_snapshot(pred_df: pd.DataFrame) -> pd.DataFrame:
     return output_build_issue_summary_snapshot(pred_df)
 
 
+def _issue_summary_cache_dir() -> str:
+    return "result/runtime/llm_cache/issue_summary"
+
+
 @dataclass(frozen=True)
 class EffectiveLLMOptions:
     issue_summary_api_key: str | None
@@ -798,6 +802,7 @@ def _predict_pipeline_latest(
             base_url=issue_summary_base_url,
             summarize_symbols=issue_summary_symbols,
             summary_n_jobs=issue_summary_n_jobs,
+            llm_cache_dir=_issue_summary_cache_dir(),
         )
     except Exception as exc:
         warning = f"issue summary unavailable: {exc}"

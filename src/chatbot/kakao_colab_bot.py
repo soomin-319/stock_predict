@@ -1343,6 +1343,7 @@ class KakaoColabPredictionBot:
                     openai_api_key=self.runtime_config.openai_api_key,
                     openai_model=self.runtime_config.openai_model,
                     summarize_symbols=[symbol],
+                    llm_cache_dir="result/runtime/llm_cache/issue_summary",
                 )
                 if summarized_df is None:
                     self._console_log(
@@ -1363,6 +1364,7 @@ class KakaoColabPredictionBot:
                     openai_api_key=self.runtime_config.openai_api_key,
                     openai_model=self.runtime_config.openai_model,
                     summarize_symbols=[symbol],
+                    llm_cache_dir="result/runtime/llm_cache/issue_summary",
                 )
             if summarized_df is None:
                 self._console_log(
