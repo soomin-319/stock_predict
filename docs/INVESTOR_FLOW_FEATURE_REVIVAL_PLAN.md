@@ -1,6 +1,6 @@
 # 수급 피처 부활 구현 플랜
 
-> **에이전트 작업자용:** 필수 하위 스킬: superpowers:subagent-driven-development(권장) 또는 superpowers:executing-plans 로 이 플랜을 태스크 단위로 구현하세요. 각 단계는 체크박스(`- [ ]`) 문법으로 추적합니다.
+> **에이전트 작업자용:** 이 플랜은 태스크 단위로 **순차 실행**하세요. AGENTS.md에 따라 subagent/parallel 실행은 금지합니다. 각 단계는 체크박스(`- [ ]`) 문법으로 추적합니다.
 
 **목표:** 스텁 처리된 `_fetch_flow`를 실제 KRX 수급 소스로 교체해, `foreign_net_buy` / `institution_net_buy`(및 이에 의존하는 약 15개 피처)가 실제 값을 갖게 하고, `investor_coverage_ratio`가 실제 fetch 성공을 반영하게 한다.
 
@@ -12,9 +12,14 @@
 
 - **Python 버전:** 3.14.5 — 신규 의존성은 이 인터프리터에서 설치되는지 먼저 검증한 뒤 의존할 것.
 - **테스트 실행(이 PC):** `result/` 폴더 ACL deny 이슈를 피하려고 pytest에 쓰기 가능한 basetemp를 명시: `pytest <경로> -v --basetemp=.tmp_pytest`.
+- **작업 방식:** subagent 금지, 병렬 tool/command 금지. 모든 명령과 파일 수정은 순차 실행.
 - **`_fetch_flow` 계약(불변):** `tuple[pd.DataFrame, dict]` 반환. 프레임 컬럼은 `["Date", "Symbol", "foreign_net_buy", "institution_net_buy"]`(Date는 `datetime64`), dict는 정수 키 `requested`, `successful`, `failed` + `status`, `source`, `message`. `requested`/`successful` 키는 `pipeline._pipeline_coverage_summary`가 `("flow","disclosure","news")`에 대해 합산해 `investor_coverage_ratio`를 계산한다.
+- **typed empty 불변:** 빈 프레임도 Date가 `datetime64[ns]`여야 한다. 단순 `pd.DataFrame(columns=...)`만 반환하지 말고 typed empty helper를 쓴다.
+- **소스 스키마 실패 처리:** pykrx 결과에서 `외국인합계`/`기관합계` 계열 컬럼을 못 찾으면 0으로 조용히 채우지 말고 예외를 내고 `_fetch_flow`에서 해당 심볼 `failed`로 집계한다.
+- **기존 입력 컬럼 보존:** 입력 CSV에 `foreign_net_buy`/`institution_net_buy`가 이미 있을 수 있다. fetch 결과 merge 시 `_x/_y` 충돌로 기존 값이 0으로 재생성되지 않게 suffix/우선순위를 명시한다. 권장 우선순위는 **fetched 값 우선, 결측이면 입력 값 보존**.
 - **커버리지 게이트 산식:** `investor_coverage_ratio = (flow.successful + disclosure.successful + news.successful) / (requested 합)`. 비율이 `min_investor_coverage_ratio`(현재 `0.5`) 미만이면 halt. flow `5/5`, disclosure `0/5`이면 비율 `= 5/10 = 0.5` → halt가 `caution`으로 **해제됨**. `normal`까지 가려면 DART 공시도 성공해야 함(별도 작업 — 범위 밖 참조).
 - **데이터 소스 사실:** OHLCV는 `yfinance` 사용. **FDR(FinanceDataReader)로는 수급을 가져올 수 없음**(시세/종목리스트만 노출). 수급 순매수는 pykrx / KRX 직접 / 증권사 OpenAPI 필요. 이 플랜은 pykrx 사용.
+- **pykrx 운영 주의:** pykrx는 KRX/Naver 스크래핑 기반이다. 무분별한 호출을 피하고, 라이브 검증은 소수 종목으로 제한한다. 최신 거래일 수급은 장마감 이후 지연될 수 있으므로 `latest_flow_date` 또는 최신 입력일 커버 여부를 확인한다.
 - **표시 vs 예측 구분:** 뉴스/공시 임팩트(표시 전용)와 달리, 수급은 **예측 피처**다 — 예측/랭킹에 영향을 주는 것이 의도된 동작이다.
 
 ## 범위 밖 (이 플랜에서 하지 않음)
@@ -30,6 +35,7 @@
 - 수정: `requirements.txt` — `pykrx` 추가.
 - 생성: `tests/data/test_investor_flow_source.py` — 어댑터 단위 테스트(컬럼 매핑, 빈 처리).
 - 생성: `tests/data/test_investor_flow_fetch.py` — `_fetch_flow` + `add_investor_context_with_coverage` 테스트(심볼별 커버리지, 피처 채움). 가짜 주입으로 네트워크 없이.
+- 수정: `tests/test_investor_context_integration.py` — 기존 스텁 기대 테스트를 pykrx fetcher 주입/실패 fallback 계약에 맞게 갱신.
 
 ---
 
@@ -41,7 +47,15 @@
 - 테스트: `tests/data/test_investor_flow_source.py`
 
 **인터페이스:**
-- 제공(Produces): `fetch_investor_flow_pykrx(ticker: str, start: str, end: str, *, stock_module=None) -> pd.DataFrame`. 컬럼 `["Date","foreign_net_buy","institution_net_buy"]`(Date `datetime64`). 소스에 행이 없으면 해당 컬럼을 가진 **빈** 프레임 반환. `stock_module`은 테스트용 주입 시뮬. 운영 경로는 `pykrx.stock`을 지연 임포트.
+- 제공(Produces): `fetch_investor_flow_pykrx(ticker: str, start: str, end: str, *, stock_module=None) -> pd.DataFrame`. 컬럼 `["Date","foreign_net_buy","institution_net_buy"]`(Date `datetime64`). 소스에 행이 없으면 해당 컬럼을 가진 **typed empty** 프레임 반환. 필수 투자자 컬럼을 못 찾으면 `ValueError`를 발생시켜 상위에서 실패로 집계하게 한다. `stock_module`은 테스트용 주입 시뮬. 운영 경로는 `pykrx.stock`을 지연 임포트.
+
+- [ ] **Step 0: 테스트 디렉터리 생성**
+
+현재 레포에는 `tests/data/`가 없을 수 있으므로 먼저 생성:
+
+```powershell
+New-Item -ItemType Directory -Force tests/data
+```
 
 - [ ] **Step 1: 실패하는 테스트 작성**
 
@@ -77,7 +91,19 @@ def test_empty_source_returns_typed_empty_frame():
     out = fetch_investor_flow_pykrx("005930", "2026-06-24", "2026-06-25", stock_module=_Empty())
     assert out.empty
     assert list(out.columns) == ["Date", "foreign_net_buy", "institution_net_buy"]
+    assert str(out["Date"].dtype).startswith("datetime64")
+
+
+def test_missing_required_source_columns_raises():
+    class _BadSchema:
+        def get_market_trading_value_by_date(self, *a):
+            return pd.DataFrame({"개인": [1], "전체": [1]}, index=pd.to_datetime(["2026-06-25"]))
+
+    with pytest.raises(ValueError, match="required investor flow columns"):
+        fetch_investor_flow_pykrx("005930", "2026-06-24", "2026-06-25", stock_module=_BadSchema())
 ```
+
+위 테스트는 `pytest` import도 필요하다.
 
 - [ ] **Step 2: 테스트를 돌려 실패 확인**
 
@@ -95,6 +121,16 @@ import pandas as pd
 _FOREIGN_KEYS = ("외국인합계", "외국인")
 _INSTITUTION_KEYS = ("기관합계", "기관")
 _OUT_COLUMNS = ["Date", "foreign_net_buy", "institution_net_buy"]
+
+
+def _empty_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "Date": pd.Series(dtype="datetime64[ns]"),
+            "foreign_net_buy": pd.Series(dtype="float64"),
+            "institution_net_buy": pd.Series(dtype="float64"),
+        }
+    )
 
 
 def _pick_column(columns, keys: tuple[str, ...]):
@@ -120,12 +156,14 @@ def fetch_investor_flow_pykrx(ticker: str, start: str, end: str, *, stock_module
     todate = pd.to_datetime(end).strftime("%Y%m%d")
     raw = stock.get_market_trading_value_by_date(fromdate, todate, ticker)
     if raw is None or len(raw) == 0:
-        return pd.DataFrame(columns=_OUT_COLUMNS)
+        return _empty_frame()
     columns = list(raw.columns)
     foreign_col = _pick_column(columns, _FOREIGN_KEYS)
     inst_col = _pick_column(columns, _INSTITUTION_KEYS)
-    foreign = pd.to_numeric(raw[foreign_col], errors="coerce") if foreign_col else pd.Series(0.0, index=raw.index)
-    institution = pd.to_numeric(raw[inst_col], errors="coerce") if inst_col else pd.Series(0.0, index=raw.index)
+    if foreign_col is None or inst_col is None:
+        raise ValueError(f"required investor flow columns not found: {columns}")
+    foreign = pd.to_numeric(raw[foreign_col], errors="coerce")
+    institution = pd.to_numeric(raw[inst_col], errors="coerce")
     out = pd.DataFrame(
         {
             "Date": pd.to_datetime(raw.index),
@@ -148,7 +186,7 @@ pykrx
 - [ ] **Step 4: 테스트를 돌려 통과 확인**
 
 실행: `pytest tests/data/test_investor_flow_source.py -v --basetemp=.tmp_pytest`
-기대: PASS (2 passed)
+기대: PASS (3 passed)
 
 - [ ] **Step 5: 이 인터프리터에서 pykrx 실제 설치 검증**
 
@@ -246,22 +284,27 @@ def _fetch_flow(symbols, start, end, *, flow_fetcher=None):
         "source": "pykrx",
         "message": f"Fetched investor flow for {successful}/{len(symbols)} symbols via pykrx.",
     }
+    if frames:
+        latest_flow_date = max(pd.to_datetime(frame["Date"]).max() for frame in frames)
+        coverage["latest_flow_date"] = latest_flow_date.strftime("%Y-%m-%d")
     if not frames:
-        return pd.DataFrame(columns=["Date", "Symbol", "foreign_net_buy", "institution_net_buy"]), coverage
+        return _empty_flow_frame(), coverage
     out = pd.concat(frames, ignore_index=True)
     out["Date"] = pd.to_datetime(out["Date"])
     return out, coverage
 ```
 
+`_empty_flow_frame()`는 Date/Symbol/수급 컬럼 dtype을 명시하는 helper로 함께 추가한다. `except Exception`은 최소한 `error_type_counts` 또는 `message`에 요약해 디버깅 가능하게 남긴다.
+
 - [ ] **Step 4: 테스트를 돌려 통과 확인**
 
-실행: `pytest tests/data/test_investor_flow_fetch.py -v --basetemp=.tmp_pytest`
+실행: `pytest tests/data/test_investor_flow_fetch.py tests/test_investor_context_integration.py -v --basetemp=.tmp_pytest`
 기대: PASS
 
 - [ ] **Step 5: 커밋**
 
 ```bash
-git add src/data/investor_context.py tests/data/test_investor_flow_fetch.py
+git add src/data/investor_context.py tests/data/test_investor_flow_fetch.py tests/test_investor_context_integration.py
 git commit -m "feat(data): wire _fetch_flow to pykrx adapter with per-symbol coverage"
 ```
 
@@ -305,6 +348,66 @@ def test_add_investor_context_populates_flow(monkeypatch):
     assert out.loc[out["Symbol"] == "005930.KS", "foreign_net_buy"].iloc[0] == 100.0
     assert out.loc[out["Symbol"] == "000660.KS", "institution_net_buy"].iloc[0] == 20.0
     assert cov["flow"]["successful"] == 2
+
+
+def test_add_investor_context_preserves_input_flow_when_fetch_missing(monkeypatch):
+    df = pd.DataFrame(
+        {
+            "Date": ["2026-06-25"],
+            "Symbol": ["005930.KS"],
+            "Close": [356000.0],
+            "foreign_net_buy": [123.0],
+            "institution_net_buy": [456.0],
+        }
+    )
+
+    monkeypatch.setattr(
+        ic,
+        "_fetch_flow",
+        lambda *a, **k: (
+            pd.DataFrame(columns=["Date", "Symbol", "foreign_net_buy", "institution_net_buy"]),
+            {"requested": 1, "successful": 0, "failed": 1, "status": "no_data", "source": "pykrx", "message": "x"},
+        ),
+    )
+    cfg = ic.InvestorContextConfig(enabled=True, enable_disclosure=False)
+    out, _ = ic.add_investor_context_with_coverage(df, cfg)
+
+    assert out["foreign_net_buy"].tolist() == [123.0]
+    assert out["institution_net_buy"].tolist() == [456.0]
+
+
+def test_add_investor_context_prefers_fetched_flow_over_input(monkeypatch):
+    df = pd.DataFrame(
+        {
+            "Date": ["2026-06-25"],
+            "Symbol": ["005930.KS"],
+            "Close": [356000.0],
+            "foreign_net_buy": [123.0],
+            "institution_net_buy": [456.0],
+        }
+    )
+
+    rows = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2026-06-25"]),
+            "Symbol": ["005930.KS"],
+            "foreign_net_buy": [1000.0],
+            "institution_net_buy": [2000.0],
+        }
+    )
+    monkeypatch.setattr(
+        ic,
+        "_fetch_flow",
+        lambda *a, **k: (
+            rows,
+            {"requested": 1, "successful": 1, "failed": 0, "status": "ok", "source": "pykrx", "message": "x"},
+        ),
+    )
+    cfg = ic.InvestorContextConfig(enabled=True, enable_disclosure=False)
+    out, _ = ic.add_investor_context_with_coverage(df, cfg)
+
+    assert out["foreign_net_buy"].tolist() == [1000.0]
+    assert out["institution_net_buy"].tolist() == [2000.0]
 ```
 
 - [ ] **Step 2: 테스트를 돌려 실패 확인**
@@ -312,11 +415,19 @@ def test_add_investor_context_populates_flow(monkeypatch):
 실행: `pytest tests/data/test_investor_flow_fetch.py::test_add_investor_context_populates_flow -v --basetemp=.tmp_pytest`
 기대: Task 2 미적용 시에만 FAIL. Task 2가 적용됐다면 즉시 PASS여야 함. Date dtype merge 불일치로 FAIL하면, `out["Date"]`가 `datetime64`인지 확인하고(함수 내부 `pd.to_datetime`로 설정됨) 가짜가 `datetime64` Date를 반환하는지 확인.
 
-- [ ] **Step 3: (신규 구현 불필요)** 테스트가 통과하면 진행. merge에서 실패하면 수정은 `_fetch_flow`가 `datetime64` Date를 반환하게 하는 것뿐(Task 2 Step 3에서 이미 처리됨) — 그 이상 코드 추가 금지.
+- [ ] **Step 3: merge 충돌 처리 구현**
+
+`add_investor_context_with_coverage`에서 기존 입력 수급 컬럼과 fetch 수급 컬럼이 충돌하지 않게 처리한다.
+
+권장 패턴:
+- merge 전 입력 컬럼을 `foreign_net_buy_input` / `institution_net_buy_input`으로 임시 보존.
+- fetch merge 후 fetched 값이 있으면 사용.
+- fetched 값이 결측이면 input 값 사용.
+- 마지막에 임시 컬럼 제거.
 
 - [ ] **Step 4: 데이터 테스트 모듈 전체 실행**
 
-실행: `pytest tests/data/test_investor_flow_source.py tests/data/test_investor_flow_fetch.py -v --basetemp=.tmp_pytest`
+실행: `pytest tests/data/test_investor_flow_source.py tests/data/test_investor_flow_fetch.py tests/test_investor_context_integration.py -v --basetemp=.tmp_pytest`
 기대: 전부 PASS
 
 - [ ] **Step 5: 커밋**
@@ -351,10 +462,13 @@ python src/pipeline.py --auto-refresh-real \
 ```
 기대: exit 0.
 
+검증 후 `data/universe_gemma_5.csv`는 임시 파일이면 삭제하거나, 의도적으로 남길 경우 별도 커밋 대상에 포함한다. untracked/dirty 상태로 방치하지 않는다.
+
 - [ ] **Step 2: 커버리지가 움직였는지 검증** (해당 실행의 `pipeline_report.json` 확인)
 
 `result/latest/pipeline_report.json`에서 확인:
 - `investor_context_coverage.flow.status == "ok"` 그리고 `successful == 5`.
+- `investor_context_coverage.flow.latest_flow_date`가 입력 최신 거래일과 크게 어긋나지 않음(당일 장마감 전이면 전 영업일 허용).
 - `coverage_gate.investor_coverage_ratio >= 0.5`.
 - `coverage_gate.status != "halt"` (공시가 0/5로 남아 있으면 `caution` 예상).
 
@@ -372,6 +486,29 @@ python src/pipeline.py --auto-refresh-real \
 git add docs/TIMA_PREDICTION_FEATURE_CANDIDATES.md docs/INVESTOR_FLOW_FEATURE_REVIVAL_PLAN.md
 git commit -m "docs: record investor-flow revival via pykrx and update feature status"
 ```
+
+- [ ] **Step 5: 전체 검증**
+
+AGENTS.md 기준으로 최소 아래를 실행한다.
+
+```bash
+pytest tests/data/test_investor_flow_source.py tests/data/test_investor_flow_fetch.py tests/test_investor_context_integration.py tests/test_pipeline_smoke.py -v --basetemp=.tmp_pytest
+python src/pipeline.py --input data/sample_ohlcv.csv --disable-external --report-json pipeline_report_smoke.json
+```
+
+가능하면 전체 `pytest -v --basetemp=.tmp_pytest`도 실행한다.
+
+- [ ] **Step 6: push + PR**
+
+AGENTS.md에 따라 변경이 있으면 로컬 커밋에서 멈추지 않는다.
+
+```bash
+git status -sb
+git push -u origin $(git branch --show-current)
+gh pr create --draft --fill --head $(git branch --show-current)
+```
+
+PR 본문에는 요약, 테스트 결과, 사용자 영향, 산출물 경로(`result/` 변경 시)를 적는다.
 
 ---
 
