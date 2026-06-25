@@ -249,6 +249,8 @@ class LlamaCppClient:
         }
         if self._config.json_schema_required:
             payload["response_format"] = {"type": "json_object"}
+        if self._config.max_tokens is not None:
+            payload["max_tokens"] = self._config.max_tokens
 
         cache_key = _cache_key(payload, required_keys)
         cache_metadata = self._cache_metadata(system_prompt, user_prompt, required_keys)
