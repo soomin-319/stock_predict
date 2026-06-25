@@ -6,7 +6,7 @@
 
 **Goal:** 로컬 gemma 기반 종목 이슈 요약·뉴스임팩트 판정의 LLM 호출 수·토큰·캐시 동작을 고쳐 재실행 지연을 대폭 줄인다(점수 산식·예측 입력은 불변).
 
-**Architecture:** 본 문서 **§2 근본 원인**의 우선순위(P0 캐시 안정화 → P0 팬아웃 차단 → P1 토큰상한·요약통합 → P2 본문절단)를 따라, 콘텐츠 해시 캐시를 **안정 디렉터리**로 옮기고, 미매핑 기사의 전체-워치리스트 팬아웃을 제거하며, 출력 토큰 상한과 요약 1회화로 호출당·호출수 비용을 동시에 낮춘다. 모든 변경은 기존 표시/예측 분리 가드를 보존한다. §1~§3은 **왜·무엇을 먼저** 고치는지(진단), §4~§5는 **어디서·어떻게**(실행)다.
+**Architecture:** 본 문서 **§2 근본 원인**의 우선순위(P0 캐시 안정화 → P0 팬아웃 차단 → P1 토큰상한·요약통합)를 따라, 콘텐츠 해시 캐시를 **안정 디렉터리**로 옮기고, 미매핑 기사의 전체-워치리스트 팬아웃을 제거하며, 출력 토큰 상한과 요약 1회화로 호출당·호출수 비용을 동시에 낮춘다. 모든 변경은 기존 표시/예측 분리 가드를 보존한다. §1~§3은 **왜·무엇을 먼저** 고치는지(진단), §4~§5는 **어디서·어떻게**(실행)다.
 
 **Tech Stack:** Python 3.14, pandas, 표준 라이브러리 `urllib`(llama.cpp OpenAI 호환 API), 기존 `src/news_impact/*` · `src/reports/issue_summary.py` 배관.
 
@@ -106,13 +106,14 @@ def _target_tickers_for_news(item: NewsItem, watchlist_tickers: list[str]) -> li
 
 ---
 
-### 🟡 P2-1. 시스템 프롬프트 프리필 반복 / 기사 길이
+### 🟡 P2-1. 시스템 프롬프트 프리필 반복 (프리픽스 캐시 유지)
 
 임팩트 판정 시스템 프롬프트는 약 **2,832자**(`src/news_impact/prompts/news_impact_llm_prompt.md` + 가드)로 매 호출 동일하게 전송된다.
 
-- llama-server는 슬롯별 **최장 공통 프리픽스**를 재사용(`cache_prompt` 기본 on)하므로, 같은 슬롯에서 시스템 프롬프트를 맨 앞에 바이트 동일로 두면 재프리필을 피한다(현 코드는 이미 시스템 프롬프트를 첫 메시지로 둠 — 유지할 것).
-- 다만 **기사 본문은 호출마다 달라** 프리필이 불가피하다. 본문을 **리드 + 핵심 문장 위주로 1,000~1,500자 절단**하면 프리필 토큰이 줄어 임팩트 판정·요약 모두 빨라진다. → **Task 6**
+- llama-server는 슬롯별 **최장 공통 프리픽스**를 재사용(`cache_prompt` 기본 on)하므로, 같은 슬롯에서 시스템 프롬프트를 맨 앞에 바이트 동일로 두면 재프리필을 피한다(현 코드는 이미 시스템 프롬프트를 첫 메시지로 둠 — **유지할 것**). 이건 신규 코드 작업이 아니라 회귀 방지용 가드다.
 - 연속배치(다중 슬롯) 사용 시 슬롯 간 프리픽스 공유는 제한적이므로 P1-3과 트레이드오프 고려.
+
+> **기사 본문 절단은 범위에서 제외(2026-06-25 결정).** 본문을 1,000~1,500자로 자르면 프리필 토큰이 줄지만, (a) 한국 기사 본문은 대체로 짧아 절단이 거의 트리거되지 않고, (b) 핵심 사실이 후반부에 있는 기사에서 판정 품질 저하 위험이 있어 **효과 대비 가치가 가장 낮다.** 호출 수 레버(P0-2)·캐시(P0-1)로 충분하다고 보고 코드 작업에서 뺐다.
 
 ---
 
@@ -135,16 +136,16 @@ def _target_tickers_for_news(item: NewsItem, watchlist_tickers: list[str]) -> li
 | **P1-1** | 임팩트 출력 토큰 상한 | `llm_config.py:24·61`, `llm_client.py:251` | 호출당 디코딩↓ | 낮음 | ⬜ Task 3 |
 | **P1-2** | 이슈 요약 2→1 호출 통합 | `issue_summary.py:403·469-477` | 요약 호출 절반 | 낮음 | ⬜ Task 5 |
 | **P1-3** | 서버 `--parallel --cont-batching` + 클라 동시성 | 서버 기동, `pipeline.py`/`issue_summary.py` | GPU 여유 시 처리량↑ | 중 | ⬜ 부록 A(비코드) |
-| **P2-1** | 기사 본문 절단 / 프리픽스 캐시 유지 | `pipeline.py:358` | 프리필 토큰↓ | 낮음 | ⬜ Task 6 |
+| **P2-1** | 프리픽스 캐시 유지(시스템 프롬프트 선두 고정) | 현 코드 유지 | 재프리필 회피 | — | ✅ 작업 없음(가드) · 본문 절단은 범위 제외 |
 | **P2-2** | GPU 오프로드 점검 + 태스크 티어링 | 서버 기동 / 설정 | 호출당 latency↓ | 중 | ⬜ 부록 A(비코드) |
 
-> 현재(2026-06-25 기준) 코드 상태: **위 코드 항목(P0-1·P0-2·P1-1·P1-2·P2-1) 모두 미구현.** 아래 §5 Task 1~7로 구현한다.
+> 현재(2026-06-25 기준) 코드 상태: **위 코드 항목(P0-1·P0-2·P1-1·P1-2) 모두 미구현.** 아래 §5 Task 1~6으로 구현한다. (P2-1·P1-3·P2-2는 코드 작업 없음 — 현 코드 유지/운영 튜닝.)
 
 ---
 
 ## 4. 파일 구조
 
-- 수정: `src/news_impact/pipeline.py` — `DailyPipelineInputs`에 `llm_cache_dir` 추가, `_build_impact_judge_llm`이 안정 캐시 디렉터리 사용, `_target_tickers_for_news` 팬아웃 차단, `_llm_article_text_and_flags` 본문 절단.
+- 수정: `src/news_impact/pipeline.py` — `DailyPipelineInputs`에 `llm_cache_dir` 추가, `_build_impact_judge_llm`이 안정 캐시 디렉터리 사용, `_target_tickers_for_news` 팬아웃 차단.
 - 수정: `src/reports/news_impact_context.py` — gemma 런타임이 안정 캐시 디렉터리를 `DailyPipelineInputs`에 전달.
 - 수정: `src/news_impact/llm_config.py` · `src/news_impact/llm_client.py` — `max_tokens` 설정·전송.
 - 수정: `src/reports/issue_summary.py` — 공시+뉴스 요약 1회 JSON 호출 통합(출력 토큰 상한 축소).
@@ -703,85 +704,7 @@ git commit -m "perf(issue-summary): merge disclosure+news into one LLM call"
 
 ---
 
-### Task 6: 임팩트 판정 기사 본문 절단 (P2-1)
-
-**문제:** 기사 본문이 길수록 프리필 토큰이 늘어 호출당 latency 증가. 본문을 앞부분 위주로 절단해 프리필을 줄인다(판정 정보의 대부분은 리드에 있음).
-
-**Files:**
-- Modify: `src/news_impact/pipeline.py` (`_llm_article_text_and_flags` L358-366)
-- Test: `tests/test_news_impact_full_package.py`
-
-**Interfaces:**
-- Produces: `_llm_article_text_and_flags`가 반환하는 텍스트는 최대 `MAX_ARTICLE_CHARS`(=1500)자로 절단되고, 절단 시 `"article_truncated"` 플래그 추가.
-
-- [ ] **Step 1: 실패하는 테스트 작성**
-
-```python
-# tests/test_news_impact_full_package.py 에 추가
-from types import SimpleNamespace
-from src.news_impact.pipeline import _llm_article_text_and_flags, MAX_ARTICLE_CHARS
-
-
-def test_article_text_is_truncated_with_flag():
-    # _llm_article_text_and_flags는 quality_flags/raw_text/summary 속성만 읽는다.
-    long_item = SimpleNamespace(
-        quality_flags=(), raw_text="가" * (MAX_ARTICLE_CHARS + 500), summary=""
-    )
-    text, flags = _llm_article_text_and_flags(long_item)
-    assert len(text) == MAX_ARTICLE_CHARS
-    assert "article_truncated" in flags
-```
-
-- [ ] **Step 2: 테스트를 돌려 실패 확인**
-
-Run: `pytest tests/test_news_impact_full_package.py::test_article_text_is_truncated_with_flag -v --basetemp=.tmp_pytest`
-Expected: FAIL — `ImportError: cannot import name 'MAX_ARTICLE_CHARS'`
-
-- [ ] **Step 3: 최소 구현 작성**
-
-`src/news_impact/pipeline.py` 상단 상수 영역에 추가:
-
-```python
-MAX_ARTICLE_CHARS = 1500
-```
-
-`_llm_article_text_and_flags`(L358-366) 교체:
-
-```python
-def _llm_article_text_and_flags(item: NewsItem) -> tuple[str, tuple[str, ...]]:
-    base_flags = tuple(str(flag) for flag in item.quality_flags)
-    if item.raw_text:
-        text = item.raw_text
-        flags = base_flags + detect_prompt_injection(text)
-    else:
-        text = item.summary
-        flags = base_flags + ("summary_only_no_full_text", "needs_full_text_review")
-    if len(text) > MAX_ARTICLE_CHARS:
-        text = text[:MAX_ARTICLE_CHARS]
-        flags = flags + ("article_truncated",)
-    return text, _dedupe_flags(flags)
-```
-
-- [ ] **Step 4: 테스트를 돌려 통과 확인**
-
-Run: `pytest tests/test_news_impact_full_package.py::test_article_text_is_truncated_with_flag -v --basetemp=.tmp_pytest`
-Expected: PASS
-
-- [ ] **Step 5: 전체 패키지 회귀 실행**
-
-Run: `pytest tests/test_news_impact_full_package.py -v --basetemp=.tmp_pytest`
-Expected: PASS
-
-- [ ] **Step 6: 커밋**
-
-```bash
-git add src/news_impact/pipeline.py tests/test_news_impact_full_package.py
-git commit -m "perf(news-impact): truncate long article text to cut prefill tokens"
-```
-
----
-
-### Task 7: 전체 회귀 + 문서 갱신
+### Task 6: 전체 회귀 + 문서 갱신
 
 **Files:**
 - Modify: `docs/2026-06-25-gemma-llm-latency-optimization.md` (본 문서 §3 표 구현 상태 갱신)
@@ -830,8 +753,7 @@ git commit -m "docs: mark gemma latency optimizations as implemented"
 2. **Task 1·2 (P0-1 캐시 안정화)** — 가장 싸고 즉효. 안정 경로로 캐시를 이동하고 호출부에 `llm_cache_dir` 전달.
 3. **Task 4 (P0-2 팬아웃 차단)** — 회사명 매칭으로 무관 판정 제거(가장 큰 알고리즘 레버).
 4. **Task 3·5 (P1)** — 토큰 상한·요약 통합(저난이도 즉효).
-5. **Task 6 (P2-1)** — 본문 절단.
-6. **(GPU 여유 확인 후) 부록 A** — 서버 연속배치 + 클라 동시성, 오프로드 점검, 태스크 티어링.
+5. **(GPU 여유 확인 후) 부록 A** — 서버 연속배치 + 클라 동시성, 오프로드 점검, 태스크 티어링.
 
 ## 성공 기준 (Success Criteria)
 
