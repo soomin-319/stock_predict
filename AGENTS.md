@@ -21,7 +21,7 @@ Core code lives in `src/`, tests in `tests/`, presets in `configs/`, inputs in `
 
 ## Agent Execution Guidelines
 
-Do not use subagents. Execute all commands and tool calls sequentially; do not run them in parallel.
+Do not use subagents. Execute all commands and tool calls sequentially; do not run them in parallel. (Ordering matters for determinism given the pipeline, the single-GPU gemma server on port 8001, and shared `result/` artifacts.)
 
 ## Data and Outputs
 
