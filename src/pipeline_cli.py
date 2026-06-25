@@ -65,6 +65,7 @@ def build_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--universe-csv", default=None, help="Optional universe CSV with Symbol column")
     parser.add_argument("--report-json", default="pipeline_report.json", help="Pipeline summary JSON")
     parser.add_argument("--news-impact-report", default=None, help="Optional stock-news-impact JSON report for display-only context")
+    parser.add_argument("--llm-config", default=None, help="Optional shared LLM config for news-impact and issue summaries")
     parser.add_argument("--news-impact-llm-config", default=None, help="Optional llama.cpp/gemma LLM config for on-demand news-impact judging")
     parser.add_argument("--fetch-real", action="store_true", help="Fetch real OHLCV from yfinance before running")
     parser.add_argument("--disable-external", action="store_true", help="Disable external market feature download")

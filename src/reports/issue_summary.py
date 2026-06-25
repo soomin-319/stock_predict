@@ -46,9 +46,19 @@ def _summary_from_cache_payload(payload: dict[str, Any]) -> SymbolIssueSummary |
         return None
 
 
-def _issue_summary_cache_key(*, model: str, symbol: str, symbol_name: str, events: pd.DataFrame) -> str:
+def _issue_summary_cache_key(
+    *,
+    model: str,
+    symbol: str,
+    symbol_name: str,
+    events: pd.DataFrame,
+    provider: str = "openai",
+    base_url: str | None = None,
+) -> str:
     payload = {
         "version": ISSUE_SUMMARY_CACHE_VERSION,
+        "provider": str(provider or "openai").lower(),
+        "base_url": str(base_url or ""),
         "model": model,
         "structured_events": _build_structured_events(symbol, symbol_name, events),
     }
@@ -237,19 +247,26 @@ def _extract_json_dict(text: str) -> dict | None:
         return None
 
 
-def _call_llm_json(client: Any, model: str, prompt: str, max_output_tokens: int = 400) -> dict | None:
-    try:
-        response = client.responses.create(
-            model=model,
-            input=prompt,
-            max_output_tokens=max_output_tokens,
-        )
-        raw = getattr(response, "output_text", "") or ""
-        parsed = _extract_json_dict(raw)
-        if parsed is not None:
-            return parsed
-    except Exception:
-        pass
+def _call_llm_json(
+    client: Any,
+    model: str,
+    prompt: str,
+    max_output_tokens: int = 400,
+    provider: str = "openai",
+) -> dict | None:
+    if str(provider or "openai").lower() != "llama_cpp":
+        try:
+            response = client.responses.create(
+                model=model,
+                input=prompt,
+                max_output_tokens=max_output_tokens,
+            )
+            raw = getattr(response, "output_text", "") or ""
+            parsed = _extract_json_dict(raw)
+            if parsed is not None:
+                return parsed
+        except Exception:
+            pass
 
     try:
         chat_resp = client.chat.completions.create(
@@ -266,14 +283,21 @@ def _call_llm_json(client: Any, model: str, prompt: str, max_output_tokens: int 
         return None
 
 
-def _call_llm_text(client: Any, model: str, prompt: str, max_output_tokens: int = 500) -> str | None:
-    try:
-        response = client.responses.create(model=model, input=prompt, max_output_tokens=max_output_tokens)
-        text = str(getattr(response, "output_text", "") or "").strip()
-        if text:
-            return text
-    except Exception:
-        pass
+def _call_llm_text(
+    client: Any,
+    model: str,
+    prompt: str,
+    max_output_tokens: int = 500,
+    provider: str = "openai",
+) -> str | None:
+    if str(provider or "openai").lower() != "llama_cpp":
+        try:
+            response = client.responses.create(model=model, input=prompt, max_output_tokens=max_output_tokens)
+            text = str(getattr(response, "output_text", "") or "").strip()
+            if text:
+                return text
+        except Exception:
+            pass
 
     try:
         chat_resp = client.chat.completions.create(
@@ -328,6 +352,8 @@ def _build_structured_events(symbol: str, symbol_name: str, events: pd.DataFrame
 
     ev = events.copy()
     ev["title"] = ev["title"].astype(str).str.strip()
+    if "published_at" not in ev.columns:
+        ev["published_at"] = ""
     ev["published_at"] = ev["published_at"].astype(str)
     ev = ev[ev["title"] != ""]
     date_kst = str(ev["Date"].astype(str).max()) if "Date" in ev.columns and not ev.empty else ""
@@ -379,8 +405,10 @@ def _llm_symbol_issue_summary(
     symbol: str,
     symbol_name: str,
     events: pd.DataFrame,
-    api_key: str,
+    api_key: str | None,
     model: str,
+    provider: str = "openai",
+    base_url: str | None = None,
 ) -> SymbolIssueSummary | None:
     structured_payload = _build_structured_events(symbol, symbol_name, events)
     try:
@@ -391,7 +419,11 @@ def _llm_symbol_issue_summary(
         print("[ISSUE SUMMARY] openai package is not installed; using rule-based issue summary.")
         return None
 
-    client = client_cls(api_key=api_key)
+    provider_norm = str(provider or "openai").lower()
+    client_kwargs: dict[str, Any] = {"api_key": api_key or ("not-needed" if provider_norm == "llama_cpp" else None)}
+    if base_url:
+        client_kwargs["base_url"] = base_url
+    client = client_cls(**client_kwargs)
 
     disclosures = structured_payload.get("disclosures", [])
     disclosure_payload = json.dumps(
@@ -420,18 +452,25 @@ def _llm_symbol_issue_summary(
         if str(item.get("cluster_topic") or "").strip()
     ][:5]
 
+    def _call_llm_text_with_provider(prompt: str) -> str | None:
+        try:
+            return _call_llm_text(
+                client,
+                model,
+                prompt,
+                max_output_tokens=700,
+                provider=provider_norm,
+            )
+        except TypeError:
+            # Backward-compatible for tests/callers monkeypatching the old helper signature.
+            return _call_llm_text(client, model, prompt, max_output_tokens=700)
+
     try:
-        disclosure_summary = _call_llm_text(
-            client,
-            model,
-            f"{DISCLOSURE_SUMMARY_PROMPT}\n\n[입력 공시 데이터]\n{disclosure_payload}",
-            max_output_tokens=700,
+        disclosure_summary = _call_llm_text_with_provider(
+            f"{DISCLOSURE_SUMMARY_PROMPT}\n\n[입력 공시 데이터]\n{disclosure_payload}"
         )
-        news_summary = _call_llm_text(
-            client,
-            model,
-            f"{NEWS_SUMMARY_PROMPT}\n\n[입력 뉴스 데이터]\n{news_payload}",
-            max_output_tokens=700,
+        news_summary = _call_llm_text_with_provider(
+            f"{NEWS_SUMMARY_PROMPT}\n\n[입력 뉴스 데이터]\n{news_payload}"
         )
     except Exception as exc:
         print(f"[ISSUE SUMMARY] LLM 요약 실패 ({symbol}): {type(exc).__name__}: {exc}")
@@ -514,6 +553,8 @@ def _append_issue_summary_columns_sequential(
     context_raw_df: pd.DataFrame | None = None,
     openai_api_key: str | None = None,
     openai_model: str | None = None,
+    provider: str = "openai",
+    base_url: str | None = None,
     summarize_symbols: list[str] | set[str] | None = None,
     summary_n_jobs: int = 1,
 ) -> pd.DataFrame:
@@ -535,8 +576,14 @@ def _append_issue_summary_columns_sequential(
     context = context_raw_df.copy() if isinstance(context_raw_df, pd.DataFrame) and not context_raw_df.empty else None
     if context is not None and "Symbol" in context.columns:
         context["Symbol"] = context["Symbol"].astype(str)
-    resolved_model = openai_model or ("gpt-5-mini" if openai_api_key else None)
-    use_llm = bool(openai_api_key and resolved_model and context is not None and "source_type" in context.columns)
+    provider_norm = str(provider or "openai").lower()
+    resolved_model = openai_model or ("gpt-5-mini" if provider_norm == "openai" and openai_api_key else None)
+    use_llm = bool(
+        resolved_model
+        and context is not None
+        and "source_type" in context.columns
+        and (provider_norm == "llama_cpp" or openai_api_key)
+    )
     target_symbols = {str(s) for s in (summarize_symbols or []) if str(s).strip()}
 
     summaries: list[SymbolIssueSummary] = []
@@ -554,8 +601,10 @@ def _append_issue_summary_columns_sequential(
                     symbol=symbol,
                     symbol_name=symbol_name,
                     events=events,
-                    api_key=str(openai_api_key),
+                    api_key=str(openai_api_key) if openai_api_key else None,
                     model=str(resolved_model),
+                    provider=provider_norm,
+                    base_url=base_url,
                 )
                 if llm_summary is not None:
                     summaries.append(llm_summary)
@@ -625,6 +674,8 @@ def append_issue_summary_columns(
     context_raw_df: pd.DataFrame | None = None,
     openai_api_key: str | None = None,
     openai_model: str | None = None,
+    provider: str = "openai",
+    base_url: str | None = None,
     summarize_symbols: list[str] | set[str] | None = None,
     summary_n_jobs: int = 1,
     max_llm_symbols: int | None = DEFAULT_MAX_LLM_SYMBOLS,
@@ -636,6 +687,8 @@ def append_issue_summary_columns(
             context_raw_df=context_raw_df,
             openai_api_key=openai_api_key,
             openai_model=openai_model,
+            provider=provider,
+            base_url=base_url,
             summarize_symbols=summarize_symbols,
         )
 
@@ -649,8 +702,14 @@ def append_issue_summary_columns(
         else {}
     )
 
-    resolved_model = openai_model or ("gpt-5-mini" if openai_api_key else None)
-    use_llm = bool(openai_api_key and resolved_model and context is not None and "source_type" in context.columns)
+    provider_norm = str(provider or "openai").lower()
+    resolved_model = openai_model or ("gpt-5-mini" if provider_norm == "openai" and openai_api_key else None)
+    use_llm = bool(
+        resolved_model
+        and context is not None
+        and "source_type" in context.columns
+        and (provider_norm == "llama_cpp" or openai_api_key)
+    )
     target_symbols = {str(s) for s in (summarize_symbols or []) if str(s).strip()}
     row_symbols = [str(row.get("Symbol", "")) for _, row in out.iterrows()]
     llm_limit = len(row_symbols) if max_llm_symbols is None else max(0, int(max_llm_symbols))
@@ -671,7 +730,14 @@ def append_issue_summary_columns(
         if use_llm and not events.empty and symbol in llm_symbol_budget:
             symbol_name = str(row_series.get("symbol_name") or row_series.get("Name") or symbol)
             cache_key = (
-                _issue_summary_cache_key(model=str(resolved_model), symbol=symbol, symbol_name=symbol_name, events=events)
+                _issue_summary_cache_key(
+                    model=str(resolved_model),
+                    provider=provider_norm,
+                    base_url=base_url,
+                    symbol=symbol,
+                    symbol_name=symbol_name,
+                    events=events,
+                )
                 if llm_cache is not None
                 else None
             )
@@ -688,8 +754,10 @@ def append_issue_summary_columns(
                 symbol=symbol,
                 symbol_name=symbol_name,
                 events=events,
-                api_key=str(openai_api_key),
+                api_key=str(openai_api_key) if openai_api_key else None,
                 model=str(resolved_model),
+                provider=provider_norm,
+                base_url=base_url,
             )
             if llm_summary is not None:
                 if cache_key is not None:

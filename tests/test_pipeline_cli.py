@@ -56,3 +56,71 @@ def test_build_pipeline_overrides_returns_empty_when_nothing_set():
     )
 
     assert overrides == {}
+
+
+def test_build_cli_parser_accepts_shared_llm_config():
+    parser = build_cli_parser()
+    args = parser.parse_args(["--llm-config", "configs/news_impact.openai.example.json"])
+
+    assert args.llm_config == "configs/news_impact.openai.example.json"
+
+
+def test_resolve_effective_llm_options_shared_config_drives_both_consumers(tmp_path, monkeypatch):
+    import json
+
+    cfg_path = tmp_path / "llm.json"
+    cfg_path.write_text(
+        json.dumps(
+            {
+                "llm_provider": "openai",
+                "llm_base_url": "https://api.openai.com/v1",
+                "llm_model": "gpt-5-mini",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    resolved = pipeline._resolve_effective_llm_options(
+        llm_config=str(cfg_path),
+        news_impact_llm_config=None,
+        openai_api_key=None,
+        openai_model=None,
+    )
+
+    assert resolved.issue_summary_provider == "openai"
+    assert resolved.issue_summary_base_url == "https://api.openai.com/v1"
+    assert resolved.issue_summary_model == "gpt-5-mini"
+    assert resolved.issue_summary_api_key == "sk-test"
+    assert resolved.news_impact_llm_config == str(cfg_path)
+
+
+def test_resolve_effective_llm_options_keeps_rule_default_without_config(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+
+    resolved = pipeline._resolve_effective_llm_options(
+        llm_config=None,
+        news_impact_llm_config=None,
+        openai_api_key=None,
+        openai_model=None,
+    )
+
+    assert resolved.issue_summary_provider == "openai"
+    assert resolved.issue_summary_model is None
+    assert resolved.issue_summary_api_key is None
+    assert resolved.news_impact_llm_config is None
+
+
+def test_resolve_effective_llm_options_backcompat_openai_flags_still_work():
+    resolved = pipeline._resolve_effective_llm_options(
+        llm_config=None,
+        news_impact_llm_config=None,
+        openai_api_key="sk-legacy",
+        openai_model="gpt-test",
+    )
+
+    assert resolved.issue_summary_provider == "openai"
+    assert resolved.issue_summary_model == "gpt-test"
+    assert resolved.issue_summary_api_key == "sk-legacy"
+    assert resolved.news_impact_llm_config is None

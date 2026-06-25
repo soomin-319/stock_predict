@@ -9,7 +9,14 @@
 - Kakao 챗봇: Flask local server + ngrok public webhook
 - API 키: `.env`에서 프로세스 환경변수로 로드. 값은 출력하지 않음.
 
-> 주의: 이 프로젝트 출력은 연구/운영 참고용입니다. 매수/매도/보유 판단은 `predicted_return` 기준만 사용합니다. 뉴스/공시는 표시용 컨텍스트이며 예측값, 랭킹, 추천, 신호를 바꾸면 안 됩니다.
+> 주의: 이 프로젝트 출력은 연구/운영 참고용입니다. 매수/매도/보유 판단은 `predicted_return` 기준만 사용합니다. 뉴스/공시 LLM 출력은 명시 설정된 누수 방지 파이프라인 입력/점수화에만 사용할 수 있으며, 수동 서술만으로 모델 출력을 덮어쓰면 안 됩니다. OpenAI 사용 시 종목별 호출 비용이 발생합니다.
+
+## LLM provider 전환
+
+- 기본/로컬 Gemma: `--llm-config configs/news_impact.gemma.example.json`
+- OpenAI API: `.env` 또는 프로세스 환경변수에 `OPENAI_API_KEY` 설정 후 `--llm-config configs/news_impact.openai.example.json`
+- API 키는 argv에 넣지 마세요. `PipelineRuntimeConfig.build_subprocess_env`가 `OPENAI_API_KEY`를 자식 프로세스 env로 전달합니다.
+- 하위 호환 플래그도 유지됩니다: `--news-impact-llm-config`, `--openai-api-key`, `--openai-model`. 새 실행은 `--llm-config` 하나를 권장합니다.
 
 ## 1) 전체 기능 실행 명령어: ngrok 외부 연결 포함
 
@@ -85,13 +92,13 @@ python src/pipeline.py `
   --universe-csv $TargetUniversePath `
   --fetch-investor-context `
   --issue-summary-symbols $TargetSymbols `
-  --news-impact-llm-config configs/news_impact.gemma.example.json `
+  --llm-config configs/news_impact.gemma.example.json `
   --report-json pipeline_report.json
 if ($LASTEXITCODE -ne 0) { throw 'pipeline 실행 실패. 위 로그를 확인하세요.' }
 
 # 7. Kakao 챗봇 + ngrok 외부 webhook 실행
 # .env에 NGROK_AUTH_TOKEN 필요.
-python -c "import os; from src.chatbot.kakao_colab_bot import launch_colab_kakao_bot, PipelineRuntimeConfig, PyngrokTunnelConfig; cfg=PipelineRuntimeConfig(news_impact_llm_config='configs/news_impact.gemma.example.json', fetch_investor_context=True, use_external=True); app=launch_colab_kakao_bot(runtime_config=cfg, tunnel_config=PyngrokTunnelConfig(port=8000, auth_token=os.getenv('NGROK_AUTH_TOKEN')), host='0.0.0.0'); print('Public URL:', app['public_url']); print('Kakao Webhook URL:', app['webhook_url']); print('Health URL:', app['health_url']); app['server_thread'].join()"
+python -c "import os; from src.chatbot.kakao_colab_bot import launch_colab_kakao_bot, PipelineRuntimeConfig, PyngrokTunnelConfig; cfg=PipelineRuntimeConfig(llm_config='configs/news_impact.gemma.example.json', fetch_investor_context=True, use_external=True); app=launch_colab_kakao_bot(runtime_config=cfg, tunnel_config=PyngrokTunnelConfig(port=8000, auth_token=os.getenv('NGROK_AUTH_TOKEN')), host='0.0.0.0'); print('Public URL:', app['public_url']); print('Kakao Webhook URL:', app['webhook_url']); print('Health URL:', app['health_url']); app['server_thread'].join()"
 ```
 
 ## 2) 로컬 챗봇만 실행하고 싶을 때: ngrok 없음
@@ -105,7 +112,7 @@ Get-Content .env | ForEach-Object {
   [Environment]::SetEnvironmentVariable($k.Trim(), $v.Trim().Trim('"').Trim("'"), 'Process')
 }
 
-python -c "from src.chatbot.kakao_colab_bot import launch_colab_kakao_bot, PipelineRuntimeConfig; cfg=PipelineRuntimeConfig(news_impact_llm_config='configs/news_impact.gemma.example.json', fetch_investor_context=True, use_external=True); app=launch_colab_kakao_bot(runtime_config=cfg, host='0.0.0.0'); print('Local Webhook URL:', app['webhook_url']); print('Health URL:', app['health_url']); app['server_thread'].join()"
+python -c "from src.chatbot.kakao_colab_bot import launch_colab_kakao_bot, PipelineRuntimeConfig; cfg=PipelineRuntimeConfig(llm_config='configs/news_impact.gemma.example.json', fetch_investor_context=True, use_external=True); app=launch_colab_kakao_bot(runtime_config=cfg, host='0.0.0.0'); print('Local Webhook URL:', app['webhook_url']); print('Health URL:', app['health_url']); app['server_thread'].join()"
 ```
 
 ## 3) 산출물 위치
@@ -159,4 +166,20 @@ NGROK_AUTH_TOKEN=...
 
 ### 챗봇은 뜨는데 Gemma가 안 쓰이는 경우
 
-반드시 `PipelineRuntimeConfig(news_impact_llm_config='configs/news_impact.gemma.example.json')` 방식으로 실행해야 합니다. 기본 `stock-predict-kakao` 명령만 쓰면 Gemma config가 직접 주입되지 않을 수 있습니다.
+반드시 `PipelineRuntimeConfig(llm_config='configs/news_impact.gemma.example.json')` 방식으로 실행해야 합니다. 기본 `stock-predict-kakao` 명령만 쓰면 LLM config가 직접 주입되지 않을 수 있습니다.
+
+### OpenAI로 전환
+
+```powershell
+$env:OPENAI_API_KEY = '...'
+python src/pipeline.py `
+  --auto-refresh-real `
+  --real-symbols $TargetSymbols `
+  --universe-csv $TargetUniversePath `
+  --fetch-investor-context `
+  --issue-summary-symbols $TargetSymbols `
+  --llm-config configs/news_impact.openai.example.json `
+  --report-json pipeline_report.json
+```
+
+키는 실제 실행 환경의 `.env`/비밀 저장소에서 로드하고, 명령줄 기록에 남기지 마세요.

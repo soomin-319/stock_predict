@@ -464,3 +464,166 @@ def test_llm_symbol_issue_summary_uses_fallback_news_lines_when_llm_returns_empt
     assert out is not None
     assert "확인된 핵심 뉴스 내용 없음" not in out.news_summary
     assert "삼성전자 메모리 투자 확대 보도" in out.news_summary
+
+# Provider switch tests added for shared LLM config.
+from src.reports import issue_summary as _issue_summary_mod
+
+
+class _FakeOpenAIChat:
+    class _Completions:
+        def __init__(self, calls):
+            self._calls = calls
+
+        def create(self, **kwargs):
+            self._calls["chat"] += 1
+            self._calls["chat_kwargs"] = kwargs
+
+            class _Message:
+                content = "chat text"
+
+            class _Choice:
+                message = _Message()
+
+            class _Response:
+                choices = [_Choice()]
+
+            return _Response()
+
+    def __init__(self, calls):
+        self.completions = self._Completions(calls)
+
+
+class _FakeOpenAIResponses:
+    def __init__(self, calls, *, fail=False):
+        self._calls = calls
+        self._fail = fail
+
+    def create(self, **kwargs):
+        self._calls["responses"] += 1
+        if self._fail:
+            raise RuntimeError("responses API not implemented")
+
+        class _Response:
+            output_text = "responses text"
+
+        return _Response()
+
+
+class _FakeOpenAIClient:
+    def __init__(self, calls, *, fail_responses=False):
+        self.responses = _FakeOpenAIResponses(calls, fail=fail_responses)
+        self.chat = _FakeOpenAIChat(calls)
+
+
+def test_gemma_provider_skips_responses_and_uses_chat():
+    calls = {"responses": 0, "chat": 0}
+    client = _FakeOpenAIClient(calls, fail_responses=True)
+
+    text = _issue_summary_mod._call_llm_text(client, "gemma-4-26b-a4b", "hello", provider="llama_cpp")
+
+    assert text == "chat text"
+    assert calls["responses"] == 0
+    assert calls["chat"] == 1
+
+
+def test_openai_provider_uses_responses_first():
+    calls = {"responses": 0, "chat": 0}
+    client = _FakeOpenAIClient(calls)
+
+    text = _issue_summary_mod._call_llm_text(client, "gpt-5-mini", "hello", provider="openai")
+
+    assert text == "responses text"
+    assert calls["responses"] == 1
+    assert calls["chat"] == 0
+
+
+def test_llm_symbol_issue_summary_passes_base_url_and_dummy_key_for_gemma(monkeypatch):
+    captured = {}
+
+    class _ClientFactory:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.responses = _FakeOpenAIResponses({"responses": 0, "chat": 0}, fail=True)
+            self.chat = _FakeOpenAIChat({"responses": 0, "chat": 0})
+
+    events = pd.DataFrame(
+        [{"Date": "2026-06-25", "Symbol": "005930.KS", "source_type": "news", "title": "memory rebound"}]
+    )
+    monkeypatch.setattr("src.reports.issue_summary.OpenAI", _ClientFactory)
+    monkeypatch.setattr("src.reports.issue_summary._call_llm_text", lambda *args, **kwargs: "- ok")
+
+    out = _issue_summary_mod._llm_symbol_issue_summary(
+        symbol="005930.KS",
+        symbol_name="Samsung",
+        events=events,
+        api_key=None,
+        model="gemma-4-26b-a4b",
+        provider="llama_cpp",
+        base_url="http://localhost:8001/v1",
+    )
+
+    assert out is not None
+    assert captured["api_key"] == "not-needed"
+    assert captured["base_url"] == "http://localhost:8001/v1"
+
+
+def test_issue_summary_gemma_enabled_without_api_key(monkeypatch):
+    base = pd.DataFrame([{"Symbol": "005930.KS", "symbol_name": "Samsung"}])
+    events = pd.DataFrame(
+        [{"Date": "2026-06-25", "Symbol": "005930.KS", "source_type": "news", "title": "memory rebound"}]
+    )
+    captured = {}
+
+    def _fake_llm(**kwargs):
+        captured.update(kwargs)
+        return SymbolIssueSummary(
+            one_line_summary="llm",
+            disclosure_summary="d",
+            news_summary="n",
+            overall_judgment="neutral",
+            caution="c",
+            source_count=1,
+            key_sources=["news"],
+        )
+
+    monkeypatch.setattr("src.reports.issue_summary._llm_symbol_issue_summary", _fake_llm)
+
+    out = append_issue_summary_columns(
+        base,
+        context_raw_df=events,
+        openai_api_key=None,
+        openai_model="gemma-4-26b-a4b",
+        provider="llama_cpp",
+        base_url="http://localhost:8001/v1",
+    )
+
+    added_cols = [col for col in out.columns if col not in base.columns]
+    assert captured["api_key"] is None
+    assert captured["provider"] == "llama_cpp"
+    assert captured["base_url"] == "http://localhost:8001/v1"
+    assert out.loc[0, added_cols[0]] == "llm"
+
+
+def test_issue_summary_cache_key_includes_provider_and_base_url():
+    events = pd.DataFrame(
+        [{"Date": "2026-06-25", "Symbol": "005930.KS", "source_type": "news", "title": "memory rebound"}]
+    )
+
+    gemma_key = _issue_summary_mod._issue_summary_cache_key(
+        model="gemma-4-26b-a4b",
+        provider="llama_cpp",
+        base_url="http://localhost:8001/v1",
+        symbol="005930.KS",
+        symbol_name="Samsung",
+        events=events,
+    )
+    openai_key = _issue_summary_mod._issue_summary_cache_key(
+        model="gemma-4-26b-a4b",
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        symbol="005930.KS",
+        symbol_name="Samsung",
+        events=events,
+    )
+
+    assert gemma_key != openai_key

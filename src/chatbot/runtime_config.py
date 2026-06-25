@@ -34,6 +34,7 @@ class PipelineRuntimeConfig:
     real_start: str = "2018-01-01"
     prewarm_default_predictions: bool = False
     runtime_dir: str = "result/runtime"
+    llm_config: str | None = None
     news_impact_llm_config: str | None = None
     published_dir: str = "published/latest"
     extra_args: tuple[str, ...] = ()
@@ -69,7 +70,9 @@ class PipelineRuntimeConfig:
                 cmd.extend(["--dart-corp-map-csv", self.dart_corp_map_csv])
         if self.openai_model:
             cmd.extend(["--openai-model", self.openai_model])
-        if enable_news_impact_llm and self.news_impact_llm_config:
+        if enable_news_impact_llm and self.llm_config:
+            cmd.extend(["--llm-config", self.llm_config])
+        elif enable_news_impact_llm and self.news_impact_llm_config:
             cmd.extend(["--news-impact-llm-config", self.news_impact_llm_config])
         if not self.use_external:
             cmd.append("--disable-external")

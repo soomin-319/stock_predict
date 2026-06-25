@@ -2361,3 +2361,19 @@ def test_detail_date_falls_back_to_published(tmp_path):
         "Symbol,Date\n000660.KS,2026-06-17\n", encoding="utf-8-sig"
     )
     assert bot._latest_prediction_date_from_detail("000660.KS") == "2026-06-17"
+
+
+def test_build_command_includes_shared_llm_config_and_keeps_openai_key_in_env(tmp_path: Path):
+    cfg = PipelineRuntimeConfig(
+        project_root=tmp_path,
+        openai_api_key="sk-secret",
+        llm_config="configs/news_impact.openai.example.json",
+    )
+
+    cmd = cfg.build_command("005930.KS", enable_news_impact_llm=True)
+    env = cfg.build_subprocess_env(base_env={})
+
+    assert "--llm-config" in cmd
+    assert "configs/news_impact.openai.example.json" in cmd
+    assert "sk-secret" not in cmd
+    assert env["OPENAI_API_KEY"] == "sk-secret"
