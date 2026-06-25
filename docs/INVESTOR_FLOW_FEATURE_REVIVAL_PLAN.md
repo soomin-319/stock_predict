@@ -2,7 +2,7 @@
 
 > **에이전트 작업자용:** 이 플랜은 태스크 단위로 **순차 실행**하세요. AGENTS.md에 따라 subagent/parallel 실행은 금지합니다. 각 단계는 체크박스(`- [ ]`) 문법으로 추적합니다.
 
-> **Status (2026-06-25):** Task 1~3 implemented and deterministic pytest passed. Task 4 live pipeline exited 0, but this environment's `pykrx` 1.2.8 requires KRX authentication and `KRX_ID`/`KRX_PW` are not set, so live verification remains blocked with `flow.successful=0`, `investor_coverage_ratio=0.0`, and `coverage_gate.status=halt`. The code path remains ready to retry when those environment variables are provided.
+> **Status (2026-06-25):** Task 1~4 implemented. `pykrx` credentials are loaded from process env or local `.env` (`KRX_ID`/`KRX_PW`) before importing pykrx, and pykrx login stdout is suppressed to avoid leaking the login ID. Live 5-symbol validation succeeded with `flow.successful=5/5`, `investor_coverage_ratio=0.5`, and `coverage_gate.status=caution`.
 
 **목표:** 스텁 처리된 `_fetch_flow`를 실제 KRX 수급 소스로 교체해, `foreign_net_buy` / `institution_net_buy`(및 이에 의존하는 약 15개 피처)가 실제 값을 갖게 하고, `investor_coverage_ratio`가 실제 fetch 성공을 반영하게 한다.
 
