@@ -114,12 +114,12 @@ def _target_tickers_for_news(item, watchlist_tickers):
 
 | 순위 | 항목 | 변경 위치 | 기대 효과 | 난이도 |
 |---|---|---|---|---|
-| **P0-1** | 응답 캐시를 안정 디렉터리로 | `news_impact_context.py:219`, `pipeline.py:388·750`, `kakao_colab_bot.py:1335` | 반복 실행 지연 대폭↓ | 낮음 |
-| **P0-2** | N×M 팬아웃 차단(사전 매핑/기사 1회 판정/사전 군집화) | `pipeline.py:283-348` | 호출 수 수배~수십배↓ | 중 |
-| **P1-1** | 출력 토큰 상한 | `llm_client.py:242`, `issue_summary.py:429·434` | 호출당 디코딩↓ | 낮음 |
-| **P1-2** | 이슈 요약 2→1 호출 통합 | `issue_summary.py:424-435` | 요약 호출 절반 | 낮음 |
+| **P0-1** | Stable response cache [implemented] (`docs/2026-06-25-gemma-llm-latency-optimization.md`) | `news_impact_context.py`, `news_impact/pipeline.py`, `pipeline.py`, `kakao_colab_bot.py` | Large repeat-run latency reduction | Low |
+| **P0-2** | N x M fanout reduction [partly implemented]: narrow to company-name matches, keep market-news fallback on zero matches (`docs/2026-06-25-gemma-llm-latency-optimization.md`) | `news_impact/pipeline.py` | Fewer calls | Medium |
+| **P1-1** | Output token cap [implemented]: `LLMConfig.max_tokens` to chat payload (`docs/2026-06-25-gemma-llm-latency-optimization.md`) | `llm_config.py`, `llm_client.py`, `configs/news_impact.gemma.example.json` | Lower decode time per call | Low |
+| **P1-2** | Issue summary 2 -> 1 call [implemented]: single JSON call for disclosure/news summaries (`docs/2026-06-25-gemma-llm-latency-optimization.md`) | `issue_summary.py` | Half the summary calls | Low |
 | **P1-3** | 서버 `--parallel --cont-batching` + 클라 동시성 | 서버 기동, `pipeline.py`/`issue_summary.py` | GPU 여유 시 처리량↑ | 중 |
-| **P2-1** | 기사 본문 절단 / 프리픽스 캐시 유지 | `impact_judge.py`, `pipeline.py` | 프리필 토큰↓ | 낮음 |
+| **P2-1** | Article text truncation / prefix-cache preservation [implemented]: `MAX_ARTICLE_CHARS=1500`, `article_truncated` flag (`docs/2026-06-25-gemma-llm-latency-optimization.md`) | `news_impact/pipeline.py` | Lower prefill tokens | Low |
 | **P2-2** | GPU 오프로드 점검 + 태스크 티어링 | 서버 기동 / 설정 | 호출당 latency↓ | 중 |
 
 ---
