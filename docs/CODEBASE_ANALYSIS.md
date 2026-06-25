@@ -4,9 +4,9 @@
 > 방법: `src/` 핵심 모듈을 직접 정독해 사실 검증 후 작성. 테스트 실행 결과는 주장하지 않는다.
 > 규모: `src/` 파이썬 **94개 파일**(약 17K LOC), `tests/` **54개 모듈**.
 >
-> 살아있는 종합 레퍼런스는 [`CODEBASE_OVERVIEW.md`](CODEBASE_OVERVIEW.md)이며,
-> 본 문서는 그 시점 스냅샷의 **독립 정독 분석**이다. 일부 항목은 OVERVIEW가 "계획"으로
-> 남겨둔 개선안이 **이미 코드에 반영**되었음을 확인해 갱신했다(§13 참고).
+> 본 문서는 `src/` 핵심 모듈을 직접 정독한 **종합 레퍼런스 겸 개선 관찰**이며, `docs/`의 단일
+> 코드베이스 문서다. 본문(§1~§15)은 작성 시점 정독 스냅샷이고, §16(개선 관찰)은 2026-06-25
+> `docs/gemma-iq4xs-model` 기준으로 코드와 다시 대조해 수치·범위를 갱신했다.
 
 ---
 
@@ -309,9 +309,9 @@ OHLCV CSV ──clean──▶ universe filter ──▶ (옵션) investor/news 
 
 ---
 
-## 16. 개선 관찰 (코드에서 직접 확인한 현재 상태)
+## 16. 개선 관찰 (2026-06-25 코드 재확인 기준)
 
-**OVERVIEW가 "계획"으로 둔 항목 중 이미 반영된 것:**
+**초기 개선안 중 이미 코드에 반영 완료된 것:**
 - ✅ 권고 임계값이 `SignalConfig`로 설정화 + 단조성 검증(`sell < buy`) 완료.
 - ✅ 신호 정책 행단위/벡터화 **단일 출처화**(행단위는 1행 어댑터).
 - ✅ display-only 가드의 **패턴 기반**(접두/부분문자열) 단언 반영.
@@ -319,14 +319,16 @@ OHLCV CSV ──clean──▶ universe filter ──▶ (옵션) investor/news 
 - ✅ 병렬 워커 수 resolved 보고(`PipelineDiagnostics.set_parallelism`).
 
 **남은 관찰(우선순위):**
-- **P1 · 챗봇 god class** — `KakaoColabPredictionBot`이 약 2,100 LOC·메서드 90+개로 HTTP·인텐트·
+- **P1 · 챗봇 god class** — `KakaoColabPredictionBot`이 약 1,990 LOC·메서드 110개로 HTTP·인텐트·
   포맷·서브프로세스 잡·부트스트랩 prewarm·라이브 이벤트·이슈요약·세션을 모두 떠안는다.
-  `intent.py`/`job_store.py`/`session_store.py`/`message_formatter.py`/`responses.py`로 **분해가
-  시작**됐으나 본체는 여전히 비대. 책임별 협력 객체로 점진 분해 권장.
-- **P1 · `pipeline.py` 호환 래퍼** — 상단(약 100~320행)의 `_`-접두 위임 래퍼가 다수 잔존.
+  `intent.py`/`job_store.py`/`session_store.py`/`message_formatter.py`/`responses.py`/`runtime_config.py`로
+  **분해가 진행**됐으나 본체는 여전히 비대. 책임별 협력 객체로 점진 분해 권장.
+- **P1 · `pipeline.py` 호환 래퍼** — 상단(약 226~298행)의 `_`-접두 위임 래퍼가 다수 잔존
+  (`_recommendation_from_signal`·`_apply_event_signal_boost`·`_split_oof_for_tuning_and_eval` 등).
   테스트가 원본 모듈을 직접 임포트하도록 옮긴 뒤 제거하면 오케스트레이터 가독성↑.
 - **P2 · KRX 휴일 캘린더 만료** — `report_metadata.KOREA_MARKET_HOLIDAYS`가 **2026-12-31까지**
-  하드코딩. 만료/근접 경고 로직은 있으나, 2027 진입 전 캘린더 갱신이 필요한 **연례 유지보수 부채**.
+  하드코딩(`KOREA_MARKET_HOLIDAY_COVERAGE_END = max(...)`). 만료/근접 경고 로직은 있으나, 2027 진입
+  전 캘린더 갱신이 필요한 **연례 유지보수 부채**(2026-06-25 재확인 시점 기준 반년 내 만료 임박).
 - **P2 · 매직넘버** — `confidence_label` 구간(0.34/0.67/0.80), 이벤트부스트 상수, risk_flag 임계값
   (0.75/0.5/0.45 등)이 모듈 상수. 프리셋별 보정/검증 대상이 아니다. 최소 신뢰도 구간은 설정화 검토.
 - **P2 · `close_betting` 스키마 분기** — 추천 엔진이 소문자 OHLCV 스키마를 쓰는 점이 ML 파이프라인
