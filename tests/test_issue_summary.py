@@ -627,3 +627,53 @@ def test_issue_summary_cache_key_includes_provider_and_base_url():
     )
 
     assert gemma_key != openai_key
+
+
+
+def test_llm_symbol_issue_summary_uses_single_call(monkeypatch):
+    import src.reports.issue_summary as issue_mod
+
+    calls = {"json": 0, "text": 0}
+
+    def _fake_json(client, model, prompt, max_output_tokens=400):
+        calls["json"] += 1
+        return {
+            "disclosure_summary": "[?? ??]\n- SUPPLY contract signed",
+            "news_summary": "[?? ??]\n- MEMORY demand increased",
+        }
+
+    def _fake_text(*args, **kwargs):
+        calls["text"] += 1
+        return "should-not-be-called"
+
+    class _FakeOpenAI:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(issue_mod, "OpenAI", _FakeOpenAI)
+    monkeypatch.setattr(issue_mod, "_call_llm_json", _fake_json)
+    monkeypatch.setattr(issue_mod, "_call_llm_text", _fake_text)
+
+    events = pd.DataFrame(
+        [
+            {
+                "Date": "2026-06-25",
+                "Symbol": "005930.KS",
+                "source_type": "news",
+                "title": "Samsung memory demand increased",
+                "published_at": "2026-06-25T09:00:00",
+            }
+        ]
+    )
+    summary = issue_mod._llm_symbol_issue_summary(
+        symbol="005930.KS",
+        symbol_name="Samsung Electronics",
+        events=events,
+        api_key="sk-test",
+        model="gemma",
+    )
+    assert summary is not None
+    assert calls["json"] == 1
+    assert calls["text"] == 0
+    assert "SUPPLY" in summary.disclosure_summary
+    assert "MEMORY" in summary.news_summary

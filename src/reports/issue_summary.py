@@ -147,6 +147,13 @@ NEWS_SUMMARY_PROMPT = """너는 종목 관련 뉴스를 투자 전문가에게 �
 이제 뉴스를 요약하라."""
 
 
+COMBINED_SUMMARY_PROMPT = """?? ?? ???? ??? ??? ?? ????? ???? ?? ???? AI?.
+??? ?? ??? ???? ??. ??? ??? ????. ??, ??, ?? ??? ?? ??.
+??? JSON? ????. ?? disclosure_summary, news_summary ? ??.
+? ?? '[?? ??]' / '[?? ??]' ??? ????, ?? ??? '- ' ???? ?? 5? ??.
+?? ??? ??? ?? ?? ??? '- ??? ?? ?? ?? ??'(?? ??) ? ?? ??."""
+
+
 def _overall_judgment(disclosure_score: float, news_impact_score: float, news_count: int) -> str:
     weighted = disclosure_score * 0.55 + ((news_impact_score + 1.0) / 2.0) * 0.45
     if news_count <= 0 and disclosure_score <= 0:
@@ -426,20 +433,12 @@ def _llm_symbol_issue_summary(
     client = client_cls(**client_kwargs)
 
     disclosures = structured_payload.get("disclosures", [])
-    disclosure_payload = json.dumps(
+    combined_payload = json.dumps(
         {
             "symbol": symbol,
             "symbol_name": symbol_name,
             "date_kst": structured_payload.get("date_kst", ""),
             "disclosures": disclosures,
-        },
-        ensure_ascii=False,
-    )
-    news_payload = json.dumps(
-        {
-            "symbol": symbol,
-            "symbol_name": symbol_name,
-            "date_kst": structured_payload.get("date_kst", ""),
             "news_clusters": structured_payload.get("news_clusters", []),
         },
         ensure_ascii=False,
@@ -452,29 +451,29 @@ def _llm_symbol_issue_summary(
         if str(item.get("cluster_topic") or "").strip()
     ][:5]
 
-    def _call_llm_text_with_provider(prompt: str) -> str | None:
+    def _call_llm_json_with_provider(prompt: str) -> dict | None:
         try:
-            return _call_llm_text(
+            return _call_llm_json(
                 client,
                 model,
                 prompt,
-                max_output_tokens=700,
+                max_output_tokens=600,
                 provider=provider_norm,
             )
         except TypeError:
             # Backward-compatible for tests/callers monkeypatching the old helper signature.
-            return _call_llm_text(client, model, prompt, max_output_tokens=700)
+            return _call_llm_json(client, model, prompt, max_output_tokens=600)
 
     try:
-        disclosure_summary = _call_llm_text_with_provider(
-            f"{DISCLOSURE_SUMMARY_PROMPT}\n\n[입력 공시 데이터]\n{disclosure_payload}"
-        )
-        news_summary = _call_llm_text_with_provider(
-            f"{NEWS_SUMMARY_PROMPT}\n\n[입력 뉴스 데이터]\n{news_payload}"
-        )
+        parsed = _call_llm_json_with_provider(
+            f"{COMBINED_SUMMARY_PROMPT}\n\n[?? ???]\n{combined_payload}"
+        ) or {}
     except Exception as exc:
-        print(f"[ISSUE SUMMARY] LLM 요약 실패 ({symbol}): {type(exc).__name__}: {exc}")
+        print(f"[ISSUE SUMMARY] LLM ?? ?? ({symbol}): {type(exc).__name__}: {exc}")
         return None
+
+    disclosure_summary = str(parsed.get("disclosure_summary") or "").strip() or None
+    news_summary = str(parsed.get("news_summary") or "").strip() or None
 
     disclosure_summary = _ensure_non_empty_issue_block(
         disclosure_summary,
