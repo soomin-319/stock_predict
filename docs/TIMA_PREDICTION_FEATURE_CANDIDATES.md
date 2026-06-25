@@ -44,6 +44,7 @@
 - **채울 컬럼**: `foreign_net_buy`, `institution_net_buy`, `individual_net_buy`, `foreign_ownership_ratio`, `program_trading_flow` (+ 이미 파생 로직 있는 `*_z20/_3d/_5d`, `dual_high_conviction_buy_flag`).
 - **데이터원 후보**: `pykrx`(KRX 투자자별 거래실적), KIS/키움 OpenAPI, 네이버 금융.
 - **작업 위치**: `src/data/investor_context.py` 확장 → `price_features.py`의 alias rename 맵이 이미 한글 컬럼(`외국인순매수`, `프로그램순매수`)을 인식하므로 수집만 붙이면 된다.
+- **구현 상태(2026-06-25)**: `src.data.investor_flow_source.fetch_investor_flow_pykrx`와 `_fetch_flow` 연결 완료. 현재 검증 환경의 `pykrx` 1.2.8은 KRX 인증 세션을 요구해 `KRX_ID`/`KRX_PW` 환경 변수가 없으면 live coverage가 `no_data`로 남는다. 상세는 `docs/INVESTOR_FLOW_FEATURE_REVIVAL_PLAN.md`.
 
 ### 2-B. 펀더멘털 / 밸류에이션 (예측 기여 **중**, 횡단면)
 - **티마 근거**: 종목탭 시가총액, 유통비율.
@@ -111,7 +112,7 @@
 |-----------|:---:|:---:|:---:|
 | 3-C 단기과열 연속성 | ✅ | ❌ | **낮음** |
 | 3-A/3-B 섹터 횡단면·리드래그 | △(매핑 필요) | 섹터 매핑(news_impact 재활용 가능) | 중 |
-| 2-A 수급/프로그램매매 | ❌ | pykrx/증권사 API | 중 |
+| 2-A 수급/프로그램매매 | ✅ (pykrx via `_fetch_flow`; live KRX auth 필요) | pykrx/증권사 API | 중 |
 | 2-B 펀더멘털·시총·유통비율 | ❌ | pykrx/KRX | 중 |
 | 2-C NXT/장전·장후 | ❌ | 시간외/NXT 시세(증권사 API) | **높음** |
 

@@ -52,28 +52,46 @@ def test_investor_context_news_coverage_is_fixed_zero(monkeypatch):
     assert "news_sentiment" in out.columns
 
 
-def test_fetch_flow_returns_empty_without_krx_source(monkeypatch):
+def test_fetch_flow_returns_empty_when_source_returns_no_data(monkeypatch):
     import src.data.investor_context as ic
 
-    out, cov = ic._fetch_flow(["005930.KS"], "2024-01-01", "2024-01-31")
+    def empty_fetcher(ticker, start, end):
+        return pd.DataFrame(columns=["Date", "foreign_net_buy", "institution_net_buy"])
+
+    out, cov = ic._fetch_flow(["005930.KS"], "2024-01-01", "2024-01-31", flow_fetcher=empty_fetcher)
 
     assert out.empty
     assert cov == {
         "requested": 1,
         "successful": 0,
-        "failed": 0,
-        "status": "not_configured",
-        "source": "input_csv_only",
-        "message": "Investor flow source is not configured; using input CSV values only.",
+        "failed": 1,
+        "status": "no_data",
+        "source": "pykrx",
+        "message": "Fetched investor flow for 0/1 symbols via pykrx.",
     }
 
 
-def test_investor_context_preserves_input_flow_columns_and_reports_source():
+def test_investor_context_preserves_input_flow_columns_and_reports_source(monkeypatch):
     import src.data.investor_context as ic
 
     df = _sample_df()
     df["foreign_net_buy"] = [1000, 2000]
     df["institution_net_buy"] = [3000, 4000]
+    monkeypatch.setattr(
+        ic,
+        "_fetch_flow",
+        lambda *a, **k: (
+            pd.DataFrame(columns=["Date", "Symbol", "foreign_net_buy", "institution_net_buy"]),
+            {
+                "requested": 1,
+                "successful": 0,
+                "failed": 1,
+                "status": "no_data",
+                "source": "pykrx",
+                "message": "x",
+            },
+        ),
+    )
 
     out, cov = ic.add_investor_context_with_coverage(
         df,
@@ -82,5 +100,5 @@ def test_investor_context_preserves_input_flow_columns_and_reports_source():
 
     assert out["foreign_net_buy"].tolist() == [1000, 2000]
     assert out["institution_net_buy"].tolist() == [3000, 4000]
-    assert cov["flow"]["status"] == "not_configured"
-    assert cov["flow"]["source"] == "input_csv_only"
+    assert cov["flow"]["status"] == "no_data"
+    assert cov["flow"]["source"] == "pykrx"

@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .pytest_basetemp/
 .pytest_tmp/
+.tmp_pytest/
 .pytest_basetemp/
 *.egg-info/
 

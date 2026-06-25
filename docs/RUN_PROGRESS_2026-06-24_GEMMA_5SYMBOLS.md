@@ -63,7 +63,7 @@
 ### llama-server 한글 경로 인자 문제 (중요)
 
 - 증상: 모델 절대경로(`C:\Users\카운\...`)를 `-m` 인자로 넘기면 `llama-server.exe`가 즉시 종료.
-  로그상 한글 사용자 폴더 `카운`이 `ī��`로 깨져 `gguf_init_from_file: ... No such file or directory` 발생.
+  로그상 한글 사용자 폴더 `카운`이 ANSI mojibake 형태로 깨져 `gguf_init_from_file: ... No such file or directory` 발생.
 - 원인: `llama-server.exe`가 명령행 인자를 ANSI(narrow)로 읽어, 시스템 코드페이지에 없는 한글 경로가 손상됨.
   실행 파일 경로(CreateProcess, 유니코드)는 정상이나 **인자로 넘기는 경로**가 문제.
 - 해결: **작업 디렉터리를 모델 폴더로 두고 모델을 상대경로(순수 ASCII 파일명)로 전달**.
