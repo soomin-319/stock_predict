@@ -15,7 +15,7 @@
 
 - **가드레일(불변):** 뉴스/공시 LLM 출력은 **표시·참고용**이다. provider를 무엇으로 바꾸든 점수 산식, 예측 입력, `predicted_return`은 절대 바뀌지 않는다. 요약 산출의 결정론·감사가능성·누출안전성을 유지한다(`참고용·예측값 미반영` 문구 보존).
 - **기본값은 항상 로컬 gemma:** provider 미지정 시 `llama_cpp`/`http://localhost:8001/v1`/`gemma-4-26b-a4b`. 키가 우연히 환경에 있다고 자동으로 OpenAI로 넘어가지 않는다.
-- **LLM 요약은 opt-in 유지:** `issue_summary` LLM 호출은 **명시적으로 설정을 줄 때만** 켜진다. 무설정 시 기존 규칙기반 폴백 동작을 그대로 둔다(불필요한 gemma 호출·지연 추가 금지 — `docs/GEMMA_LLM_LATENCY_OPTIMIZATION.md` 취지와 일치).
+- **LLM 요약은 opt-in 유지:** `issue_summary` LLM 호출은 **명시적으로 설정을 줄 때만** 켜진다. 무설정 시 기존 규칙기반 폴백 동작을 그대로 둔다(불필요한 gemma 호출·지연 추가 금지 — `docs/2026-06-25-gemma-llm-latency-optimization.md` 취지와 일치).
 - **하위 계약 보존:** `append_issue_summary_columns`·`_llm_symbol_issue_summary`·`PipelineRuntimeConfig` 등에 추가하는 모든 신규 인자/필드는 **기본값을 둬서** 기존 호출부·테스트가 깨지지 않게 한다. 기존 플래그(`--news-impact-llm-config`, `--openai-api-key`, `--openai-model`)는 **하위호환으로 계속 동작**한다.
 - **시크릿은 env로:** `OPENAI_API_KEY`는 argv가 아닌 환경변수/`.env`로 주입(`ps`/히스토리 노출 방지). `PipelineRuntimeConfig.build_subprocess_env`가 이미 `OPENAI_API_KEY`를 자식 프로세스 env로 전달함 — 이 관례를 따른다.
 - **출력·인코딩:** 생성 CSV/JSON은 `result/` 하위, CSV는 `utf-8-sig`.
