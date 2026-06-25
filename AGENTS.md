@@ -4,7 +4,7 @@
 
 This Python pipeline predicts next-day stock returns. Treat all outputs as research and operations support, not investment advice or an automated trading system.
 
-Buy/sell/hold decisions must use next-day expected return (`predicted_return`). News and disclosures are display-only context and must never change expected returns, rankings, recommendations, or signals.
+Buy/sell/hold decisions must be anchored in next-day expected return (`predicted_return`). News and disclosures may be used as leak-safe, deterministic model/scoring inputs when explicitly configured, so they may affect expected returns, rankings, recommendations, or signals through the documented pipeline. Do not manually override model outputs from narrative context alone.
 
 ## Project Layout
 
@@ -27,7 +27,7 @@ Do not use subagents. Execute all commands and tool calls sequentially; do not r
 
 Keep generated CSV and JSON files under `result/`. CSV outputs must use `utf-8-sig`. Keep sample and universe inputs under `data/`; avoid adding large or private market data.
 
-The vendored `src.news_impact` package should collect Korean news first. Use non-Korean or overseas media only when explicitly needed. Its output remains display/review context only.
+The vendored `src.news_impact` package should collect Korean news first. Use non-Korean or overseas media only when explicitly needed. When its outputs are used for calculations, keep the transformation deterministic, auditable, and leakage-safe; otherwise treat them as review context.
 
 ## Commit & Pull Request Guidelines
 
