@@ -285,7 +285,7 @@ def _build_llm_judged_events(
     for news_index, clustered in enumerate(clustered_news, start=1):
         item = clustered.item
         article_text, input_flags = _llm_article_text_and_flags(item)
-        for ticker in _target_tickers_for_news(item, watchlist_tickers):
+        for ticker in _target_tickers_for_news(item, watchlist_tickers, companies):
             company = companies.get(ticker, {})
             company_name = company.get("company", "")
             sector = company.get("sector", "")
@@ -344,9 +344,27 @@ def _build_llm_judged_events(
     return events, llm_failed_count
 
 
-def _target_tickers_for_news(item: NewsItem, watchlist_tickers: list[str]) -> list[str]:
+def _target_tickers_for_news(
+    item: NewsItem,
+    watchlist_tickers: list[str],
+    companies: dict[str, dict[str, str]] | None = None,
+) -> list[str]:
     if item.ticker and item.ticker in watchlist_tickers:
         return [item.ticker]
+    if companies:
+        haystack = " ".join(
+            str(part)
+            for part in (item.title, getattr(item, "raw_text", ""), item.summary)
+            if part
+        )
+        matched = [
+            ticker
+            for ticker in watchlist_tickers
+            if (companies.get(ticker, {}).get("company") or "")
+            and companies[ticker]["company"] in haystack
+        ]
+        if matched:
+            return matched
     return watchlist_tickers
 
 
