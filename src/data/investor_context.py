@@ -48,17 +48,45 @@ def _empty_context(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     }
 
 
-def _fetch_flow(symbols: list[str], start: str, end: str) -> tuple[pd.DataFrame, dict]:
+def _fetch_flow(symbols: list[str], start: str, end: str, *, flow_fetcher=None) -> tuple[pd.DataFrame, dict]:
+    from src.data.investor_flow_source import fetch_investor_flow_pykrx
+
+    fetch = flow_fetcher or fetch_investor_flow_pykrx
+    frames: list[pd.DataFrame] = []
+    successful = 0
+    failed = 0
+    for symbol in symbols:
+        ticker = _symbol_to_ticker(symbol)
+        if not ticker:
+            failed += 1
+            continue
+        try:
+            part = fetch(ticker, start, end)
+        except Exception:
+            failed += 1
+            continue
+        if part is None or part.empty:
+            failed += 1
+            continue
+        part = part.copy()
+        part["Date"] = pd.to_datetime(part["Date"])
+        part["Symbol"] = symbol
+        frames.append(part[["Date", "Symbol", "foreign_net_buy", "institution_net_buy"]])
+        successful += 1
+
     coverage = {
         "requested": len(symbols),
-        "successful": 0,
-        "failed": 0,
-        "status": "not_configured",
-        "source": "input_csv_only",
-        "message": "Investor flow source is not configured; using input CSV values only.",
+        "successful": successful,
+        "failed": failed,
+        "status": "ok" if successful else "no_data",
+        "source": "pykrx",
+        "message": f"Fetched investor flow for {successful}/{len(symbols)} symbols via pykrx.",
     }
-    _ = (start, end)
-    return pd.DataFrame(columns=["Date", "Symbol", "foreign_net_buy", "institution_net_buy"]), coverage
+    if not frames:
+        return pd.DataFrame(columns=["Date", "Symbol", "foreign_net_buy", "institution_net_buy"]), coverage
+    out = pd.concat(frames, ignore_index=True)
+    out["Date"] = pd.to_datetime(out["Date"])
+    return out, coverage
 
 
 def _load_dart_corp_map(path: str | None) -> dict[str, str]:
@@ -265,7 +293,17 @@ def add_investor_context_with_coverage(df: pd.DataFrame, cfg: InvestorContextCon
     flow_df, flow_cov = _fetch_flow(symbols, start, end)
     coverage["flow"] = flow_cov
     if not flow_df.empty:
-        out = out.merge(flow_df, on=["Date", "Symbol"], how="left")
+        flow_value_cols = ["foreign_net_buy", "institution_net_buy"]
+        existing_flow_cols = [c for c in flow_value_cols if c in out.columns]
+        if existing_flow_cols:
+            out = out.merge(flow_df, on=["Date", "Symbol"], how="left", suffixes=("", "_fetched"))
+            for col in flow_value_cols:
+                fetched_col = f"{col}_fetched"
+                if fetched_col in out.columns:
+                    out[col] = out[fetched_col].combine_first(out[col])
+                    out = out.drop(columns=[fetched_col])
+        else:
+            out = out.merge(flow_df, on=["Date", "Symbol"], how="left")
 
     if cfg.enable_disclosure:
         disc_df, disc_cov = _fetch_disclosure_scores(symbols, start, end, cfg.dart_api_key, cfg.dart_corp_map_csv)

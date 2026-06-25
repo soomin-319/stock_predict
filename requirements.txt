@@ -7,3 +7,4 @@ lightgbm
 openai
 flask
 pyngrok
+pykrx

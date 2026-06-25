@@ -17,6 +17,7 @@ dependencies = [
   "openai",
   "flask",
   "pyngrok",
+  "pykrx",
 ]
 
 [project.optional-dependencies]
