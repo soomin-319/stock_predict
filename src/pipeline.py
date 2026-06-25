@@ -48,6 +48,7 @@ from src.features.investment_signals import add_investment_signal_features
 from src.features.price_features import build_features, feature_missing_rate_summary, select_feature_columns
 from src.features.regime_features import annotate_market_regime
 from src.models.lgbm_heads import MultiHeadPrediction, MultiHeadStockModel
+from src.news_impact.llm_config import load_llm_config
 from src.pipeline_cli import _build_pipeline_overrides, build_cli_parser
 from src.pipeline_support import (
     PredictionFrameContext,
@@ -156,6 +157,45 @@ def _drop_empty_detail_columns(detail_df: pd.DataFrame) -> pd.DataFrame:
 
 def _build_issue_summary_snapshot(pred_df: pd.DataFrame) -> pd.DataFrame:
     return output_build_issue_summary_snapshot(pred_df)
+
+
+@dataclass(frozen=True)
+class EffectiveLLMOptions:
+    issue_summary_api_key: str | None
+    issue_summary_model: str | None
+    issue_summary_provider: str = "openai"
+    issue_summary_base_url: str | None = None
+    news_impact_llm_config: str | None = None
+
+
+def _resolve_effective_llm_options(
+    *,
+    llm_config: str | None,
+    news_impact_llm_config: str | None,
+    openai_api_key: str | None,
+    openai_model: str | None,
+) -> EffectiveLLMOptions:
+    if llm_config:
+        config = load_llm_config(llm_config)
+        return EffectiveLLMOptions(
+            issue_summary_api_key=config.api_key,
+            issue_summary_model=config.model,
+            issue_summary_provider=config.provider,
+            issue_summary_base_url=config.base_url,
+            news_impact_llm_config=llm_config,
+        )
+
+    effective_openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+    effective_openai_model = openai_model or os.getenv("OPENAI_MODEL") or (
+        "gpt-5-mini" if effective_openai_api_key else None
+    )
+    return EffectiveLLMOptions(
+        issue_summary_api_key=effective_openai_api_key,
+        issue_summary_model=effective_openai_model,
+        issue_summary_provider="openai",
+        issue_summary_base_url=None,
+        news_impact_llm_config=news_impact_llm_config,
+    )
 
 
 def _classify_context_export(
@@ -705,6 +745,8 @@ def _predict_pipeline_latest(
     news_impact_report: str | None,
     signal_config: Any | None = None,
     news_impact_llm_config: str | None = None,
+    issue_summary_provider: str = "openai",
+    issue_summary_base_url: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict, MultiHeadStockModel, dict[str, Any]]:
     train_df = feat.dropna(subset=feature_columns + ["target_log_return", "target_up"])
     lookback = int(getattr(cfg.training, "final_model_lookback_days", 0) or 0)
@@ -752,6 +794,8 @@ def _predict_pipeline_latest(
             context_raw_df=context_raw_df,
             openai_api_key=effective_openai_api_key,
             openai_model=effective_openai_model,
+            provider=issue_summary_provider,
+            base_url=issue_summary_base_url,
             summarize_symbols=issue_summary_symbols,
             summary_n_jobs=issue_summary_n_jobs,
         )
@@ -1071,6 +1115,7 @@ def run_pipeline(
     max_positions_per_market_type: int | None = None,
     issue_summary_symbols: list[str] | None = None,
     news_impact_report: str | None = None,
+    llm_config: str | None = None,
     news_impact_llm_config: str | None = None,
     walk_forward_n_jobs: int | None = None,
     model_n_jobs: int | None = None,
@@ -1079,8 +1124,12 @@ def run_pipeline(
     issue_summary_n_jobs: int = 1,
     data_fetch_coverage: dict | None = None,
 ):
-    effective_openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
-    effective_openai_model = openai_model or os.getenv("OPENAI_MODEL") or ("gpt-5-mini" if effective_openai_api_key else None)
+    effective_llm_options = _resolve_effective_llm_options(
+        llm_config=llm_config,
+        news_impact_llm_config=news_impact_llm_config,
+        openai_api_key=openai_api_key,
+        openai_model=openai_model,
+    )
     dart_api_key = dart_api_key or os.getenv("DART_API_KEY")
     dart_corp_map_csv = dart_corp_map_csv or os.getenv("DART_CORP_MAP_CSV")
     naver_client_id = naver_client_id or os.getenv("NAVER_CLIENT_ID")
@@ -1220,13 +1269,15 @@ def run_pipeline(
             prediction_context=validation_result["prediction_context"],
             coverage_gate_status=validation_result["coverage_gate_status"],
             context_raw_df=context_raw_df,
-            effective_openai_api_key=effective_openai_api_key,
-            effective_openai_model=effective_openai_model,
+            effective_openai_api_key=effective_llm_options.issue_summary_api_key,
+            effective_openai_model=effective_llm_options.issue_summary_model,
+            issue_summary_provider=effective_llm_options.issue_summary_provider,
+            issue_summary_base_url=effective_llm_options.issue_summary_base_url,
             issue_summary_symbols=issue_summary_symbols,
             issue_summary_n_jobs=issue_summary_n_jobs,
             news_impact_report=news_impact_report,
             signal_config=validation_result["tuned_signal_config"],
-            news_impact_llm_config=news_impact_llm_config,
+            news_impact_llm_config=effective_llm_options.news_impact_llm_config,
         )
     diagnostics.mark_stage(
         "train_final_and_predict_latest",
@@ -1328,6 +1379,7 @@ def main():
         max_positions_per_market_type=args.max_positions_per_market_type,
         issue_summary_symbols=args.issue_summary_symbols,
         news_impact_report=args.news_impact_report,
+        llm_config=args.llm_config,
         news_impact_llm_config=args.news_impact_llm_config,
         walk_forward_n_jobs=args.walk_forward_n_jobs,
         model_n_jobs=args.model_n_jobs,
