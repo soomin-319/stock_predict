@@ -95,3 +95,16 @@ def test_target_tickers_falls_back_to_full_watchlist_when_no_match():
     companies = {"005930": {"company": "????"}, "000660": {"company": "SK????"}}
     item = _news_stub("??? ??? ??? ??")
     assert _target_tickers_for_news(item, ["005930", "000660"], companies) == ["005930", "000660"]
+
+
+
+def test_article_text_is_truncated_with_flag():
+    from types import SimpleNamespace
+    from src.news_impact.pipeline import _llm_article_text_and_flags, MAX_ARTICLE_CHARS
+
+    long_item = SimpleNamespace(
+        quality_flags=(), raw_text="?" * (MAX_ARTICLE_CHARS + 500), summary=""
+    )
+    text, flags = _llm_article_text_and_flags(long_item)
+    assert len(text) == MAX_ARTICLE_CHARS
+    assert "article_truncated" in flags

@@ -42,6 +42,7 @@ from src.news_impact.semantic_clusterer import SemanticClusterLLM, assign_semant
 SCORING_VERSION = "scoring.v1"
 BACKTEST_VERSION = "backtest.v1"
 RULE_BASED_FLAGS = {"rule_based_no_llm"}
+MAX_ARTICLE_CHARS = 1500
 
 
 class ImpactJudgeLLM(Protocol):
@@ -383,6 +384,9 @@ def _llm_article_text_and_flags(item: NewsItem) -> tuple[str, tuple[str, ...]]:
     else:
         text = item.summary
         flags = base_flags + ("summary_only_no_full_text", "needs_full_text_review")
+    if len(text) > MAX_ARTICLE_CHARS:
+        text = text[:MAX_ARTICLE_CHARS]
+        flags = flags + ("article_truncated",)
     return text, _dedupe_flags(flags)
 
 
