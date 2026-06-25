@@ -27,7 +27,10 @@ Get-Content .env | ForEach-Object {
 
 # 2. 현재 PC 기준 llama.cpp/Gemma 경로
 $LlamaServer = 'C:\Users\카운\AppData\Local\Microsoft\WinGet\Packages\ggml.llamacpp_Microsoft.Winget.Source_8wekyb3d8bbwe\llama-server.exe'
-$GemmaModel  = 'C:\Users\카운\Desktop\stock_predict\models\gemma-4-26B-A4B-it-UD-IQ4_XS.gguf'
+# 상대경로 사용: 한글 사용자명이 들어간 절대경로를 llama-server의 -m 인자로 넘기면
+# 네이티브 exe가 ANSI 코드페이지로 받아 깨뜨려(카운→ī##) 모델 로드에 실패합니다.
+# (위에서 cd 로 프로젝트 루트에 있으므로 상대경로가 그대로 해석됨)
+$GemmaModel  = 'models\gemma-4-26B-A4B-it-UD-IQ4_XS.gguf'
 
 # 3. 의존성 설치
 python -m pip install -r requirements.txt
@@ -49,7 +52,7 @@ if (-not $portOpen) {
     '-fa', 'on',
     '--jinja',
     '--reasoning', 'off'
-  ) -WindowStyle Hidden
+  ) -WorkingDirectory $PWD -WindowStyle Hidden
   Start-Sleep -Seconds 15
 }
 
