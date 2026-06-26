@@ -33,6 +33,12 @@ The vendored `src.news_impact` package should collect Korean news first. Use non
 
 Recent history uses short imperative commit subjects, often with PR references, for example `Refresh stale cached predictions from detail date in bot handler (#207)`. Keep commits focused. If any repository change is made, the agent MUST commit, push, and create a pull request before final handoff. Do not stop after local changes only. Pull requests should include a summary, test results, linked issues when relevant, and artifact paths when user-facing outputs change. Note new config keys, data files, or external API requirements.
 
+## Branch Handling
+
+- Do not switch the working branch, or create a branch from a base other than the current `HEAD` (for example, off `origin/main`), without an explicit user request. The working branch usually diverges from `main`, so reparenting silently rewrites the working tree: files appear or disappear and look like lost work.
+- Add incidental or independent changes (such as a new doc) as commits on the current branch. When the user does ask for a new branch, branch from the current `HEAD`, not from `origin/main`.
+- Do not modify or "reconcile" the local `main` branch. Treat `origin/main` as the source of truth and leave local `main` untouched.
+
 ## Security & Configuration Tips
 
 Do not commit API keys, ngrok tokens, or private market data. Pass secrets such as `OPENAI_API_KEY`, `DART_API_KEY`, `NAVER_CLIENT_ID`, and `NAVER_CLIENT_SECRET` through environment-specific tooling or local arguments (`--openai-api-key`, `--openai-model`, `--naver-client-id`, `--naver-client-secret`). Treat `result/` as generated output and avoid checking in large or stale artifacts unless intentional.
