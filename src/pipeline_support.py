@@ -54,6 +54,39 @@ def _market_headwind_score(values: pd.Series | None, index: pd.Index) -> pd.Seri
     return (numeric < -0.01).astype(float) * -1.0
 
 
+def add_cross_section_rank_columns(
+    frame: pd.DataFrame,
+    *,
+    score_col: str = "signal_score",
+) -> pd.DataFrame:
+    """Add deterministic same-date ranking fields from a higher-is-better score."""
+    out = frame.copy()
+    out["cross_section_rank"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+    out["rank_percentile"] = pd.Series(pd.NA, index=out.index, dtype="Float64")
+    out["rank_universe_size"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+    required = {"Date", "Symbol", score_col}
+    if out.empty or not required.issubset(out.columns):
+        return out
+
+    dates = pd.to_datetime(out["Date"], errors="coerce").dt.normalize()
+    for _, idx in out.groupby(dates, dropna=False, sort=False).groups.items():
+        group = out.loc[idx, ["Symbol", score_col]].copy()
+        group["_symbol_sort"] = group["Symbol"].astype(str)
+        group["_score_sort"] = pd.to_numeric(group[score_col], errors="coerce")
+        ordered = group.sort_values(
+            by=["_score_sort", "_symbol_sort"],
+            ascending=[False, True],
+            na_position="last",
+            kind="mergesort",
+        )
+        n = len(ordered)
+        ranks = pd.Series(range(1, n + 1), index=ordered.index, dtype="Int64")
+        out.loc[ordered.index, "cross_section_rank"] = ranks
+        out.loc[ordered.index, "rank_percentile"] = ((n - ranks.astype(float) + 1.0) / float(n)).astype(float)
+        out.loc[ordered.index, "rank_universe_size"] = int(n)
+    return out
+
+
 def build_scored_prediction_frame(
     latest_df: pd.DataFrame,
     pred: MultiHeadPrediction,
@@ -86,6 +119,7 @@ def build_scored_prediction_frame(
     scored = vectorized_event_signal_boost(scored, cfg=investment_criteria)
     if "signal_score" in scored.columns:
         scored["signal_label"] = signal_label_series(scored["signal_score"])
+        scored = add_cross_section_rank_columns(scored)
     return scored
 
 
@@ -116,6 +150,7 @@ def finalize_latest_prediction_frame(
 __all__ = [
     "OPTIONAL_PREDICTION_COLUMNS",
     "PredictionFrameContext",
+    "add_cross_section_rank_columns",
     "build_scored_prediction_frame",
     "build_symbol_history_accuracy",
     "finalize_latest_prediction_frame",

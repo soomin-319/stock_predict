@@ -223,6 +223,13 @@ def test_training_config_accepts_lightgbm_regularization_overrides(tmp_path):
     assert cfg.training.min_child_samples == 9
 
 
+def test_training_config_defaults_enable_lightgbm_regularization():
+    cfg = AppConfig()
+
+    assert cfg.training.reg_alpha > 0.0
+    assert cfg.training.reg_lambda > 0.0
+
+
 def test_record_model_metadata_warnings_adds_sklearn_warning():
     from src.pipeline import _record_model_metadata_warnings
 
@@ -379,6 +386,9 @@ def test_run_pipeline_generates_report_without_graph_artifacts(tmp_path):
     assert "up_probability_5d" not in detail_df.columns
     assert "up_probability_20d" not in detail_df.columns
     assert "coverage_gate_status" in detail_df.columns
+    assert "cross_section_rank" in detail_df.columns
+    assert "rank_percentile" in detail_df.columns
+    assert "rank_universe_size" in detail_df.columns
     assert "foreign_net_buy" in detail_df.columns
     assert "institution_net_buy" in detail_df.columns
     assert "내일 예상 종가" in detail_df.columns
@@ -405,6 +415,8 @@ def test_run_pipeline_generates_report_without_graph_artifacts(tmp_path):
     assert "내일 예상 종가" in simple_df.columns
     assert "내일 예상 수익률(%)" in simple_df.columns
     assert "상승확률(%)" in simple_df.columns
+    assert "횡단면 순위" in simple_df.columns
+    assert "랭킹 백분위" in simple_df.columns
     assert "예측 신뢰도" in simple_df.columns
     assert "예측 이유" not in simple_df.columns
 
@@ -480,6 +492,38 @@ def test_build_scored_prediction_frame_keeps_signal_label_separate_from_confiden
     assert "up_probability_20d" not in scored.columns
     assert scored["external_coverage_ratio"].eq(0.8).all()
     assert scored["investor_coverage_ratio"].eq(0.7).all()
+
+
+def test_build_scored_prediction_frame_adds_deterministic_cross_section_rank():
+    from src.models.lgbm_heads import MultiHeadPrediction
+
+    cfg = AppConfig()
+    latest = pd.DataFrame(
+        {
+            "Date": pd.to_datetime(["2024-01-01", "2024-01-01", "2024-01-01"]),
+            "Symbol": ["B", "A", "C"],
+            "Close": [100.0, 100.0, 100.0],
+            "market_regime": ["neutral", "neutral", "neutral"],
+        }
+    )
+    pred = MultiHeadPrediction(
+        predicted_return=np.array([0.03, 0.03, -0.01]),
+        up_probability=np.array([0.8, 0.8, 0.4]),
+        quantile_low=np.array([0.01, 0.01, -0.02]),
+        quantile_mid=np.array([0.02, 0.02, -0.01]),
+        quantile_high=np.array([0.04, 0.04, 0.0]),
+    )
+
+    scored = build_scored_prediction_frame(
+        latest,
+        pred,
+        cfg.signal,
+        PredictionFrameContext(),
+    ).sort_values("Symbol")
+
+    assert scored["cross_section_rank"].tolist() == [1, 2, 3]
+    assert scored["rank_percentile"].tolist() == pytest.approx([1.0, 2 / 3, 1 / 3])
+    assert scored["rank_universe_size"].tolist() == [3, 3, 3]
 
 
 def test_run_pipeline_promotes_investor_context_to_separate_progress_step(tmp_path, monkeypatch, capsys):
