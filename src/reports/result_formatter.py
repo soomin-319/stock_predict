@@ -17,6 +17,10 @@ RESULT_SIMPLE_OPTIONAL_COLUMNS = (
     "공시 요약",
     "뉴스 요약",
 )
+RESULT_SIMPLE_RANK_COLUMNS = (
+    "횡단면 순위",
+    "랭킹 백분위",
+)
 RESULT_SIMPLE_NEWS_IMPACT_COLUMNS = (
     "뉴스/공시 영향 점수",
     "뉴스/공시 영향 요약",
@@ -59,6 +63,17 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
     out["예측 신뢰도"] = display_confidence.map(lambda v: format_percentage_text(v, digits=1, unit_interval=True))
     up_prob_series = pd.to_numeric(out["up_probability"], errors="coerce") if "up_probability" in out.columns else pd.Series(0.5, index=out.index)
     out["상승확률(%)"] = up_prob_series.map(lambda v: format_percentage_text(v, digits=1, unit_interval=True))
+    if "cross_section_rank" in out.columns:
+        ranks = pd.to_numeric(out["cross_section_rank"], errors="coerce")
+        universe_source = out["rank_universe_size"] if "rank_universe_size" in out.columns else pd.Series(pd.NA, index=out.index)
+        universe = pd.to_numeric(universe_source, errors="coerce")
+        out["횡단면 순위"] = [
+            "-" if pd.isna(rank) else f"{int(rank)}/{int(size)}" if not pd.isna(size) and size > 0 else f"{int(rank)}"
+            for rank, size in zip(ranks, universe)
+        ]
+    if "rank_percentile" in out.columns:
+        percentile = pd.to_numeric(out["rank_percentile"], errors="coerce")
+        out["랭킹 백분위"] = percentile.map(lambda v: "-" if pd.isna(v) else format_percentage_text(v, digits=1, unit_interval=True))
 
     simple = out[
         [
@@ -69,7 +84,7 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
             "predicted_return",
             "상승확률(%)",
             "예측 신뢰도",
-            *([c for c in (*RESULT_SIMPLE_OPTIONAL_COLUMNS, *RESULT_SIMPLE_NEWS_IMPACT_COLUMNS) if c in out.columns]),
+            *([c for c in (*RESULT_SIMPLE_RANK_COLUMNS, *RESULT_SIMPLE_OPTIONAL_COLUMNS, *RESULT_SIMPLE_NEWS_IMPACT_COLUMNS) if c in out.columns]),
         ]
     ].rename(
         columns={
@@ -88,6 +103,7 @@ def build_result_simple(pred_df: pd.DataFrame) -> pd.DataFrame:
     # Schema contract: keep only current public columns in stable order.
     ordered = [
         *RESULT_SIMPLE_REQUIRED_COLUMNS,
+        *[c for c in RESULT_SIMPLE_RANK_COLUMNS if c in simple.columns],
         *[c for c in RESULT_SIMPLE_OPTIONAL_COLUMNS if c in simple.columns],
         *[c for c in RESULT_SIMPLE_NEWS_IMPACT_COLUMNS if c in simple.columns],
     ]
@@ -153,6 +169,7 @@ __all__ = [
     "RESULT_SIMPLE_OPTIONAL_COLUMNS",
     "RESULT_SIMPLE_NEWS_IMPACT_COLUMNS",
     "RESULT_SIMPLE_REQUIRED_COLUMNS",
+    "RESULT_SIMPLE_RANK_COLUMNS",
     "build_result_simple",
     "display_width",
     "format_percentage_text",

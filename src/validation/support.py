@@ -117,6 +117,9 @@ class UpProbabilityCalibrator:
     model: object | None
     status: str
     reason: str | None
+    support_lower: float | None = None
+    support_upper: float | None = None
+    tail_shrinkage_strength: float = 0.5
 
     def transform(self, probabilities: pd.Series | pd.Index | list | tuple) -> pd.Series:
         raw = pd.Series(probabilities, dtype=float).clip(0.0, 1.0)
@@ -124,8 +127,28 @@ class UpProbabilityCalibrator:
             return raw
         calibrated = pd.Series(self.model.predict(raw.values), dtype=float).clip(0.0, 1.0)
         if raw.round(6).nunique() >= 4 and calibrated.round(6).nunique() <= 2:
-            return (0.3 * calibrated + 0.7 * raw).clip(0.0, 1.0)
-        return calibrated
+            calibrated = (0.3 * calibrated + 0.7 * raw).clip(0.0, 1.0)
+        return self._shrink_sparse_tails(raw, calibrated)
+
+    def _shrink_sparse_tails(self, raw: pd.Series, calibrated: pd.Series) -> pd.Series:
+        if self.support_lower is None or self.support_upper is None or self.tail_shrinkage_strength <= 0.0:
+            return calibrated
+        tail_mask = (raw < self.support_lower) | (raw > self.support_upper)
+        if not bool(tail_mask.any()):
+            return calibrated
+        strength = min(max(float(self.tail_shrinkage_strength), 0.0), 1.0)
+        shrunk = calibrated.copy()
+        shrunk.loc[tail_mask] = 0.5 + (shrunk.loc[tail_mask] - 0.5) * (1.0 - strength)
+        return shrunk.clip(0.0, 1.0)
+
+    def tail_shrinkage_report(self) -> dict:
+        enabled = self.model is not None and self.support_lower is not None and self.support_upper is not None
+        return {
+            "enabled": bool(enabled),
+            "strength": float(self.tail_shrinkage_strength if enabled else 0.0),
+            "support_lower": self.support_lower,
+            "support_upper": self.support_upper,
+        }
 
 
 def fit_up_probability_calibrator(tune_oof: pd.DataFrame) -> UpProbabilityCalibrator:
@@ -143,7 +166,15 @@ def fit_up_probability_calibrator(tune_oof: pd.DataFrame) -> UpProbabilityCalibr
 
         model = IsotonicRegression(out_of_bounds="clip")
         model.fit(cal["up_probability"].astype(float).values, y.values)
-        return UpProbabilityCalibrator(model, "fitted", None)
+        support = cal["up_probability"].astype(float)
+        return UpProbabilityCalibrator(
+            model,
+            "fitted",
+            None,
+            support_lower=float(support.min()),
+            support_upper=float(support.max()),
+            tail_shrinkage_strength=0.5,
+        )
     except Exception as exc:
         return UpProbabilityCalibrator(None, "identity", f"fit_failed:{type(exc).__name__}")
 
@@ -164,7 +195,11 @@ def calibration_split_metrics(
         }
 
     return {
-        "fit": {"status": calibrator.status, "reason": calibrator.reason},
+        "fit": {
+            "status": calibrator.status,
+            "reason": calibrator.reason,
+            "tail_shrinkage": calibrator.tail_shrinkage_report(),
+        },
         "tune": metrics(tune_df),
         "eval": metrics(eval_df),
     }

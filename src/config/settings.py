@@ -44,8 +44,8 @@ class TrainingConfig:
     walk_forward_n_jobs: int = -1
     use_gpu: bool = False
     early_stopping_rounds: int = 0
-    reg_alpha: float = 0.0
-    reg_lambda: float = 0.0
+    reg_alpha: float = 0.1
+    reg_lambda: float = 1.0
     min_child_samples: int = 20
     # Gap between train end and validation start to prevent look-ahead leakage
     # from the next-day target overlapping the validation window.

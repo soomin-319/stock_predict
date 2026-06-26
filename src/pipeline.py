@@ -52,6 +52,7 @@ from src.news_impact.llm_config import load_llm_config
 from src.pipeline_cli import _build_pipeline_overrides, build_cli_parser
 from src.pipeline_support import (
     PredictionFrameContext,
+    add_cross_section_rank_columns,
     build_scored_prediction_frame,
     build_symbol_history_accuracy,
     finalize_latest_prediction_frame,
@@ -678,6 +679,7 @@ def _run_pipeline_validation(
         )
         out["signal_label"] = signal_label_series(out["signal_score"])
         out["coverage_gate_status"] = coverage_gate_status
+        out = add_cross_section_rank_columns(out)
         return out
 
     tune_df = apply_tuned_signal(tune_df)

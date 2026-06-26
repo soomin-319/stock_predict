@@ -57,3 +57,36 @@ def test_calibration_report_separates_tune_and_eval_metrics():
     assert set(report) == {"fit", "tune", "eval"}
     assert report["tune"]["sample_count"] == 20
     assert report["eval"]["sample_count"] == 20
+
+
+def test_fitted_calibrator_shrinks_sparse_tail_probabilities_toward_half():
+    tune = pd.DataFrame(
+        {
+            "up_probability": [0.42, 0.43, 0.44, 0.45, 0.46, 0.47, 0.48, 0.49],
+            "target_log_return": [-0.02, -0.01, -0.01, 0.005, 0.006, 0.01, 0.02, 0.03],
+        }
+    )
+
+    calibrator = fit_up_probability_calibrator(tune)
+    high_tail = calibrator.transform([0.95]).iloc[0]
+    low_tail = calibrator.transform([0.05]).iloc[0]
+    center = calibrator.transform([0.46]).iloc[0]
+
+    assert 0.5 <= high_tail < 0.95
+    assert 0.05 < low_tail <= 0.5
+    assert abs(center - 0.5) > abs(high_tail - 0.5) or high_tail < 0.9
+
+
+def test_calibration_report_exposes_tail_shrinkage_policy():
+    tune = pd.DataFrame(
+        {
+            "up_probability": [0.42, 0.43, 0.44, 0.45, 0.46, 0.47],
+            "target_log_return": [-0.02, -0.01, 0.01, 0.02, -0.01, 0.03],
+        }
+    )
+
+    report = calibration_split_metrics(tune, tune, fit_up_probability_calibrator(tune))
+
+    assert "tail_shrinkage" in report["fit"]
+    assert report["fit"]["tail_shrinkage"]["enabled"] is True
+    assert report["fit"]["tail_shrinkage"]["strength"] > 0.0
