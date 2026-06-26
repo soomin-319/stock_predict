@@ -76,7 +76,7 @@ def _fetch_flow(symbols, start, end):
 
 → 모델 입력에 포함된 `foreign_net_buy / institution_net_buy` 및 의존 수급 피처 16개(`foreign_buy_signal`, `institution_net_buy_z20`, `smart_money_strength`, `*_high_conviction_buy_flag` 등)가 전부 상수 0이고 feature importance도 0.
 `investor_event_score`, `jongbae_score`는 최신 결과에서 0은 아니지만 현재 모델 입력이 아니라 표시/후처리 성격에 가깝다. 한국 시장에서 단기 예측력 있는 수급 신호원 한 묶음이 통째로 죽어 있는 셈.
-부활 방법은 별도 문서 참조: `docs/INVESTOR_FLOW_FEATURE_REVIVAL_PLAN.md`.
+부활 방법은 별도 문서 참조: `docs/archive/INVESTOR_FLOW_FEATURE_REVIVAL_PLAN.md`.
 
 ### 3-4. 정칙화·캘리브레이션 미흡 (과신 유발)
 - 모델 설정 `reg_alpha=0, reg_lambda=0`(`pipeline_report.json`의 model 블록) → 정규화 없음 → 강추세 입력에 과신.
@@ -108,7 +108,7 @@ def _fetch_flow(symbols, start, end):
 
 ## 5. 개선 레버 (영향 큰 순)
 
-1. **수급 피처 부활** — `_fetch_flow` 실제 구현(pykrx/KRX). 죽은 신호원 회복 + 과신 견제. → `docs/INVESTOR_FLOW_FEATURE_REVIVAL_PLAN.md`.
+1. **수급 피처 부활** — `_fetch_flow` 실제 구현(pykrx/KRX). 죽은 신호원 회복 + 과신 견제. → `docs/archive/INVESTOR_FLOW_FEATURE_REVIVAL_PLAN.md`.
 2. **뉴스/공시 계량 피처 활용** — 정책상 계산 입력 허용. 단, 발표시각 기준 누수 방지, 한국 뉴스 우선, deterministic scoring, 결측/429 fallback, OOF 검증을 함께 적용.
 3. **횡단면 랭킹으로 목표 재정의** — 절대 방향(불가능에 가까움) 대신 "상대적 우위 종목 선택"(rank_ic 0.092의 약한 + 신호를 키움).
 4. **지평선 확대** — 1일 → 주간/월간. 드리프트가 노이즈 위로 누적.
