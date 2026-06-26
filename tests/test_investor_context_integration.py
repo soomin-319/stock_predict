@@ -61,6 +61,7 @@ def test_fetch_flow_returns_empty_when_source_returns_no_data(monkeypatch):
     out, cov = ic._fetch_flow(["005930.KS"], "2024-01-01", "2024-01-31", flow_fetcher=empty_fetcher)
 
     assert out.empty
+    assert str(out["Date"].dtype).startswith("datetime64")
     assert cov == {
         "requested": 1,
         "successful": 0,
@@ -69,6 +70,24 @@ def test_fetch_flow_returns_empty_when_source_returns_no_data(monkeypatch):
         "source": "pykrx",
         "message": "Fetched investor flow for 0/1 symbols via pykrx.",
     }
+
+
+def test_fetch_flow_reports_latest_flow_date():
+    import src.data.investor_context as ic
+
+    def fake_fetcher(ticker, start, end):
+        return pd.DataFrame(
+            {
+                "Date": pd.to_datetime(["2024-01-03", "2024-01-05"]),
+                "foreign_net_buy": [100.0, 200.0],
+                "institution_net_buy": [10.0, 20.0],
+            }
+        )
+
+    out, cov = ic._fetch_flow(["005930.KS"], "2024-01-01", "2024-01-31", flow_fetcher=fake_fetcher)
+
+    assert not out.empty
+    assert cov["latest_flow_date"] == "2024-01-05"
 
 
 def test_investor_context_preserves_input_flow_columns_and_reports_source(monkeypatch):
