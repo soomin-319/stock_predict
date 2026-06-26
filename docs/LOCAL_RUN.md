@@ -1,6 +1,6 @@
-﻿# Full Local Run: llama.cpp Gemma + Pipeline + Kakao/ngrok
+﻿# 로컬 전체 실행: llama.cpp Gemma + Pipeline + Kakao/ngrok
 
-이 문서는 현재 PC에서 감지된 경로를 기준으로, 전체 기능을 한 번에 실행하는 PowerShell 명령어입니다.
+이 문서는 현재 PC에서 감지된 경로를 기준으로, 전체 기능을 한 번에 실행하는 PowerShell 명령어입니다. (기준일: 2026-06-26)
 
 - Gemma 서버: `llama.cpp` `llama-server.exe`
 - Gemma endpoint: `http://localhost:8001/v1`
@@ -103,6 +103,8 @@ python -c "import os; from src.chatbot.kakao_colab_bot import launch_colab_kakao
 
 ## 2) 로컬 챗봇만 실행하고 싶을 때: ngrok 없음
 
+`launch_colab_kakao_bot`은 `tunnel_config` 없이 호출해도 항상 ngrok 터널을 엽니다. 외부 webhook 없이 순수 로컬(Flask)로만 띄우려면 `create_app`을 직접 써서 `app.run`으로 기동합니다.
+
 ```powershell
 cd C:\Users\카운\Desktop\stock_predict
 
@@ -112,16 +114,16 @@ Get-Content .env | ForEach-Object {
   [Environment]::SetEnvironmentVariable($k.Trim(), $v.Trim().Trim('"').Trim("'"), 'Process')
 }
 
-python -c "from src.chatbot.kakao_colab_bot import launch_colab_kakao_bot, PipelineRuntimeConfig; cfg=PipelineRuntimeConfig(llm_config='configs/news_impact.gemma.example.json', fetch_investor_context=True, use_external=True); app=launch_colab_kakao_bot(runtime_config=cfg, host='0.0.0.0'); print('Local Webhook URL:', app['webhook_url']); print('Health URL:', app['health_url']); app['server_thread'].join()"
+python -c "from src.chatbot.kakao_colab_bot import create_app, PipelineRuntimeConfig; cfg=PipelineRuntimeConfig(llm_config='configs/news_impact.gemma.example.json', fetch_investor_context=True, use_external=True); app=create_app(runtime_config=cfg); print('Local Webhook URL: http://localhost:8000/kakao/webhook'); print('Health URL: http://localhost:8000/health'); app.run(host='0.0.0.0', port=8000)"
 ```
 
 ## 3) 산출물 위치
 
 주요 산출물은 `result/` 아래에 생성됩니다.
 
-- `result/result_detail.csv`
-- `result/result_simple.csv`
-- `result/pipeline_report.json` 또는 `result/latest/...`
+- `result/result_detail.csv`, `result/result_simple.csv` (예측 상세/요약, `utf-8-sig`)
+- `result/result_news.csv`, `result/result_disclosure.csv` (뉴스/공시 컨텍스트 — 외부 활성 시)
+- `result/latest/pipeline_report.json` (최신 실행 리포트; `--report-json`으로 지정한 경로에도 별도 저장됨)
 - 챗봇 런타임 파일: `result/runtime/`
 
 ## 4) 종료 방법
