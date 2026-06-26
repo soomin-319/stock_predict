@@ -22,6 +22,7 @@ class LLMConfig:
     json_schema_required: bool
     api_key: str | None = field(default=None, repr=False)
     timeout_seconds: float = 60.0
+    max_tokens: int | None = None
 
     @classmethod
     def default(cls) -> "LLMConfig":
@@ -59,6 +60,9 @@ def load_llm_config(path: str | Path) -> LLMConfig:
         ),
         api_key=_api_key_value(raw_config, provider),
         timeout_seconds=float(raw_config.get("timeout_seconds", default.timeout_seconds)),
+        max_tokens=(
+            int(raw_config["max_tokens"]) if raw_config.get("max_tokens") is not None else None
+        ),
     )
 
 

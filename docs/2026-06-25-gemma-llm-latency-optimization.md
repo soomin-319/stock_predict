@@ -1,5 +1,7 @@
 # 로컬 Gemma 요약·뉴스임팩트 지연 최적화 — 분석 + 구현 플랜
 
+Implementation status: P0-1, P0-2 (company-name fanout narrowing), P1-1, P1-2, and P2-1 are implemented in PR #351. P1-3 and P2-2 remain server/ops tuning items.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development(권장) 또는 superpowers:executing-plans 로 §5 구현 플랜을 태스크 단위로 구현하세요. 각 단계는 체크박스(`- [ ]`) 문법으로 추적합니다.
 
 작성일: 2026-06-25 · 통합본(분석 #341 + 구현 플랜 #342) · 최신화: 2026-06-25 (코드 라인/`provider`·`base_url` 인자 반영)

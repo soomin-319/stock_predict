@@ -54,3 +54,57 @@ def test_news_impact_llm_prompt_asset_is_vendored():
 
     # impact_judge.build_system_prompt()가 런타임에 읽는 필수 자산. 머지 시 누락 방지.
     assert Path("docs/NEWS_IMPACT_LLM_PROMPT.md").exists()
+
+
+
+def test_daily_pipeline_inputs_accepts_stable_llm_cache_dir(tmp_path):
+    from src.news_impact.pipeline import DailyPipelineInputs
+
+    inputs = DailyPipelineInputs(
+        run_date="2026-06-25",
+        watchlist_path=tmp_path / "wl.csv",
+        company_master_path=tmp_path / "cm.csv",
+        input_fixture_path=tmp_path / "fx.json",
+        output_dir=tmp_path / "out",
+        llm_cache_dir=tmp_path / "stable_cache",
+    )
+    assert Path(inputs.llm_cache_dir) == tmp_path / "stable_cache"
+
+
+
+def _news_stub(title, summary="", raw_text="", ticker=""):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(title=title, summary=summary, raw_text=raw_text, ticker=ticker)
+
+
+def test_target_tickers_narrows_to_company_name_match():
+    from src.news_impact.pipeline import _target_tickers_for_news
+
+    companies = {
+        "005930": {"company": "????"},
+        "000660": {"company": "SK????"},
+    }
+    item = _news_stub("????, ?? HBM ??")
+    assert _target_tickers_for_news(item, ["005930", "000660"], companies) == ["005930"]
+
+
+def test_target_tickers_falls_back_to_full_watchlist_when_no_match():
+    from src.news_impact.pipeline import _target_tickers_for_news
+
+    companies = {"005930": {"company": "????"}, "000660": {"company": "SK????"}}
+    item = _news_stub("??? ??? ??? ??")
+    assert _target_tickers_for_news(item, ["005930", "000660"], companies) == ["005930", "000660"]
+
+
+
+def test_article_text_is_truncated_with_flag():
+    from types import SimpleNamespace
+    from src.news_impact.pipeline import _llm_article_text_and_flags, MAX_ARTICLE_CHARS
+
+    long_item = SimpleNamespace(
+        quality_flags=(), raw_text="?" * (MAX_ARTICLE_CHARS + 500), summary=""
+    )
+    text, flags = _llm_article_text_and_flags(long_item)
+    assert len(text) == MAX_ARTICLE_CHARS
+    assert "article_truncated" in flags

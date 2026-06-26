@@ -42,6 +42,7 @@ from src.news_impact.semantic_clusterer import SemanticClusterLLM, assign_semant
 SCORING_VERSION = "scoring.v1"
 BACKTEST_VERSION = "backtest.v1"
 RULE_BASED_FLAGS = {"rule_based_no_llm"}
+MAX_ARTICLE_CHARS = 1500
 
 
 class ImpactJudgeLLM(Protocol):
@@ -65,6 +66,7 @@ class DailyPipelineInputs:
     llm_config_path: str | Path | None = None
     impact_judge_llm: ImpactJudgeLLM | None = None
     semantic_cluster_llm: SemanticClusterLLM | None = None
+    llm_cache_dir: str | Path | None = None
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,7 @@ def run_daily_pipeline(inputs: DailyPipelineInputs) -> DailyPipelineResult:
     impact_judge_llm = inputs.impact_judge_llm or _build_impact_judge_llm(
         llm_config=llm_config,
         output_dir=output_dir,
+        llm_cache_dir=inputs.llm_cache_dir,
     )
     system_prompt = build_system_prompt()
     impact_events, llm_failed_count = _build_llm_judged_events(
@@ -283,7 +286,7 @@ def _build_llm_judged_events(
     for news_index, clustered in enumerate(clustered_news, start=1):
         item = clustered.item
         article_text, input_flags = _llm_article_text_and_flags(item)
-        for ticker in _target_tickers_for_news(item, watchlist_tickers):
+        for ticker in _target_tickers_for_news(item, watchlist_tickers, companies):
             company = companies.get(ticker, {})
             company_name = company.get("company", "")
             sector = company.get("sector", "")
@@ -342,9 +345,27 @@ def _build_llm_judged_events(
     return events, llm_failed_count
 
 
-def _target_tickers_for_news(item: NewsItem, watchlist_tickers: list[str]) -> list[str]:
+def _target_tickers_for_news(
+    item: NewsItem,
+    watchlist_tickers: list[str],
+    companies: dict[str, dict[str, str]] | None = None,
+) -> list[str]:
     if item.ticker and item.ticker in watchlist_tickers:
         return [item.ticker]
+    if companies:
+        haystack = " ".join(
+            str(part)
+            for part in (item.title, getattr(item, "raw_text", ""), item.summary)
+            if part
+        )
+        matched = [
+            ticker
+            for ticker in watchlist_tickers
+            if (companies.get(ticker, {}).get("company") or "")
+            and companies[ticker]["company"] in haystack
+        ]
+        if matched:
+            return matched
     return watchlist_tickers
 
 
@@ -363,6 +384,9 @@ def _llm_article_text_and_flags(item: NewsItem) -> tuple[str, tuple[str, ...]]:
     else:
         text = item.summary
         flags = base_flags + ("summary_only_no_full_text", "needs_full_text_review")
+    if len(text) > MAX_ARTICLE_CHARS:
+        text = text[:MAX_ARTICLE_CHARS]
+        flags = flags + ("article_truncated",)
     return text, _dedupe_flags(flags)
 
 
@@ -384,8 +408,17 @@ def _build_targeted_news_prompt(
     )
 
 
-def _build_impact_judge_llm(llm_config: LLMConfig, output_dir: Path) -> LlamaCppClient:
-    cache = FileLLMResponseCache(output_dir / "llm_cache" / "impact_judgments")
+def _build_impact_judge_llm(
+    llm_config: LLMConfig,
+    output_dir: Path,
+    llm_cache_dir: str | Path | None = None,
+) -> LlamaCppClient:
+    cache_root = (
+        Path(llm_cache_dir)
+        if llm_cache_dir is not None
+        else output_dir / "llm_cache" / "impact_judgments"
+    )
+    cache = FileLLMResponseCache(cache_root)
     return LlamaCppClient(llm_config, cache=cache)
 
 

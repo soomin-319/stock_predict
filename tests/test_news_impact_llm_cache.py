@@ -156,3 +156,43 @@ def test_chat_json_ignores_cache_when_metadata_is_stale(tmp_path: Path):
 
     assert result == {"direction": "positive"}
     assert len(transport.posts) == 1
+
+
+
+class _CapturingTransport:
+    def __init__(self):
+        self.last_payload = None
+
+    def get_json(self, url, timeout_seconds):
+        return {"data": [{"id": "gemma-4-26b-a4b"}]}
+
+    def post_json(self, url, payload, timeout_seconds):
+        self.last_payload = payload
+        return {
+            "model": "gemma-4-26b-a4b",
+            "choices": [{"message": {"content": json.dumps({"ok": True})}}],
+        }
+
+
+def test_chat_json_sends_max_tokens_when_configured():
+    config = LLMConfig(
+        provider="llama_cpp",
+        base_url="http://localhost:8001/v1",
+        model="gemma-4-26b-a4b",
+        temperature=0.1,
+        max_retries=0,
+        json_schema_required=True,
+        max_tokens=256,
+    )
+    transport = _CapturingTransport()
+    client = LlamaCppClient(config, transport=transport)
+    client.chat_json("sys", "user")
+    assert transport.last_payload["max_tokens"] == 256
+
+
+def test_chat_json_omits_max_tokens_when_unset():
+    config = LLMConfig.default()
+    transport = _CapturingTransport()
+    client = LlamaCppClient(config, transport=transport)
+    client.chat_json("sys", "user")
+    assert "max_tokens" not in transport.last_payload

@@ -1139,3 +1139,10 @@ def test_fetch_real_ohlcv_raises_when_yfinance_returns_empty(monkeypatch):
     monkeypatch.setattr(fr, "_safe_download_ohlcv", _empty_download)
     with pytest.raises(RuntimeError):
         fr.fetch_real_ohlcv(["005930.KS"], start="2024-01-01")
+
+
+
+def test_issue_summary_cache_dir_is_stable_path():
+    import src.pipeline as pipeline_mod
+
+    assert pipeline_mod._issue_summary_cache_dir() == "result/runtime/llm_cache/issue_summary"
