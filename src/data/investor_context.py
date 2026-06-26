@@ -27,6 +27,18 @@ def _symbol_to_ticker(symbol: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _empty_flow_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "Date": pd.Series(dtype="datetime64[ns]"),
+            "Symbol": pd.Series(dtype="object"),
+            "foreign_net_buy": pd.Series(dtype="float64"),
+            "institution_net_buy": pd.Series(dtype="float64"),
+        },
+        columns=["Date", "Symbol", "foreign_net_buy", "institution_net_buy"],
+    )
+
+
 def _empty_context(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     out = df.copy()
     for c in [
@@ -82,8 +94,11 @@ def _fetch_flow(symbols: list[str], start: str, end: str, *, flow_fetcher=None) 
         "source": "pykrx",
         "message": f"Fetched investor flow for {successful}/{len(symbols)} symbols via pykrx.",
     }
+    if frames:
+        latest_flow_date = max(pd.to_datetime(frame["Date"]).max() for frame in frames)
+        coverage["latest_flow_date"] = latest_flow_date.strftime("%Y-%m-%d")
     if not frames:
-        return pd.DataFrame(columns=["Date", "Symbol", "foreign_net_buy", "institution_net_buy"]), coverage
+        return _empty_flow_frame(), coverage
     out = pd.concat(frames, ignore_index=True)
     out["Date"] = pd.to_datetime(out["Date"])
     return out, coverage

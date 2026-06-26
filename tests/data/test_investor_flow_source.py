@@ -3,6 +3,7 @@ import os
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from src.data import investor_flow_source as flow
 from src.data.investor_flow_source import fetch_investor_flow_pykrx
@@ -38,6 +39,16 @@ def test_empty_source_returns_typed_empty_frame():
 
     assert out.empty
     assert list(out.columns) == ["Date", "foreign_net_buy", "institution_net_buy"]
+    assert str(out["Date"].dtype).startswith("datetime64")
+
+
+def test_missing_required_source_columns_raises():
+    class _BadSchema:
+        def get_market_trading_value_by_date(self, *args):
+            return pd.DataFrame({"개인": [1], "전체": [1]}, index=pd.to_datetime(["2026-06-25"]))
+
+    with pytest.raises(ValueError, match="required investor flow columns"):
+        fetch_investor_flow_pykrx("005930", "2026-06-24", "2026-06-25", stock_module=_BadSchema())
 
 
 def test_loads_krx_credentials_from_dotenv_before_pykrx_import(monkeypatch, tmp_path):
