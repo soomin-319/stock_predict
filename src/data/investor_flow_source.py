@@ -12,6 +12,17 @@ _INSTITUTION_KEYS = ("기관합계", "기관")
 _OUT_COLUMNS = ["Date", "foreign_net_buy", "institution_net_buy"]
 
 
+def _empty_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "Date": pd.Series(dtype="datetime64[ns]"),
+            "foreign_net_buy": pd.Series(dtype="float64"),
+            "institution_net_buy": pd.Series(dtype="float64"),
+        },
+        columns=_OUT_COLUMNS,
+    )
+
+
 def _iter_dotenv_candidates(search_roots=None):
     roots = list(search_roots or [])
     roots.append(Path.cwd())
@@ -85,17 +96,15 @@ def fetch_investor_flow_pykrx(
     todate = pd.to_datetime(end).strftime("%Y%m%d")
     raw = stock.get_market_trading_value_by_date(fromdate, todate, ticker)
     if raw is None or len(raw) == 0:
-        return pd.DataFrame(columns=_OUT_COLUMNS)
+        return _empty_frame()
 
     columns = list(raw.columns)
     foreign_col = _pick_column(columns, _FOREIGN_KEYS)
     institution_col = _pick_column(columns, _INSTITUTION_KEYS)
-    foreign = pd.to_numeric(raw[foreign_col], errors="coerce") if foreign_col else pd.Series(0.0, index=raw.index)
-    institution = (
-        pd.to_numeric(raw[institution_col], errors="coerce")
-        if institution_col
-        else pd.Series(0.0, index=raw.index)
-    )
+    if foreign_col is None or institution_col is None:
+        raise ValueError(f"required investor flow columns not found: {columns}")
+    foreign = pd.to_numeric(raw[foreign_col], errors="coerce")
+    institution = pd.to_numeric(raw[institution_col], errors="coerce")
     out = pd.DataFrame(
         {
             "Date": pd.to_datetime(raw.index),
