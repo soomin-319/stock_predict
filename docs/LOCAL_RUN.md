@@ -67,8 +67,8 @@ if (-not $portOpen) {
 python -m src.news_impact.run llm-smoke --config configs/news_impact.gemma.example.json
 if ($LASTEXITCODE -ne 0) { throw 'Gemma llm-smoke 실패. llama-server/model 경로 또는 8001 포트를 확인하세요.' }
 
-# 6. 10종목 예측 파이프라인 실행
-# - 아래 10종목만 실데이터 갱신/분석/Gemma 뉴스임팩트 실행
+# 6. 5종목 예측 파이프라인 실행
+# - 아래 5종목만 실데이터 갱신/분석/Gemma 뉴스임팩트 실행
 # - 투자자/공시/뉴스 컨텍스트 활성화
 # - Gemma 뉴스임팩트 연결
 $TargetSymbols = @(
@@ -76,14 +76,9 @@ $TargetSymbols = @(
   '000660.KS',  # SK하이닉스
   '035420.KS',  # NAVER
   '035720.KS',  # 카카오
-  '051910.KS',  # LG화학
-  '005380.KS',  # 현대차
-  '000270.KS',  # 기아
-  '068270.KS',  # 셀트리온
-  '373220.KS',  # LG에너지솔루션
-  '105560.KS'   # KB금융
+  '051910.KS'   # LG화학
 )
-$TargetUniversePath = 'data/universe_gemma_10.csv'
+$TargetUniversePath = 'data/universe_gemma_5.csv'
 @('Symbol') + $TargetSymbols | Set-Content -Encoding utf8 $TargetUniversePath
 
 python src/pipeline.py `
