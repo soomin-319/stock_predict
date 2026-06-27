@@ -125,7 +125,9 @@ class UpProbabilityCalibrator:
         raw = pd.Series(probabilities, dtype=float).clip(0.0, 1.0)
         if self.model is None:
             return raw
-        calibrated = pd.Series(self.model.predict(raw.values), dtype=float).clip(0.0, 1.0)
+        calibrated = pd.Series(
+            self.model.predict(raw.values), index=raw.index, dtype=float
+        ).clip(0.0, 1.0)
         if raw.round(6).nunique() >= 4 and calibrated.round(6).nunique() <= 2:
             calibrated = (0.3 * calibrated + 0.7 * raw).clip(0.0, 1.0)
         return self._shrink_sparse_tails(raw, calibrated)
