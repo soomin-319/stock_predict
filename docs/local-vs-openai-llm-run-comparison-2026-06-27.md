@@ -2,7 +2,7 @@
 
 같은 날(2026-06-27) 같은 코드베이스에서 LLM provider만 바꿔 실행한 두 결과를 비교한다.
 
-- 로컬 실행 기록: [`docs/local-run-execution-log-2026-06-27.md`](local-run-execution-log-2026-06-27.md) (provider = 로컬 `llama.cpp` Gemma)
+- 로컬 실행 기록: [`docs/LOCAL_RUN_RESULT_2026-06-27.md`](LOCAL_RUN_RESULT_2026-06-27.md) (provider = 로컬 `llama.cpp` Gemma)
 - OpenAI 실행 기록: [`docs/OPENAI_RUN_RESULT_2026-06-27.md`](OPENAI_RUN_RESULT_2026-06-27.md) (provider = OpenAI `gpt-5-mini`)
 - 비교 데이터 출처: 각 실행의 보존 리포트 `result/runs/<run_id>/pipeline_report.json` 및 `csv/result_simple.csv`
 
