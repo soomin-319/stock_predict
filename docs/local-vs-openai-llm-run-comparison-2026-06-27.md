@@ -2,8 +2,8 @@
 
 같은 날(2026-06-27) 같은 코드베이스에서 LLM provider만 바꿔 실행한 두 결과를 비교한다.
 
-- 로컬 실행 기록: [`docs/LOCAL_RUN_RESULT_2026-06-27.md`](LOCAL_RUN_RESULT_2026-06-27.md) (provider = 로컬 `llama.cpp` Gemma)
-- OpenAI 실행 기록: [`docs/OPENAI_RUN_RESULT_2026-06-27.md`](OPENAI_RUN_RESULT_2026-06-27.md) (provider = OpenAI `gpt-5-mini`)
+- 로컬 실행 기록: [`docs/archive/LOCAL_RUN_RESULT_2026-06-27.md`](archive/LOCAL_RUN_RESULT_2026-06-27.md) (provider = 로컬 `llama.cpp` Gemma)
+- OpenAI 실행 기록: [`docs/archive/OPENAI_RUN_RESULT_2026-06-27.md`](archive/OPENAI_RUN_RESULT_2026-06-27.md) (provider = OpenAI `gpt-5-mini`)
 - 비교 데이터 출처: 각 실행의 보존 리포트 `result/runs/<run_id>/pipeline_report.json` 및 `csv/result_simple.csv`
 
 > 주의: 본 산출물은 연구/운영 참고용이다. 매수/매도/보유 판단은 `predicted_return` 기준만 사용한다. 뉴스/공시 LLM 출력은 표시용 컨텍스트이며 예측 수익률에 반영되지 않는다.
