@@ -36,8 +36,17 @@ Recent history uses short imperative commit subjects, often with PR references, 
 ## Branch Handling
 
 - Do not switch the working branch, or create a branch from a base other than the current `HEAD` (for example, off `origin/main`), without an explicit user request. The working branch usually diverges from `main`, so reparenting silently rewrites the working tree: files appear or disappear and look like lost work.
-- Add incidental or independent changes (such as a new doc) as commits on the current branch. When the user does ask for a new branch, branch from the current `HEAD`, not from `origin/main`.
+- Add incidental or independent changes (such as a new doc) as commits on the current branch **only while that branch is still open** (see "branch is done" below). When the user does ask for a new branch, branch from the current `HEAD`, not from `origin/main` — unless the current branch is already merged, in which case branch from `origin/main` (this is the documented exception, still confirm with the user first).
 - Do not modify or "reconcile" the local `main` branch. Treat `origin/main` as the source of truth and leave local `main` untouched.
+
+### Working efficiently with branches
+
+- **Check PR status before committing to the current branch.** Run `gh pr list --head <branch> --state all` first. If the branch's PR is already **merged, the branch is done**: do not add new commits to it. Reusing a squash-merged branch makes the next PR re-show all previously merged work as a noisy diff. Start a fresh branch from `origin/main` for the new work instead (confirm with the user, per the exception above).
+- **A squash-merged branch still looks "ahead of main."** `git log origin/main..<branch>` may list many commits whose content is already in `main`. Trust the two-dot content diff `git diff origin/main..<branch>` (empty/tiny ⇒ already merged), not the commit-count ahead.
+- **One concern per branch/PR.** Keep unrelated changes (e.g., a policy doc vs. run logs) on separate branches so each PR stays focused; update the PR title/body if scope changes.
+- **The agent cannot self-merge a PR it authored** (two-party review). After opening a PR, hand it to the user to merge, then do post-merge cleanup.
+- **Clean up after merge.** Once a PR merges, its branch can be deleted to prevent accidental reuse: `git branch -D <branch>` (squash-merged branches are not fast-forward ancestors, so `-d` refuses them) and, after confirming with the user, `git push origin --delete <branch>`. Never delete `main`, `backup/*` branches, or any branch with genuinely unmerged work (verify with the two-dot diff above).
+- **Name branches with a topic prefix** matching recent history: `feat/`, `fix/`, `docs/`, `perf/`, `chore/`.
 
 ## Security & Configuration Tips
 
