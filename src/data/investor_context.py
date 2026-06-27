@@ -2,13 +2,74 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import pandas as pd
+
+
+# Injectable clock/sleep so rate limiting and backoff stay deterministic in tests.
+_sleep = time.sleep
+_monotonic = time.monotonic
+
+# Naver Search OpenAPI guardrails. The daily cap (25,000/key/day) is satisfied in
+# practice by bounding per-symbol article collection; the per-second limiter keeps
+# bursts under Naver's short-window throttle (HTTP 429). Both are configurable.
+DEFAULT_MAX_ARTICLES_PER_SYMBOL = 100
+DEFAULT_MAX_REQUESTS_PER_SECOND = 10.0
+MAX_NEWS_FETCH_ATTEMPTS = 3
+
+
+class _RateLimiter:
+    """Thread-safe minimum-interval limiter shared across collection workers.
+
+    A single instance must be shared by every worker thread so the configured
+    rate is enforced globally (per-thread limiters leak under concurrency).
+    """
+
+    def __init__(self, max_per_second: float) -> None:
+        self._min_interval = (
+            1.0 / max_per_second if max_per_second and max_per_second > 0 else 0.0
+        )
+        self._lock = threading.Lock()
+        self._next_allowed = 0.0
+
+    def acquire(self) -> None:
+        if self._min_interval <= 0.0:
+            return
+        with self._lock:
+            now = _monotonic()
+            start = now if now >= self._next_allowed else self._next_allowed
+            self._next_allowed = start + self._min_interval
+            wait = start - now
+        if wait > 0.0:
+            _sleep(wait)
+
+
+def _is_transient_http_error(exc: Exception) -> bool:
+    if isinstance(exc, HTTPError):
+        return exc.code == 429 or 500 <= exc.code <= 599
+    return isinstance(exc, (TimeoutError, OSError))
+
+
+def _retry_after_seconds(exc: HTTPError) -> float | None:
+    try:
+        value = exc.headers.get("Retry-After") if exc.headers else None
+    except Exception:
+        value = None
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        # HTTP-date form is not parsed here; caller falls back to backoff.
+        return None
 
 
 
@@ -211,6 +272,46 @@ def _build_news_queries(symbol_name: str) -> list[str]:
     return [name] + [f"{name} {kw}" for kw in keywords]
 
 
+def _request_naver_news(
+    req: Request,
+    *,
+    symbol: str,
+    rate_limiter: _RateLimiter | None,
+    errors: list[dict] | None,
+) -> dict | None:
+    """Fetch one Naver news page with shared pacing and 429/5xx backoff.
+
+    Honors a ``Retry-After`` header when present, otherwise uses exponential
+    backoff. Returns ``None`` (and records one error) when the page cannot be
+    retrieved, preserving the prior best-effort, skip-on-failure behavior.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(1, MAX_NEWS_FETCH_ATTEMPTS + 1):
+        if rate_limiter is not None:
+            rate_limiter.acquire()
+        try:
+            with urlopen(req, timeout=15) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except Exception as exc:
+            last_exc = exc
+            if not _is_transient_http_error(exc) or attempt >= MAX_NEWS_FETCH_ATTEMPTS:
+                break
+            delay = _retry_after_seconds(exc) if isinstance(exc, HTTPError) else None
+            if delay is None:
+                delay = float(2 ** (attempt - 1))
+            _sleep(delay)
+    if errors is not None and last_exc is not None:
+        errors.append(
+            {
+                "source": "naver_news_api",
+                "symbol": symbol,
+                "error_type": type(last_exc).__name__,
+                "message": str(last_exc),
+            }
+        )
+    return None
+
+
 def _fetch_naver_news_items(
     *,
     symbol: str,
@@ -220,6 +321,8 @@ def _fetch_naver_news_items(
     client_id: str | None,
     client_secret: str | None,
     errors: list[dict] | None = None,
+    rate_limiter: _RateLimiter | None = None,
+    max_articles: int = DEFAULT_MAX_ARTICLES_PER_SYMBOL,
 ) -> list[dict]:
     if not client_id or not client_secret:
         return []
@@ -228,6 +331,8 @@ def _fetch_naver_news_items(
     start_date = pd.to_datetime(start_dt).normalize()
     end_date = pd.to_datetime(end_dt).normalize()
     for query in _build_news_queries(symbol_name):
+        if max_articles > 0 and len(rows) >= max_articles:
+            break
         params = urlencode({"query": query, "display": 50, "start": 1, "sort": "date"})
         req = Request(
             f"https://openapi.naver.com/v1/search/news.json?{params}",
@@ -236,19 +341,10 @@ def _fetch_naver_news_items(
                 "X-Naver-Client-Secret": client_secret,
             },
         )
-        try:
-            with urlopen(req, timeout=15) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-        except Exception as exc:
-            if errors is not None:
-                errors.append(
-                    {
-                        "source": "naver_news_api",
-                        "symbol": symbol,
-                        "error_type": type(exc).__name__,
-                        "message": str(exc),
-                    }
-                )
+        payload = _request_naver_news(
+            req, symbol=symbol, rate_limiter=rate_limiter, errors=errors
+        )
+        if payload is None:
             continue
 
         for item in payload.get("items", []) if isinstance(payload, dict) else []:
@@ -285,7 +381,9 @@ def _fetch_naver_news_items(
                     "source": "naver_news_api",
                 }
             )
-    return rows
+            if max_articles > 0 and len(rows) >= max_articles:
+                break
+    return rows[:max_articles] if max_articles > 0 else rows
 
 
 def add_investor_context_with_coverage(df: pd.DataFrame, cfg: InvestorContextConfig) -> tuple[pd.DataFrame, dict]:
@@ -354,6 +452,8 @@ def collect_context_raw_events(
     naver_client_id: str | None = None,
     naver_client_secret: str | None = None,
     raw_event_n_jobs: int = 4,
+    max_articles_per_symbol: int = DEFAULT_MAX_ARTICLES_PER_SYMBOL,
+    max_requests_per_second: float = DEFAULT_MAX_REQUESTS_PER_SECOND,
     return_status: bool = False,
 ) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
     rows: list[dict] = []
@@ -361,6 +461,8 @@ def collect_context_raw_events(
     start_dt, end_dt = pd.to_datetime(start), pd.to_datetime(end)
     symbols = [str(symbol) for symbol in symbols]
     max_workers = min(max(1, int(raw_event_n_jobs or 1)), max(1, len(symbols)))
+    # Shared across all workers so the per-second cap is enforced globally.
+    news_rate_limiter = _RateLimiter(max_requests_per_second)
 
     def _news_rows_for_symbol(symbol: str) -> list[dict]:
         symbol_name = (symbol_name_map or {}).get(symbol, "")
@@ -372,6 +474,8 @@ def collect_context_raw_events(
             client_id=naver_client_id,
             client_secret=naver_client_secret,
             errors=errors,
+            rate_limiter=news_rate_limiter,
+            max_articles=max_articles_per_symbol,
         )
 
     if naver_client_id and naver_client_secret and symbols:
