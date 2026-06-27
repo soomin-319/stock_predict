@@ -77,6 +77,51 @@ def test_fitted_calibrator_shrinks_sparse_tail_probabilities_toward_half():
     assert abs(center - 0.5) > abs(high_tail - 0.5) or high_tail < 0.9
 
 
+def test_transform_aligns_non_default_index_with_sparse_tails():
+    # Reproduces the walk-forward path: the eval split carries the OOF frame's
+    # original (non-contiguous) index, and some eval probabilities fall outside
+    # the tune support range so the sparse-tail shrinkage branch is exercised.
+    tune = pd.DataFrame(
+        {
+            "up_probability": [0.42, 0.43, 0.44, 0.45, 0.46, 0.47, 0.48, 0.49],
+            "target_log_return": [-0.02, -0.01, -0.01, 0.005, 0.006, 0.01, 0.02, 0.03],
+        }
+    )
+    calibrator = fit_up_probability_calibrator(tune)
+    eval_probs = pd.Series([0.05, 0.46, 0.95], index=[10, 25, 33], dtype=float)
+
+    out = calibrator.transform(eval_probs)
+
+    assert list(out.index) == [10, 25, 33]
+    assert np.all((out >= 0.0) & (out <= 1.0))
+    assert not out.isna().any()
+    # Tail values (outside tune support) shrink toward 0.5.
+    assert 0.05 < out.loc[10] <= 0.5
+    assert 0.5 <= out.loc[33] < 0.95
+
+
+def test_calibration_report_handles_eval_split_with_non_default_index():
+    # The eval frame keeps non-contiguous index labels (as produced by the
+    # walk-forward split) and probabilities outside the tune support range.
+    tune = pd.DataFrame(
+        {
+            "up_probability": [0.42, 0.43, 0.44, 0.45, 0.46, 0.47, 0.48, 0.49],
+            "target_log_return": [-0.02, -0.01, -0.01, 0.005, 0.006, 0.01, 0.02, 0.03],
+        }
+    )
+    eval_df = pd.DataFrame(
+        {
+            "up_probability": [0.05, 0.46, 0.95],
+            "target_log_return": [-0.03, 0.001, 0.04],
+        },
+        index=[10, 25, 33],
+    )
+
+    report = calibration_split_metrics(tune, eval_df, fit_up_probability_calibrator(tune))
+
+    assert report["eval"]["sample_count"] == 3
+
+
 def test_calibration_report_exposes_tail_shrinkage_policy():
     tune = pd.DataFrame(
         {

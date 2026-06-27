@@ -1,6 +1,6 @@
 # 실행 경과 기록: Gemma 로컬 5종목 런 (2026-06-24)
 
-`docs/FULL_LOCAL_RUN_WITH_GEMMA_KAKAO.md` 절차를 **10종목이 아니라 5종목**으로 실행한 경과 기록입니다.
+`docs/LOCAL_RUN.md` 절차를 **10종목이 아니라 5종목**으로 실행한 경과 기록입니다.
 사용자 요청으로 작업을 **중단(중간 정지)**한 시점의 스냅샷입니다.
 
 - 실행 시작: 2026-06-24 20:19:38 (KST)
@@ -111,7 +111,7 @@
    ```
    - 뉴스임팩트는 매 실행마다 새 임시 fixture를 만들어 304건을 처음부터 판정(약 3.4시간 소요). 도중 중단된 캐시는 이어붙지 않음.
    - 빠른 완주가 필요하면 뉴스 수가 많은 점을 고려해 시간 여유를 두고 무중단 실행 권장.
-4. 외부 webhook까지 필요하면 `docs/FULL_LOCAL_RUN_WITH_GEMMA_KAKAO.md` 섹션 1의 step 7 실행.
+4. 외부 webhook까지 필요하면 `docs/LOCAL_RUN.md` 섹션 1의 step 7 실행.
 
 ## 7) thinking 벤치마크 & 설정 변경 (reasoning off 채택)
 
@@ -129,5 +129,5 @@
 `reason`/`why_may_be_wrong` 텍스트도 동급이며 일부는 C(off)가 더 종목-특정적으로 정확했음.
 뉴스/공시 점수는 표시용 컨텍스트라 `predicted_return`·랭킹·신호에 영향이 없으므로 점수 정밀도에 추론 토큰을 쓸 이유가 없음.
 
-**결정: `--reasoning off` 채택.** `docs/FULL_LOCAL_RUN_WITH_GEMMA_KAKAO.md`의 서버 기동 인자에 반영함
+**결정: `--reasoning off` 채택.** `docs/LOCAL_RUN.md`의 서버 기동 인자에 반영함
 (코드/`configs/news_impact.gemma.example.json` 변경 없음 — 서버 플래그만 추가).

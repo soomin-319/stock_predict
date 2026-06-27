@@ -30,7 +30,7 @@
 - 수정: `src/chatbot/runtime_config.py` — `PipelineRuntimeConfig`에 `llm_config` 추가, `build_command`가 `--llm-config` 전달.
 - 추가(문서 예시 재사용): `configs/news_impact.{gemma,openai}.example.json` 을 **공용 LLM 설정 예시**로 문서화(스키마 동일 — 신규 파일 불필요). 필요 시 `configs/llm.{gemma,openai}.example.json` 심볼릭 예시 추가는 선택.
 - 수정/추가 테스트: `tests/test_issue_summary.py`, `tests/test_news_impact_llm_config.py`, `tests/test_news_impact_llm_cache.py`, `tests/test_pipeline_smoke.py`(스모크), 신규 `tests/test_llm_provider_wiring.py`(파이프라인이 단일 설정을 두 소비자에 전달하는지).
-- 수정: `docs/FULL_LOCAL_RUN_WITH_GEMMA_KAKAO.md` 또는 신규 운영 노트 — OpenAI 전환 사용법.
+- 수정: `docs/LOCAL_RUN.md` 또는 신규 운영 노트 — OpenAI 전환 사용법.
 
 ---
 
@@ -173,7 +173,7 @@ def test_backcompat_openai_flags_still_work():
 ### Task 5: 문서·운영 가이드·가드레일 재확인
 
 **Files:**
-- Modify: `docs/FULL_LOCAL_RUN_WITH_GEMMA_KAKAO.md`(또는 신규 `docs/LLM_PROVIDER_SWITCH.md`)
+- Modify: `docs/LOCAL_RUN.md`(또는 신규 `docs/LLM_PROVIDER_SWITCH.md`)
 
 - [ ] **Step 1:** OpenAI 전환 사용법 문서화 —
   - 로컬 gemma(기본): 설정 없이 또는 `--llm-config configs/news_impact.gemma.example.json`.
